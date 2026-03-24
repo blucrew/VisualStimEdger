@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -703,11 +703,12 @@ class App:
         ctrl.pack(fill=tk.X, padx=P, pady=6)
 
         def _ghost_btn(parent, text, cmd, **kw):
+            kw.setdefault("font", ctk.CTkFont(size=10))
             return ctk.CTkButton(
                 parent, text=text, command=cmd, height=34,
                 fg_color=self._C_SURFACE2, hover_color="#333",
                 text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
-                font=ctk.CTkFont(size=10), **kw,
+                **kw,
             )
 
         _ghost_btn(ctrl, "Re-Select Feed", self._reselect_feed).pack(
