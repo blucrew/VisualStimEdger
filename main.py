@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.5"
+VERSION = "1.1.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -153,12 +153,18 @@ class RegionSelector:
         self.root.attributes('-alpha', 0.4)
         
         with mss() as sct:
-            mon = sct.monitors[0]
+            mon = sct.monitors[0]  # monitors[0] = combined virtual screen (all monitors)
             self.offset_x = mon["left"]
             self.offset_y = mon["top"]
             w, h = mon["width"], mon["height"]
-            
-        self.root.geometry(f"{w}x{h}+{self.offset_x}+{self.offset_y}")
+
+        # Set size first, then use MoveWindow to handle negative coords
+        # (secondary monitor left of primary gives negative offset_x which
+        # tkinter geometry strings like "+-1920+0" cannot express correctly).
+        self.root.geometry(f"{w}x{h}+0+0")
+        self.root.update_idletasks()
+        ctypes.windll.user32.MoveWindow(
+            self.root.winfo_id(), self.offset_x, self.offset_y, w, h, False)
         self.root.overrideredirect(True)
         
         self.root.configure(background='black')
@@ -478,8 +484,14 @@ def check_for_update(on_update_available):
         data = resp.json()
         latest = data.get("tag_name", "").lstrip("v")
         url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
-        if latest and tuple(int(x) for x in latest.split(".")) > tuple(int(x) for x in VERSION.split(".")):
-            on_update_available(latest, url)
+        try:
+            # Guard against pre-release tags like "1.2.0-beta.1"
+            latest_tuple  = tuple(int(x) for x in latest.split(".")[:3] if x.isdigit())
+            current_tuple = tuple(int(x) for x in VERSION.split(".")[:3] if x.isdigit())
+            if latest_tuple and latest_tuple > current_tuple:
+                on_update_available(latest, url)
+        except Exception:
+            pass
     except Exception:
         pass  # silently ignore — no internet, rate limit, etc.
 
@@ -805,6 +817,15 @@ class App:
                     self._orig_win_volume, None)
             except Exception:
                 pass
+        # Clean up WebSocket connection
+        with self.restim._lock:
+            old_ws = self.restim.ws
+            self.restim.ws = None
+        if old_ws:
+            try:
+                old_ws.close()
+            except Exception:
+                pass
         self.root.destroy()
 
     # ------------------------------------------------------------------ capture thread
@@ -882,9 +903,11 @@ class App:
 
     def _on_floor_change(self, val):
         self._floor_lbl.configure(text=f"{float(val):.0f}%")
+        self._save_config()
 
     def _on_ceil_change(self, val):
         self._ceil_lbl.configure(text=f"{float(val):.0f}%")
+        self._save_config()
 
     def _on_mode_change(self):
         if self.mode_var.get() == "restim":
@@ -901,6 +924,8 @@ class App:
         val = self.port_var.get().strip()
         if val.isdigit():
             new_port = int(val)
+            if not (1 <= new_port <= 65535):
+                return
             if new_port != self.restim.port:
                 self.restim.port = new_port
                 with self.restim._lock:
@@ -924,7 +949,10 @@ class App:
         for d in self.win_devices:
             if d.FriendlyName == value:
                 self.win_audio = WindowsAudioClient(d)
-                self._orig_win_volume = self.win_audio.get_volume()
+                if self.win_audio.connected:
+                    self._orig_win_volume = self.win_audio.get_volume()
+                else:
+                    self._orig_win_volume = None
                 self._save_config()
                 break
 
