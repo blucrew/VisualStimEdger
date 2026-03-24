@@ -1,0 +1,7 @@
+opencv-contrib-python
+numpy
+mss
+Pillow
+websocket-client
+pywin32
+pycaw
