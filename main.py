@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -438,6 +438,14 @@ class _DefaultAudioDevice:
         self._dev = dev
 
 
+class _SounddeviceAudioDevice:
+    """Device entry populated via sounddevice when all pycaw enumeration paths fail.
+    _dev is intentionally None — WindowsAudioClient resolves it by name at init time."""
+    def __init__(self, name):
+        self.FriendlyName = name
+        self._dev = None
+
+
 def list_audio_devices():
     """Return all render (output) devices.
 
@@ -445,6 +453,7 @@ def list_audio_devices():
     1. GetAllDevices() filtered to render (flow==0) endpoints.
     2. GetAllDevices() unfiltered — in case the flow comparison breaks.
     3. GetSpeakers() — returns just the default output as a fallback device.
+    4. sounddevice.query_devices() — bypasses pycaw/COM enumeration entirely.
     """
     # Level 1 & 2: full enumeration
     try:
@@ -467,18 +476,54 @@ def list_audio_devices():
     except Exception as e:
         log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
 
+    # Level 4: sounddevice — queries PortAudio directly, bypasses Windows COM
+    try:
+        import sounddevice as sd
+        devs = [_SounddeviceAudioDevice(d['name'])
+                for i, d in enumerate(sd.query_devices())
+                if d['max_output_channels'] > 0]
+        if devs:
+            log.warning(f"WinAudio: using sounddevice fallback — found {len(devs)} output device(s)")
+            return devs
+    except Exception as e:
+        log.error(f"WinAudio: sounddevice fallback failed: {e}")
+
     return []
 
 
 class WindowsAudioClient:
     def __init__(self, device):
         self._volume_interface = None
+        dev = device._dev
+
+        # _dev is None when we came via the sounddevice fallback path.
+        # Try to find the matching IMMDevice by name; fall back to default speakers.
+        if dev is None:
+            dev = self._resolve_dev(device.FriendlyName)
+
+        if dev is None:
+            log.error(f"WinAudio: could not resolve IMMDevice for '{device.FriendlyName}'")
+            return
         try:
-            interface = device._dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
             self._volume_interface = interface.QueryInterface(IAudioEndpointVolume)
             log.info(f"WinAudio: connected to {device.FriendlyName}")
         except Exception as e:
             log.error(f"WinAudio: failed to activate device: {e}")
+
+    @staticmethod
+    def _resolve_dev(name):
+        """Find an IMMDevice by friendly name, or fall back to default speakers."""
+        try:
+            for d in AudioUtilities.GetAllDevices():
+                if d.FriendlyName == name and d._dev is not None:
+                    return d._dev
+        except Exception:
+            pass
+        try:
+            return AudioUtilities.GetSpeakers()
+        except Exception:
+            return None
 
     @property
     def connected(self):

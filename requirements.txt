@@ -5,4 +5,5 @@ Pillow>=10.0,<13
 websocket-client>=1.6,<2
 pywin32>=306
 pycaw==20251023
+sounddevice>=0.4
 customtkinter==5.2.2
