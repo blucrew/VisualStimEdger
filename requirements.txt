@@ -4,5 +4,5 @@ mss>=9.0,<12
 Pillow>=10.0,<13
 websocket-client>=1.6,<2
 pywin32>=306
-pycaw>=20230625
+pycaw==20251023
 customtkinter==5.2.2

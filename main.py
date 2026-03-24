@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.9"
+VERSION = "1.2.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -560,6 +560,7 @@ class App:
         self.tracking_paused    = False
         self.last_bbox          = tuple(int(v) for v in bbox)
         self.tracking_ok        = True
+        self._track_msg         = ""
         self.yolo_frame_counter = 0
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
@@ -1040,6 +1041,7 @@ class App:
             self._tick_volume()
 
         self._draw_height_lines(frame)
+        self._draw_tracking_overlay(frame)
         self._update_status_label(state)
         self._display_frame(frame)
 
@@ -1084,6 +1086,7 @@ class App:
             cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
 
     def _run_tracker(self, frame):
+        """Update tracker state — does NOT draw; call _draw_tracking_overlay every frame."""
         success, new_bbox = self.tracker.update(frame)
         if success:
             x, y, w, h_box = [int(v) for v in new_bbox]
@@ -1100,27 +1103,36 @@ class App:
             jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * self._MAX_JUMP_FACTOR
 
             if size_ok and jump_ok:
-                self.last_bbox   = (x, y, w, h_box)
-                self.tracking_ok = True
-                self.head_y      = new_cy
+                self.last_bbox    = (x, y, w, h_box)
+                self.tracking_ok  = True
+                self._track_msg   = ""
+                self.head_y       = new_cy
                 self._head_y_history.append(new_cy)
-                cv2.rectangle(frame, (x, y), (x + w, y + h_box), (0, 255, 0), 2)
-                cv2.circle(frame, (new_cx, new_cy), 4, (0, 0, 255), -1)
             else:
                 reason = "size" if not size_ok else "jump"
-                cv2.putText(frame, f"TRACKING SUSPECT ({reason}) - Frozen", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-                px, py, pw, ph = self.last_bbox
-                cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 165, 255), 2)
+                self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
                 self.tracking_ok = False
                 self.tracker.init(frame, self.last_bbox)
         else:
-            cv2.putText(frame, "TRACKING LOST - Frozen at last position", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            px, py, pw, ph = self.last_bbox
-            cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 0, 255), 2)
+            self._track_msg  = "TRACKING LOST - Frozen at last position"
             self.tracking_ok = False
             self.tracker.init(frame, self.last_bbox)
+
+    def _draw_tracking_overlay(self, frame):
+        """Draw the current tracking bbox every frame so there is no flicker
+        when _run_tracker is skipped on non-heavy frames."""
+        px, py, pw, ph = self.last_bbox
+        if self.tracking_ok:
+            cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 255, 0), 2)
+            cx, cy = px + pw // 2, py + ph // 2
+            cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+        else:
+            msg = getattr(self, '_track_msg', '')
+            colour = (0, 165, 255) if "SUSPECT" in msg else (0, 0, 255)
+            if msg:
+                cv2.putText(frame, msg, (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+            cv2.rectangle(frame, (px, py), (px + pw, py + ph), colour, 2)
 
     def _determine_state(self, y_pos):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
