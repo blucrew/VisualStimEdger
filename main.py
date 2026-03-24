@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -665,6 +665,11 @@ class App:
         # Root window
         self.root = ctk.CTk()
         self.root.title("VisualStimEdger")
+        _icon = (pathlib.Path(sys._MEIPASS) / "icon.ico"
+                 if getattr(sys, "frozen", False)
+                 else pathlib.Path(__file__).parent / "icon.ico")
+        if _icon.exists():
+            self.root.iconbitmap(str(_icon))
 
         # tkinter vars — must be created after root exists
         self.min_vol_var = tk.DoubleVar(value=0.0)

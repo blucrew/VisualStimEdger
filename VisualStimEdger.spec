@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('models/yolo-fastest.cfg', 'models'),
     ('models/best.weights',     'models'),
+    ('icon.ico',                '.'),
 ]
 binaries = []
 hiddenimports = ['pycaw.pycaw', 'comtypes.stream', 'win32timezone', 'sounddevice', '_sounddevice_data']
@@ -35,6 +36,7 @@ exe = EXE(
     a.datas,
     [],
     name='VisualStimEdger',
+    icon='icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
