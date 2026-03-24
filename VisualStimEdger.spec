@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [
+    ('models/yolo-fastest.cfg', 'models'),
+    ('models/best.weights',     'models'),
+]
 binaries = []
 hiddenimports = ['pycaw.pycaw', 'comtypes.stream', 'win32timezone']
 tmp_ret = collect_all('pycaw')

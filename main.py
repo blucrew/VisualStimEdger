@@ -14,10 +14,89 @@ import win32ui
 import win32con
 import win32api
 import ctypes
+import os
+import sys
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL
 
 sct_global = mss()
+
+
+def resource_path(relative):
+    """Resolve path to bundled resource — works both in dev and PyInstaller .exe."""
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
+class DickDetector:
+    """
+    Runs YOLOFastest (Darknet) inference via cv2.dnn to detect 'dick-head'.
+    Used to periodically reanchor the CSRT tracker so it can't drift onto hands.
+    """
+    CLASSES = ["dick", "dick-head"]
+    INPUT_SIZE = (320, 320)
+
+    def __init__(self, conf_threshold=0.40, nms_threshold=0.45):
+        cfg     = resource_path(os.path.join("models", "yolo-fastest.cfg"))
+        weights = resource_path(os.path.join("models", "best.weights"))
+        self.conf_threshold = conf_threshold
+        self.nms_threshold  = nms_threshold
+        self._net = None
+        self._output_layers = []
+        try:
+            net = cv2.dnn.readNetFromDarknet(cfg, weights)
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            layer_names = net.getLayerNames()
+            self._output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+            self._net = net
+            print("[DickDetector] Model loaded OK")
+        except Exception as e:
+            print(f"[DickDetector] Failed to load model: {e}")
+
+    @property
+    def available(self):
+        return self._net is not None
+
+    def detect_head(self, frame):
+        """
+        Returns the highest-confidence 'dick-head' bbox as (x, y, w, h) in frame
+        pixel coordinates, or None if nothing found above the confidence threshold.
+        """
+        if not self.available:
+            return None
+
+        h, w = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, self.INPUT_SIZE,
+                                     swapRB=True, crop=False)
+        self._net.setInput(blob)
+        outputs = self._net.forward(self._output_layers)
+
+        boxes, confidences = [], []
+        for output in outputs:
+            for det in output:
+                scores   = det[5:]
+                class_id = int(np.argmax(scores))
+                conf     = float(scores[class_id])
+                if class_id == 1 and conf >= self.conf_threshold:   # class 1 = dick-head
+                    cx = int(det[0] * w)
+                    cy = int(det[1] * h)
+                    bw = int(det[2] * w)
+                    bh = int(det[3] * h)
+                    boxes.append([cx - bw // 2, cy - bh // 2, bw, bh])
+                    confidences.append(conf)
+
+        if not boxes:
+            return None
+
+        indices = cv2.dnn.NMSBoxes(boxes, confidences,
+                                   self.conf_threshold, self.nms_threshold)
+        if len(indices) == 0:
+            return None
+
+        # Return the highest-confidence surviving detection
+        best = max(indices.flatten(), key=lambda i: confidences[i])
+        return tuple(boxes[best])
 
 # --- CONFIGURATION ---
 VERSION = "1.0.0"
@@ -368,6 +447,8 @@ def main():
     tracker = cv2.TrackerCSRT_create()
     tracker.init(initial_frame, bbox)
 
+    detector = DickDetector()
+
     restim = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
 
     root = tk.Tk()
@@ -404,6 +485,7 @@ def main():
         "min_vol_var": tk.DoubleVar(value=0.0),
         "last_bbox": tuple(int(v) for v in bbox),
         "tracking_quality": 1.0,
+        "yolo_frame_counter": 0,
         "mode_var": tk.StringVar(value="restim"),
         "win_audio": None,
         "win_devices": [],
@@ -578,6 +660,19 @@ def main():
             root.after(200, update_frame)
             return
             
+        # --- YOLO reanchor every 15 frames ---
+        YOLO_INTERVAL = 15
+        app_state["yolo_frame_counter"] += 1
+        if detector.available and app_state["yolo_frame_counter"] >= YOLO_INTERVAL:
+            app_state["yolo_frame_counter"] = 0
+            yolo_bbox = detector.detect_head(frame)
+            if yolo_bbox is not None:
+                tracker.init(frame, yolo_bbox)
+                app_state["last_bbox"] = yolo_bbox
+                # Draw a brief cyan indicator so the user can see YOLO fired
+                x, y, w, h = yolo_bbox
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
+
         success, new_bbox = tracker.update(frame)
 
         SIZE_RATIO_MAX  = 2.5    # max allowed bbox size change factor per frame
