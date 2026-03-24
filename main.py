@@ -13,6 +13,9 @@ import win32gui
 import win32ui
 import win32con
 import win32api
+import json
+import pathlib
+from collections import deque
 import ctypes
 import os
 import sys
@@ -125,6 +128,10 @@ AGGR_LEVELS = [
     ("Hard",   2.0),
     ("Expert", 4.0),
 ]
+
+CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
+
+HEAD_Y_SMOOTH = 8   # rolling average window for head Y before volume logic
 
 class RegionSelector:
     def __init__(self, parent=None):
@@ -462,6 +469,7 @@ class App:
         self.tracking_ok        = True
         self.yolo_frame_counter = 0
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
+        self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
 
         # CV
         self.tracker  = cv2.TrackerCSRT_create()
@@ -486,6 +494,8 @@ class App:
         self.port_var    = tk.StringVar(value="12346")
 
         self._build_ui()
+        self._load_config()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._start_update_check()
 
     def run(self):
@@ -595,6 +605,52 @@ class App:
             self.root.after(0, self._show_update_banner, latest, url)
         threading.Thread(target=check_for_update, args=(callback,), daemon=True).start()
 
+    # ------------------------------------------------------------------ config persistence
+
+    def _save_config(self):
+        try:
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "heights":     self.heights,
+                "min_vol":     self.min_vol_var.get(),
+                "max_vol":     self.max_vol_var.get(),
+                "aggressiveness": self.aggr_var.get(),
+                "mode":        self.mode_var.get(),
+                "port":        self.port_var.get(),
+                "device_name": self._device_var.get(),
+            }
+            CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            print(f"[Config] Save failed: {e}")
+
+    def _load_config(self):
+        try:
+            if not CONFIG_PATH.exists():
+                return
+            data = json.loads(CONFIG_PATH.read_text())
+            # Heights
+            for key in ("Edging", "Erect", "Flaccid"):
+                if key in data.get("heights", {}):
+                    self.heights[key] = data["heights"][key]
+            # Sliders / controls
+            if "min_vol"        in data: self.min_vol_var.set(data["min_vol"])
+            if "max_vol"        in data: self.max_vol_var.set(data["max_vol"])
+            if "aggressiveness" in data:
+                self.aggr_var.set(data["aggressiveness"])
+                self._on_aggr_change()
+            if "mode" in data:
+                self.mode_var.set(data["mode"])
+                self._on_mode_change()
+            if "port"        in data: self.port_var.set(data["port"])
+            if "device_name" in data: self._device_var.set(data["device_name"])
+            print("[Config] Loaded from", CONFIG_PATH)
+        except Exception as e:
+            print(f"[Config] Load failed: {e}")
+
+    def _on_close(self):
+        self._save_config()
+        self.root.destroy()
+
     # ------------------------------------------------------------------ callbacks
 
     def _show_update_banner(self, latest, url):
@@ -605,14 +661,17 @@ class App:
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
         print(f"Edging height set at Y: {self.head_y}")
+        self._save_config()
 
     def _set_erect(self):
         self.heights["Erect"] = self.head_y
         print(f"Erect height set at Y: {self.head_y}")
+        self._save_config()
 
     def _set_flaccid(self):
         self.heights["Flaccid"] = self.head_y
         print(f"Flaccid height set at Y: {self.head_y}")
+        self._save_config()
 
     def _reselect_feed(self):
         self.tracking_paused = True
@@ -648,6 +707,7 @@ class App:
             self._windows_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
             if not self.win_devices:
                 self._refresh_devices()
+        self._save_config()
 
     def _on_port_change(self, *_):
         val = self.port_var.get().strip()
@@ -673,6 +733,7 @@ class App:
         idx = self._device_combo.current()
         if 0 <= idx < len(self.win_devices):
             self.win_audio = WindowsAudioClient(self.win_devices[idx])
+            self._save_config()
 
     # ------------------------------------------------------------------ frame loop
 
@@ -757,6 +818,7 @@ class App:
                 self.last_bbox   = (x, y, w, h_box)
                 self.tracking_ok = True
                 self.head_y      = new_cy
+                self._head_y_history.append(new_cy)
                 cv2.rectangle(frame, (x, y), (x + w, y + h_box), (0, 255, 0), 2)
                 cv2.circle(frame, (new_cx, new_cy), 4, (0, 0, 255), -1)
             else:
@@ -798,8 +860,11 @@ class App:
         full_range = self.heights["Flaccid"] - self.heights["Edging"]
         if abs(full_range) < 1:
             return 0.0
-        position   = (self.head_y            - self.heights["Edging"]) / full_range
-        erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
+        # Use smoothed Y to avoid jitter near zone boundaries driving volume spikes
+        smoothed_y = (sum(self._head_y_history) / len(self._head_y_history)
+                      if self._head_y_history else self.head_y)
+        position   = (smoothed_y               - self.heights["Edging"]) / full_range
+        erect_norm = (self.heights["Erect"]     - self.heights["Edging"]) / full_range
         _, aggr_mult = AGGR_LEVELS[self.aggr_var.get()]
 
         if 0.0 <= position <= erect_norm:
