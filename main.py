@@ -28,6 +28,14 @@ TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
+# Aggressiveness levels: (label, delta multiplier)
+AGGR_LEVELS = [
+    ("Easy",   0.4),
+    ("Middle", 1.0),
+    ("Hard",   2.0),
+    ("Expert", 4.0),
+]
+
 class RegionSelector:
     def __init__(self, parent=None):
         if parent is None:
@@ -400,6 +408,7 @@ def main():
         "win_audio": None,
         "win_devices": [],
         "max_vol_var": tk.DoubleVar(value=100.0),
+        "aggr_var": tk.IntVar(value=1),
     }
     
     # --- Video + height buttons side by side ---
@@ -458,6 +467,19 @@ def main():
     tk.Scale(vol_range_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app_state["min_vol_var"], bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 10))
     tk.Label(vol_range_frame, text="Vol Ceiling (%):", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
     tk.Scale(vol_range_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app_state["max_vol_var"], bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 0))
+
+    # --- Aggressiveness dial ---
+    aggr_frame = tk.Frame(root, bg="#222")
+    aggr_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+    tk.Label(aggr_frame, text="Aggressiveness:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
+    aggr_name_label = tk.Label(aggr_frame, text=AGGR_LEVELS[1][0], bg="#222", fg="#ffcc00", font=("Arial", 10, "bold"), width=7)
+    aggr_name_label.pack(side=tk.RIGHT, padx=(0, 5))
+    def _on_aggr_change(*_):
+        aggr_name_label.config(text=AGGR_LEVELS[app_state["aggr_var"].get()][0])
+    tk.Scale(aggr_frame, from_=0, to=3, resolution=1, orient=tk.HORIZONTAL,
+             variable=app_state["aggr_var"], command=_on_aggr_change,
+             bg="#222", fg="white", highlightthickness=0, showvalue=0, length=180,
+             tickinterval=1).pack(side=tk.LEFT, padx=(8, 4))
 
     # --- Mode toggle ---
     mode_frame = tk.Frame(root, bg="#222")
@@ -631,16 +653,18 @@ def main():
                     position  = (app_state["head_y"] - h["Edging"]) / full_range
                     erect_norm = (h["Erect"]            - h["Edging"]) / full_range
 
+                    _, aggr_mult = AGGR_LEVELS[app_state["aggr_var"].get()]
+
                     if 0.0 <= position <= erect_norm:
                         # Head is in the sweet zone (edging ↔ erect): hold volume
                         delta = 0.0
                     elif position < 0.0:
-                        # Past edging threshold — ease off slowly
-                        delta = -VOLUME_STEP * 0.5
+                        # Past edging threshold — ease off
+                        delta = -VOLUME_STEP * 0.5 * aggr_mult
                     else:
                         # Past erect, drifting toward flaccid — nudge up proportionally
                         dist = (position - erect_norm) / max(1.0 - erect_norm, 0.01)
-                        delta = VOLUME_STEP * min(dist, 1.0)
+                        delta = VOLUME_STEP * min(dist, 1.0) * aggr_mult
 
             if mode == "restim":
                 if delta != 0.0:
