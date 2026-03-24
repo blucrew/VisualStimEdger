@@ -51,6 +51,7 @@ class DickDetector:
     INPUT_SIZE = (320, 320)
 
     def __init__(self, conf_threshold=0.40, nms_threshold=0.45):
+        self.last_conf = 0.0  # confidence of most recent detection (0 if none)
         cfg     = resource_path(os.path.join("models", "yolo-fastest.cfg"))
         weights = resource_path(os.path.join("models", "best.weights"))
         self.conf_threshold = conf_threshold
@@ -110,6 +111,7 @@ class DickDetector:
 
         # Return the highest-confidence surviving detection
         best = max(indices.flatten(), key=lambda i: confidences[i])
+        self.last_conf = confidences[best]
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
@@ -132,7 +134,8 @@ AGGR_LEVELS = [
 
 CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
 
-HEAD_Y_SMOOTH = 8   # rolling average window for head Y before volume logic
+HEAD_Y_SMOOTH      = 8    # rolling average window for head Y before volume logic
+RUIN_HOLD_SECONDS  = 3.0  # seconds past the ruin line before volume drops to floor
 
 class RegionSelector:
     def __init__(self, parent=None):
@@ -351,26 +354,46 @@ def select_head(frame_cv, parent=None):
     return state['bbox']
 
 class RestimClient:
+    _BACKOFF_INITIAL = 1.0
+    _BACKOFF_MAX     = 30.0
+
     def __init__(self, host, port, axis):
         self.host   = host
         self.port   = port
         self.axis   = axis
         self.volume = 0.5
         self.ws     = None
-        self._lock  = threading.Lock()
-        # Connect lazily on first use — don't block startup if Restim isn't running
+        self._lock        = threading.Lock()
+        self._connecting  = False
+        self._backoff     = self._BACKOFF_INITIAL
+        self._next_attempt = 0.0  # connect immediately on first call
 
-    def connect(self):
+    def maybe_reconnect(self):
+        """Call from the main thread. Spawns a connect thread when backoff allows."""
         with self._lock:
-            try:
-                ws_url = f"ws://{self.host}:{self.port}"
-                ws = websocket.create_connection(ws_url, timeout=2.0)
-                self.ws = ws
-                print(f"[Restim] Connected to WebSocket at {ws_url}")
-                self.set_volume(self.volume, instant=True)
-            except Exception as e:
-                print(f"[Restim] WebSocket connection failed: {e}. Ensure WebSocket Server is enabled on port {self.port}")
-                self.ws = None
+            if self.ws is not None or self._connecting:
+                return
+            if time.time() < self._next_attempt:
+                return
+            self._connecting = True
+        threading.Thread(target=self._connect_bg, daemon=True).start()
+
+    def _connect_bg(self):
+        try:
+            ws_url = f"ws://{self.host}:{self.port}"
+            ws = websocket.create_connection(ws_url, timeout=2.0)
+            with self._lock:
+                self.ws         = ws
+                self._backoff   = self._BACKOFF_INITIAL  # reset on success
+                self._connecting = False
+            print(f"[Restim] Connected at {ws_url}")
+            self.set_volume(self.volume, instant=True)
+        except Exception as e:
+            with self._lock:
+                self._backoff      = min(self._backoff * 2, self._BACKOFF_MAX)
+                self._next_attempt = time.time() + self._backoff
+                self._connecting   = False
+            print(f"[Restim] Connect failed — retry in {self._backoff:.0f}s: {e}")
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
         with self._lock:
@@ -463,7 +486,8 @@ class App:
 
         # Tracking state
         self.head_y          = bbox[1] + bbox[3] // 2
-        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None}
+        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None, "Ruin": None}
+        self._ruin_start     = None  # timestamp when head crossed the ruin line
         self.last_vol_time   = time.time()
         self.tracking_paused    = False
         self.last_bbox          = tuple(int(v) for v in bbox)
@@ -471,6 +495,7 @@ class App:
         self.yolo_frame_counter = 0
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
+        self._frame_times       = deque(maxlen=30)  # for FPS calculation
 
         # Session stats
         self.session_start   = time.time()
@@ -545,7 +570,9 @@ class App:
         btn_font         = ("Arial", 12, "bold")
         height_btn_frame = tk.Frame(top_frame, bg="#222")
         height_btn_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
-        tk.Button(height_btn_frame, text="Set Edging Height",  command=self._set_edging,  bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=(0, 2))
+        tk.Button(height_btn_frame, text="Set Ruin Height",    command=self._set_ruin,    bg="#cc0000", fg="white", font=btn_font).pack(fill=tk.X, pady=(0, 2))
+        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
+        tk.Button(height_btn_frame, text="Set Edging Height",  command=self._set_edging,  bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=2)
         tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
         tk.Button(height_btn_frame, text="Set Erect Height",   command=self._set_erect,   bg="#99ff99", font=btn_font).pack(fill=tk.X, pady=2)
         tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
@@ -655,7 +682,7 @@ class App:
                 return
             data = json.loads(CONFIG_PATH.read_text())
             # Heights
-            for key in ("Edging", "Erect", "Flaccid"):
+            for key in ("Ruin", "Edging", "Erect", "Flaccid"):
                 if key in data.get("heights", {}):
                     self.heights[key] = data["heights"][key]
             # Sliders / controls
@@ -705,6 +732,11 @@ class App:
         self._update_label.config(text=f"Update available: v{latest}")
         self._update_btn.config(command=lambda: webbrowser.open(url))
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
+
+    def _set_ruin(self):
+        self.heights["Ruin"] = self.head_y
+        print(f"Ruin height set at Y: {self.head_y}")
+        self._save_config()
 
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
@@ -804,6 +836,7 @@ class App:
             self.root.after(10, self._update_frame)
             return
 
+        self._frame_times.append(time.time())
         self._maybe_yolo_reanchor(frame)
         self._run_tracker(frame)
 
@@ -943,6 +976,7 @@ class App:
 
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
+        if self.heights["Ruin"]    is not None: cv2.line(frame, (0, self.heights["Ruin"]),    (fw, self.heights["Ruin"]),    (0, 0, 180), 2)
         if self.heights["Edging"]  is not None: cv2.line(frame, (0, self.heights["Edging"]),  (fw, self.heights["Edging"]),  (0, 0, 255), 2)
         if self.heights["Erect"]   is not None: cv2.line(frame, (0, self.heights["Erect"]),   (fw, self.heights["Erect"]),   (0, 255, 0), 2)
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, self.heights["Flaccid"]), (fw, self.heights["Flaccid"]), (255, 0, 0), 2)
@@ -983,6 +1017,37 @@ class App:
         vel_boost = max(0.0, velocity) * 0.5   # moving fast toward flaccid = respond harder
         return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
+    def _check_ruin(self, smoothed_y):
+        """Drop volume to floor if head stays past the ruin line for RUIN_HOLD_SECONDS."""
+        ruin_y   = self.heights.get("Ruin")
+        edging_y = self.heights.get("Edging")
+        flaccid_y = self.heights.get("Flaccid")
+        if ruin_y is None or edging_y is None or flaccid_y is None:
+            return
+
+        full_range = flaccid_y - edging_y
+        if abs(full_range) < 1:
+            return
+
+        ruin_norm = (ruin_y   - edging_y) / full_range  # expected < 0 (past edging)
+        position  = (smoothed_y - edging_y) / full_range
+
+        if position <= ruin_norm:
+            if self._ruin_start is None:
+                self._ruin_start = time.time()
+            elif time.time() - self._ruin_start >= RUIN_HOLD_SECONDS:
+                floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+                ceil_val  = self.max_vol_var.get() / 100.0
+                mode      = self.mode_var.get()
+                if mode == "restim":
+                    self.restim.set_volume(floor_val, floor=floor_val, ceiling=ceil_val)
+                elif mode == "windows" and self.win_audio and self.win_audio.connected:
+                    self.win_audio.set_volume(floor_val, floor=floor_val, ceiling=ceil_val)
+                self._ruin_start = None
+                print("[Ruin] Triggered — volume dropped to floor")
+        else:
+            self._ruin_start = None  # reset timer if head leaves ruin zone
+
     def _tick_volume(self):
         cur_time = time.time()
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
@@ -992,6 +1057,10 @@ class App:
         if self.hold_active:
             return  # Volume frozen by user
 
+        history    = self._head_y_history
+        smoothed_y = sum(history) / len(history) if history else self.head_y
+        self._check_ruin(smoothed_y)
+
         floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
         ceil_val  = self.max_vol_var.get() / 100.0
         delta     = self._compute_volume_delta()
@@ -1000,8 +1069,7 @@ class App:
         if mode == "restim":
             if delta != 0.0:
                 self.restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
-            if self.restim.ws is None:
-                threading.Thread(target=self.restim.connect, daemon=True).start()
+            self.restim.maybe_reconnect()
         elif mode == "windows" and self.win_audio and self.win_audio.connected and delta != 0.0:
             self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
 
@@ -1020,8 +1088,15 @@ class App:
             conn_color = "#ffaa00"
             vol_str    = "--"
             src_str    = "Win Audio: No Device"
+
+        ft = self._frame_times
+        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
+        yolo_str = (f"YOLO: {self.detector.last_conf:.0%}"
+                    if self.detector.available and self.detector.last_conf > 0 else "YOLO: --")
+
         self.info_label.config(
-            text=f"State: {state}  |  Vol: {vol_str}  |  {quality_str}  |  {src_str}",
+            text=(f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
+                  f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}"),
             fg=conn_color,
         )
 
