@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -337,7 +337,14 @@ def select_head(frame_cv, parent=None):
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_drag)
     canvas.bind("<ButtonRelease-1>", on_release)
-    
+
+    def _cancel():
+        state['bbox'] = (0, 0, 0, 0)
+        root.destroy()
+
+    root.bind("<Escape>", lambda e: _cancel())
+    root.protocol("WM_DELETE_WINDOW", _cancel)
+
     btn_frame = tk.Frame(root)
     btn_frame.pack(fill=tk.X)
     tk.Button(btn_frame, text="Confirm Head Area ✅", command=root.destroy, font=("Arial", 12, "bold"), bg="#4CAF50", fg="white").pack(pady=5)
@@ -1197,7 +1204,7 @@ class App:
             src_str    = "Win Audio: No Device"
 
         ft = self._frame_times
-        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) >= 2 else 0.0
+        fps = (len(ft) - 1) / max(ft[-1] - ft[0], 1e-9) if len(ft) >= 2 else 0.0
         yolo_str = (f"YOLO: {self.detector.last_conf:.0%}"
                     if self.detector.available and self.detector.last_conf > 0 else "YOLO: --")
 
