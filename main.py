@@ -15,6 +15,7 @@ import win32con
 import win32api
 import json
 import pathlib
+import queue
 from collections import deque
 import ctypes
 import os
@@ -471,6 +472,12 @@ class App:
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
 
+        # Background capture — keeps the main thread free for tracking + UI
+        self._frame_queue    = queue.Queue(maxsize=2)
+        self._running        = True
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
+
         # CV
         self.tracker  = cv2.TrackerCSRT_create()
         self.tracker.init(initial_frame, bbox)
@@ -648,8 +655,30 @@ class App:
             print(f"[Config] Load failed: {e}")
 
     def _on_close(self):
+        self._running = False
         self._save_config()
         self.root.destroy()
+
+    # ------------------------------------------------------------------ capture thread
+
+    def _capture_loop(self):
+        """Runs in background thread — captures frames and drops them in the queue."""
+        while self._running:
+            if self.tracking_paused:
+                time.sleep(0.05)
+                continue
+            frame = capture_window_region(self.hwnd, self.rel_box)
+            if frame is not None:
+                # If the queue is full, discard the stale frame so we always
+                # feed the tracker the freshest capture available
+                if self._frame_queue.full():
+                    try:
+                        self._frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self._frame_queue.put(frame)
+            else:
+                time.sleep(0.05)
 
     # ------------------------------------------------------------------ callbacks
 
@@ -742,10 +771,11 @@ class App:
             self.root.after(100, self._update_frame)
             return
 
-        frame = capture_window_region(self.hwnd, self.rel_box)
-        if frame is None:
-            self.info_label.config(text="State: WINDOW HIDDEN? | Vol: -- | WS: --", fg="yellow")
-            self.root.after(200, self._update_frame)
+        try:
+            frame = self._frame_queue.get_nowait()
+        except queue.Empty:
+            # Capture thread hasn't produced a frame yet — try again shortly
+            self.root.after(10, self._update_frame)
             return
 
         self._maybe_yolo_reanchor(frame)
@@ -860,19 +890,35 @@ class App:
         full_range = self.heights["Flaccid"] - self.heights["Edging"]
         if abs(full_range) < 1:
             return 0.0
-        # Use smoothed Y to avoid jitter near zone boundaries driving volume spikes
-        smoothed_y = (sum(self._head_y_history) / len(self._head_y_history)
-                      if self._head_y_history else self.head_y)
-        position   = (smoothed_y               - self.heights["Edging"]) / full_range
-        erect_norm = (self.heights["Erect"]     - self.heights["Edging"]) / full_range
+
+        history = self._head_y_history
+        smoothed_y = sum(history) / len(history) if history else self.head_y
+
+        position   = (smoothed_y             - self.heights["Edging"]) / full_range
+        erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
         _, aggr_mult = AGGR_LEVELS[self.aggr_var.get()]
 
+        # Velocity: normalised rate of change across the history window.
+        # Positive = moving toward flaccid, negative = moving toward edging.
+        if len(history) >= 4:
+            velocity = (history[-1] - history[0]) / (len(history) * abs(full_range))
+        else:
+            velocity = 0.0
+
         if 0.0 <= position <= erect_norm:
-            return 0.0
+            # Inside the sweet zone — only react if clearly trending flaccid
+            vel_nudge = max(0.0, velocity) * 0.4
+            return VOLUME_STEP * vel_nudge * aggr_mult
+
         if position < 0.0:
-            return -VOLUME_STEP * 0.5 * aggr_mult
-        dist = (position - erect_norm) / max(1.0 - erect_norm, 0.01)
-        return VOLUME_STEP * min(dist, 1.0) * aggr_mult
+            # Past edging — ease off; dampen further if still moving toward edging
+            vel_damp = max(0.0, -velocity) * 0.3
+            return -VOLUME_STEP * (0.5 + vel_damp) * aggr_mult
+
+        # Past erect, drifting toward flaccid
+        dist      = (position - erect_norm) / max(1.0 - erect_norm, 0.01)
+        vel_boost = max(0.0, velocity) * 0.5   # moving fast toward flaccid = respond harder
+        return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
     def _tick_volume(self):
         cur_time = time.time()
