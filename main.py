@@ -486,6 +486,7 @@ def main():
         "last_bbox": tuple(int(v) for v in bbox),
         "tracking_quality": 1.0,
         "yolo_frame_counter": 0,
+        "yolo_candidate": None,   # (bbox, hits) — pending confirmation before reanchor
         "mode_var": tk.StringVar(value="restim"),
         "win_audio": None,
         "win_devices": [],
@@ -661,17 +662,51 @@ def main():
             return
             
         # --- YOLO reanchor every 15 frames ---
-        YOLO_INTERVAL = 15
+        YOLO_INTERVAL   = 15
+        YOLO_CONFIRM    = 2      # detections in the same area required before reanchoring
+        YOLO_MAX_JUMP   = 2.0   # max allowed jump as multiple of current bbox diagonal
         app_state["yolo_frame_counter"] += 1
         if detector.available and app_state["yolo_frame_counter"] >= YOLO_INTERVAL:
             app_state["yolo_frame_counter"] = 0
             yolo_bbox = detector.detect_head(frame)
+
             if yolo_bbox is not None:
-                tracker.init(frame, yolo_bbox)
-                app_state["last_bbox"] = yolo_bbox
-                # Draw a brief cyan indicator so the user can see YOLO fired
-                x, y, w, h = yolo_bbox
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
+                # Distance gate — reject if detection is too far from current position
+                px, py, pw, ph = app_state["last_bbox"]
+                cur_cx, cur_cy = px + pw // 2, py + ph // 2
+                yx, yy, yw, yh = yolo_bbox
+                det_cx, det_cy = yx + yw // 2, yy + yh // 2
+                diag = np.sqrt(pw ** 2 + ph ** 2)
+                dist = np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2)
+
+                if dist <= diag * YOLO_MAX_JUMP:
+                    # Accumulate confirmation hits
+                    cand = app_state["yolo_candidate"]
+                    if cand is not None:
+                        prev_bbox, hits = cand
+                        # Check the new detection is close to the previous candidate
+                        pcx = prev_bbox[0] + prev_bbox[2] // 2
+                        pcy = prev_bbox[1] + prev_bbox[3] // 2
+                        if np.sqrt((det_cx - pcx) ** 2 + (det_cy - pcy) ** 2) <= diag:
+                            hits += 1
+                        else:
+                            hits = 1  # new candidate, reset
+                    else:
+                        hits = 1
+
+                    app_state["yolo_candidate"] = (yolo_bbox, hits)
+
+                    if hits >= YOLO_CONFIRM:
+                        tracker.init(frame, yolo_bbox)
+                        app_state["last_bbox"] = yolo_bbox
+                        app_state["yolo_candidate"] = None
+                        x, y, w, h = yolo_bbox
+                        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
+                else:
+                    # Too far — could be balls or hand; discard and reset candidate
+                    app_state["yolo_candidate"] = None
+            else:
+                app_state["yolo_candidate"] = None
 
         success, new_bbox = tracker.update(frame)
 
