@@ -107,6 +107,11 @@ TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
+# YOLO reanchoring tuning
+YOLO_INTERVAL = 15     # run detector every N frames
+YOLO_CONFIRM  = 2      # consecutive detections in same area before reanchoring
+YOLO_MAX_JUMP = 2.0    # max allowed jump as multiple of current bbox diagonal
+
 # Aggressiveness levels: (label, delta multiplier)
 AGGR_LEVELS = [
     ("Easy",   0.4),
@@ -261,7 +266,6 @@ def capture_window_region(hwnd, rel_box):
     except Exception as e:
         print(f"Capture Exception: {e}")
         return None
-    return None
 
 def select_head(frame_cv, parent=None):
     if parent is None:
@@ -393,7 +397,7 @@ class WindowsAudioClient:
     def get_volume(self):
         try:
             return self._volume_interface.GetMasterVolumeLevelScalar()
-        except:
+        except Exception:
             return 0.0
 
     def set_volume(self, vol, floor=0.0, ceiling=1.0):
@@ -570,10 +574,10 @@ def main():
     tk.Label(mode_frame, text="Output mode:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT, padx=(0, 8))
     tk.Radiobutton(mode_frame, text="Restim", variable=app_state["mode_var"], value="restim",
                    bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                   command=lambda: _on_mode_change()).pack(side=tk.LEFT)
+                   command=_on_mode_change).pack(side=tk.LEFT)
     tk.Radiobutton(mode_frame, text="Windows Audio", variable=app_state["mode_var"], value="windows",
                    bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                   command=lambda: _on_mode_change()).pack(side=tk.LEFT, padx=(8, 0))
+                   command=_on_mode_change).pack(side=tk.LEFT, padx=(8, 0))
 
     # --- Restim options ---
     restim_opts = tk.Frame(root, bg="#222")
@@ -637,13 +641,13 @@ def main():
     info_label.pack(pady=10)
 
     def determine_state(y_pos):
-        h = app_state["heights"]
-        if h["Edging"] is None or h["Erect"] is None or h["Flaccid"] is None:
+        heights = app_state["heights"]
+        if heights["Edging"] is None or heights["Erect"] is None or heights["Flaccid"] is None:
             return "Erect (Needs Calibration)"
-            
-        dist_edging  = abs(y_pos - h["Edging"])
-        dist_erect   = abs(y_pos - h["Erect"])
-        dist_flaccid = abs(y_pos - h["Flaccid"])
+
+        dist_edging  = abs(y_pos - heights["Edging"])
+        dist_erect   = abs(y_pos - heights["Erect"])
+        dist_flaccid = abs(y_pos - heights["Flaccid"])
 
         minimum = min(dist_edging, dist_erect, dist_flaccid)
         if minimum == dist_edging:  return "Edging"
@@ -661,10 +665,7 @@ def main():
             root.after(200, update_frame)
             return
             
-        # --- YOLO reanchor every 15 frames ---
-        YOLO_INTERVAL   = 15
-        YOLO_CONFIRM    = 2      # detections in the same area required before reanchoring
-        YOLO_MAX_JUMP   = 2.0   # max allowed jump as multiple of current bbox diagonal
+        # --- YOLO reanchor ---
         app_state["yolo_frame_counter"] += 1
         if detector.available and app_state["yolo_frame_counter"] >= YOLO_INTERVAL:
             app_state["yolo_frame_counter"] = 0
@@ -758,30 +759,29 @@ def main():
 
         state = determine_state(app_state["head_y"])
         app_state["current_state"] = state
-        
-        h = app_state["heights"]
-        if h["Edging"] is not None: cv2.line(frame, (0, h["Edging"]), (frame.shape[1], h["Edging"]), (0, 0, 255), 2)
-        if h["Erect"] is not None: cv2.line(frame, (0, h["Erect"]), (frame.shape[1], h["Erect"]), (0, 255, 0), 2)
-        if h["Flaccid"] is not None: cv2.line(frame, (0, h["Flaccid"]), (frame.shape[1], h["Flaccid"]), (255, 0, 0), 2)
-        
+
+        heights = app_state["heights"]
+        if heights["Edging"] is not None:  cv2.line(frame, (0, heights["Edging"]),  (frame.shape[1], heights["Edging"]),  (0, 0, 255), 2)
+        if heights["Erect"] is not None:   cv2.line(frame, (0, heights["Erect"]),   (frame.shape[1], heights["Erect"]),   (0, 255, 0), 2)
+        if heights["Flaccid"] is not None: cv2.line(frame, (0, heights["Flaccid"]), (frame.shape[1], heights["Flaccid"]), (255, 0, 0), 2)
+
         cur_time = time.time()
         if cur_time - app_state["last_vol_time"] > VOLUME_UPDATE_INTERVAL:
             floor_val = app_state["min_vol_var"].get() / 100.0
             ceil_val  = app_state["max_vol_var"].get() / 100.0
             floor_val = min(floor_val, ceil_val)
             mode = app_state["mode_var"].get()
-            h = app_state["heights"]
 
             delta = 0.0
-            if all(v is not None for v in h.values()):
-                # Normalise head position along the full sleep→excited axis.
-                # position = 0.0  → head exactly at excited height
-                # position = 1.0  → head exactly at sleep height
+            if all(v is not None for v in heights.values()):
+                # Normalise head position along the flaccid→edging axis.
+                # position = 0.0  → head exactly at edging height
+                # position = 1.0  → head exactly at flaccid height
                 # erect_norm      → where erect sits in that 0-1 range
-                full_range = h["Flaccid"] - h["Edging"]
+                full_range = heights["Flaccid"] - heights["Edging"]
                 if abs(full_range) >= 1:
-                    position  = (app_state["head_y"] - h["Edging"]) / full_range
-                    erect_norm = (h["Erect"]            - h["Edging"]) / full_range
+                    position   = (app_state["head_y"] - heights["Edging"]) / full_range
+                    erect_norm = (heights["Erect"]     - heights["Edging"]) / full_range
 
                     _, aggr_mult = AGGR_LEVELS[app_state["aggr_var"].get()]
 
@@ -800,7 +800,7 @@ def main():
                 if delta != 0.0:
                     restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
                 if restim.ws is None:
-                    restim.connect()
+                    threading.Thread(target=restim.connect, daemon=True).start()
             elif mode == "windows":
                 win_audio = app_state["win_audio"]
                 if win_audio and win_audio.connected and delta != 0.0:
