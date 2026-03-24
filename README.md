@@ -13,6 +13,7 @@ Tracks your cock on a camera feed and uses its position — flaccid, erect, or e
 - A camera feed showing your cock (OBS, a webcam viewer, or any window with a live feed)
 - Restim running with WebSocket server enabled, **or** any Windows audio output device
 - Electrodes wired up and ready
+- A dick that goes erect when you're close to cumming - this works visually
 
 Install dependencies:
 
