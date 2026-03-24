@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -513,13 +513,36 @@ class WindowsAudioClient:
 
     @staticmethod
     def _resolve_dev(name):
-        """Find an IMMDevice by friendly name, or fall back to default speakers."""
+        """Find an IMMDevice for the given friendly name.
+
+        Tries in order:
+        1. Exact match against GetAllDevices() FriendlyName.
+        2. Substring match — handles PortAudio vs WASAPI naming differences
+           e.g. "Speakers (Realtek)" vs "Speakers (Realtek(R) Audio)".
+        3. First available render device.
+        4. GetSpeakers() — default output endpoint.
+        """
         try:
-            for d in AudioUtilities.GetAllDevices():
-                if d.FriendlyName == name and d._dev is not None:
+            all_devs = [d for d in AudioUtilities.GetAllDevices() if d._dev is not None]
+            # Pass 1: exact
+            for d in all_devs:
+                if d.FriendlyName == name:
                     return d._dev
-        except Exception:
-            pass
+            # Pass 2: fuzzy — one name is a substring of the other
+            nl = name.lower()
+            for d in all_devs:
+                fl = d.FriendlyName.lower()
+                if nl in fl or fl in nl:
+                    log.debug(f"WinAudio: fuzzy matched '{name}' → '{d.FriendlyName}'")
+                    return d._dev
+            # Pass 3: first render device
+            render = [d for d in all_devs if int(d.flow) == 0]
+            if render:
+                log.debug(f"WinAudio: no name match, using first render device '{render[0].FriendlyName}'")
+                return render[0]._dev
+        except Exception as e:
+            log.debug(f"WinAudio: _resolve_dev enumeration error: {e}")
+        # Pass 4: default speakers
         try:
             return AudioUtilities.GetSpeakers()
         except Exception:
