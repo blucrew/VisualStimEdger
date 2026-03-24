@@ -1,5 +1,8 @@
 # VisualStimEdger
 
+> **⚡ This is a companion app — it does not generate e-stim signals or audio on its own.**
+> You need an existing setup already producing stimulus: [Restim](https://restim.io), [electron-redrive](https://github.com/edger-dev/electron-redrive), xToys, an `.mp3` file playing through a stereo box, or anything else you were already using. VisualStimEdger simply controls the **volume/intensity** of that existing signal based on what it sees on camera.
+
 Tracks your cock on a camera feed and uses its position — flaccid, erect, or edging — to automatically control your Restim volume or a Windows audio output device. The goal is to keep you in the erect-to-edging zone by easing off stimulus when you get too close to the edge, and ramping it back up when you start to drop.
 
 ---
