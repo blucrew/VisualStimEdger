@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -752,7 +752,7 @@ class App:
                 "aggressiveness": self.aggr_var.get(),
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
-                "device_name": self._device_var.get(),
+                "device_name": self._device_combo.get(),
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -893,12 +893,14 @@ class App:
             new_port = int(val)
             if new_port != self.restim.port:
                 self.restim.port = new_port
-                if self.restim.ws:
+                with self.restim._lock:
+                    old_ws = self.restim.ws
+                    self.restim.ws = None
+                if old_ws:
                     try:
-                        self.restim.ws.close()
+                        old_ws.close()
                     except Exception:
                         pass
-                    self.restim.ws = None
 
     def _refresh_devices(self):
         self.win_devices = list_audio_devices()
@@ -1033,7 +1035,7 @@ class App:
             self.tracker.init(frame, self.last_bbox)
 
     def _determine_state(self, y_pos):
-        if any(v is None for v in self.heights.values()):
+        if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return "Erect (Needs Calibration)"
         dist_edging  = abs(y_pos - self.heights["Edging"])
         dist_erect   = abs(y_pos - self.heights["Erect"])
@@ -1087,7 +1089,7 @@ class App:
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, self.heights["Flaccid"]), (fw, self.heights["Flaccid"]), (255, 0, 0), 2)
 
     def _compute_volume_delta(self):
-        if any(v is None for v in self.heights.values()):
+        if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return 0.0
         full_range = self.heights["Flaccid"] - self.heights["Edging"]
         if abs(full_range) < 1:
