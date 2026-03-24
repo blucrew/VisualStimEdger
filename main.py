@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -840,6 +840,8 @@ class App:
         self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
                                     font=ctk.CTkFont(size=10, weight="bold"), width=120)
         self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
+        self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         _divider()
 
@@ -949,6 +951,24 @@ class App:
                 time.sleep(0.05)
 
     # ------------------------------------------------------------------ callbacks
+
+    def _show_about_menu(self):
+        menu = tk.Menu(self.root, tearoff=0,
+                       bg=self._C_SURFACE2, fg=self._C_TEXT,
+                       activebackground=self._C_RED, activeforeground="white",
+                       borderwidth=1, relief="flat",
+                       font=("Segoe UI", 10))
+        menu.add_command(label=f"Version  v{VERSION}", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="Support Us ❤   ko-fi.com/stimstation",
+                         command=lambda: webbrowser.open("https://ko-fi.com/stimstation"))
+        btn = self._about_btn
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _show_update_banner(self, latest, url):
         self._update_label.configure(text=f"Update available: v{latest}")
