@@ -123,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.8"
+VERSION = "1.1.9"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -431,19 +431,43 @@ class RestimClient:
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
 
 
+class _DefaultAudioDevice:
+    """Minimal stand-in returned when full device enumeration fails."""
+    FriendlyName = "Default Output Device"
+    def __init__(self, dev):
+        self._dev = dev
+
+
 def list_audio_devices():
-    """Return all render (output) devices as list of pycaw AudioDevice objects."""
+    """Return all render (output) devices.
+
+    Strategy (each level is only tried if the previous yields nothing):
+    1. GetAllDevices() filtered to render (flow==0) endpoints.
+    2. GetAllDevices() unfiltered — in case the flow comparison breaks.
+    3. GetSpeakers() — returns just the default output as a fallback device.
+    """
+    # Level 1 & 2: full enumeration
     try:
         devices = AudioUtilities.GetAllDevices()
-        # Use int() because some pycaw versions return a comtypes enum for .flow
-        # (EDataFlow.eRender) rather than the bare integer 0, which makes == 0 fail.
         render = [d for d in devices if int(d.flow) == 0]
-        # Fallback: if filtering yields nothing, return everything so the user
-        # at least sees something in the dropdown (better than an empty list).
-        return render if render else list(devices)
+        if render:
+            return render
+        if devices:
+            log.warning("WinAudio: flow filter matched nothing — showing all devices")
+            return list(devices)
     except Exception as e:
-        log.error(f"WinAudio: could not enumerate devices: {e}")
-        return []
+        log.error(f"WinAudio: GetAllDevices failed: {e}")
+
+    # Level 3: default speakers only
+    try:
+        log.warning("WinAudio: falling back to GetSpeakers() default device")
+        default = AudioUtilities.GetSpeakers()
+        if default:
+            return [_DefaultAudioDevice(default)]
+    except Exception as e:
+        log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
+
+    return []
 
 
 class WindowsAudioClient:
