@@ -359,12 +359,13 @@ def main():
         "max_vol_var": tk.DoubleVar(value=100.0),
     }
     
-    video_label = tk.Label(root, bg="#222")
-    video_label.pack(padx=10, pady=10)
-    
-    controls_frame = tk.Frame(root, bg="#222")
-    controls_frame.pack(fill=tk.X, padx=10, pady=5)
-    
+    # --- Video + height buttons side by side ---
+    top_frame = tk.Frame(root, bg="#222")
+    top_frame.pack(padx=10, pady=10)
+
+    video_label = tk.Label(top_frame, bg="#222")
+    video_label.pack(side=tk.LEFT)
+
     def set_edging():
         app_state["heights"]["Edging"] = app_state["head_y"]
         print(f"Edging height set at Y: {app_state['head_y']}")
@@ -374,7 +375,16 @@ def main():
     def set_flaccid():
         app_state["heights"]["Flaccid"] = app_state["head_y"]
         print(f"Flaccid height set at Y: {app_state['head_y']}")
-        
+
+    btn_font = ("Arial", 12, "bold")
+    height_btn_frame = tk.Frame(top_frame, bg="#222")
+    height_btn_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+    tk.Button(height_btn_frame, text="Set Edging Height", command=set_edging, bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=(0, 2))
+    tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
+    tk.Button(height_btn_frame, text="Set Erect Height", command=set_erect, bg="#99ff99", font=btn_font).pack(fill=tk.X, pady=2)
+    tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
+    tk.Button(height_btn_frame, text="Set Flaccid Height", command=set_flaccid, bg="#9999ff", font=btn_font).pack(fill=tk.X, pady=(2, 0))
+
     def reselect_feed():
         app_state["tracking_paused"] = True
         new_hwnd, new_rel_box = select_region(root)
@@ -396,11 +406,6 @@ def main():
                 app_state["head_y"] = new_bbox[1] + new_bbox[3]//2
                 app_state["tracking_quality"] = 1.0
         app_state["tracking_paused"] = False
-    
-    btn_font = ("Arial", 12, "bold")
-    tk.Button(controls_frame, text="Set Edging Height", command=set_edging, bg="#ff9999", font=btn_font).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5, pady=5)
-    tk.Button(controls_frame, text="Set Erect Height", command=set_erect, bg="#99ff99", font=btn_font).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5, pady=5)
-    tk.Button(controls_frame, text="Set Flaccid Height", command=set_flaccid, bg="#9999ff", font=btn_font).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5, pady=5)
     
     # --- Volume floor / ceiling ---
     vol_range_frame = tk.Frame(root, bg="#222")
