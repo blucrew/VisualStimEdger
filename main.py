@@ -472,6 +472,17 @@ class App:
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
 
+        # Session stats
+        self.session_start   = time.time()
+        self.state_times     = {"Edging": 0.0, "Erect": 0.0, "Flaccid": 0.0}
+        self.edge_count      = 0
+        self._prev_state     = "Erect"
+        self._last_state_time = time.time()
+        self._stats_tick     = 0   # throttle label updates
+
+        # Hold
+        self.hold_active = False
+
         # Background capture — keeps the main thread free for tracking + UI
         self._frame_queue    = queue.Queue(maxsize=2)
         self._running        = True
@@ -595,17 +606,25 @@ class App:
         # Show default mode panel
         self._restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
 
-        # Re-select buttons
+        # Re-select + hold buttons
         reselect_frame = tk.Frame(root, bg="#222")
         reselect_frame.pack(fill=tk.X, padx=10, pady=5)
         tk.Button(reselect_frame, text="Re-Select Video Feed Area", command=self._reselect_feed,
                   bg="#555", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
         tk.Button(reselect_frame, text="Re-Select Cock Head", command=self._reselect_head,
                   bg="#444", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        self._hold_btn = tk.Button(reselect_frame, text="Hold Volume",
+                                   command=self._toggle_hold,
+                                   bg="#555", fg="white", font=("Arial", 10, "bold"), width=12)
+        self._hold_btn.pack(side=tk.LEFT, padx=5)
 
         self.info_label = tk.Label(root, text="State: Erect | Vol: 50% | WS: Disconnected",
                                    font=("Arial", 14), bg="#222", fg="white")
-        self.info_label.pack(pady=10)
+        self.info_label.pack(pady=(10, 2))
+
+        self.stats_label = tk.Label(root, text="Session: 00:00  |  Edges: 0",
+                                    font=("Arial", 9), bg="#222", fg="#aaaaaa")
+        self.stats_label.pack(pady=(0, 8))
 
     def _start_update_check(self):
         def callback(latest, url):
@@ -764,6 +783,13 @@ class App:
             self.win_audio = WindowsAudioClient(self.win_devices[idx])
             self._save_config()
 
+    def _toggle_hold(self):
+        self.hold_active = not self.hold_active
+        if self.hold_active:
+            self._hold_btn.config(text="HELD [|]", bg="#cc4400")
+        else:
+            self._hold_btn.config(text="Hold Volume", bg="#555")
+
     # ------------------------------------------------------------------ frame loop
 
     def _update_frame(self):
@@ -783,6 +809,7 @@ class App:
 
         state = self._determine_state(self.head_y)
 
+        self._update_stats(state)
         self._draw_height_lines(frame)
         self._tick_volume()
         self._update_status_label(state)
@@ -878,6 +905,42 @@ class App:
         if minimum == dist_flaccid: return "Flaccid"
         return "Erect"
 
+    def _update_stats(self, state):
+        """Accumulate time-in-state and count edge events. Throttled label refresh."""
+        now     = time.time()
+        elapsed = now - self._last_state_time
+        self._last_state_time = now
+
+        if self._prev_state in self.state_times:
+            self.state_times[self._prev_state] += elapsed
+
+        if state == "Edging" and self._prev_state != "Edging":
+            self.edge_count += 1
+
+        self._prev_state = state
+
+        # Refresh the label every 30 frames (~1 s at 30 fps) to avoid thrashing
+        self._stats_tick += 1
+        if self._stats_tick < 30:
+            return
+        self._stats_tick = 0
+
+        total_session = now - self.session_start
+        m, s = divmod(int(total_session), 60)
+
+        total_state = sum(self.state_times.values())
+        if total_state > 0:
+            pcts = {k: v / total_state * 100 for k, v in self.state_times.items()}
+        else:
+            pcts = {"Edging": 0.0, "Erect": 0.0, "Flaccid": 0.0}
+
+        self.stats_label.config(
+            text=(f"Session: {m:02d}:{s:02d}  |  Edges: {self.edge_count}  |  "
+                  f"Edging {pcts['Edging']:.0f}%  "
+                  f"Erect {pcts['Erect']:.0f}%  "
+                  f"Flaccid {pcts['Flaccid']:.0f}%")
+        )
+
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
         if self.heights["Edging"]  is not None: cv2.line(frame, (0, self.heights["Edging"]),  (fw, self.heights["Edging"]),  (0, 0, 255), 2)
@@ -925,6 +988,9 @@ class App:
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
             return
         self.last_vol_time = cur_time
+
+        if self.hold_active:
+            return  # Volume frozen by user
 
         floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
         ceil_val  = self.max_vol_var.get() / 100.0
