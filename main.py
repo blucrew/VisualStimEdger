@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -537,8 +537,9 @@ class App:
 
         # Output clients
         self.restim      = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
-        self.win_audio   = None
-        self.win_devices = []
+        self.win_audio        = None
+        self.win_devices      = []
+        self._orig_win_volume = None  # restored on exit
 
         # Root window
         self.root = ctk.CTk()
@@ -787,6 +788,13 @@ class App:
     def _on_close(self):
         self._running = False
         self._save_config()
+        # Restore Windows audio volume to what it was when we took over
+        if self.win_audio and self.win_audio.connected and self._orig_win_volume is not None:
+            try:
+                self.win_audio._volume_interface.SetMasterVolumeLevelScalar(
+                    self._orig_win_volume, None)
+            except Exception:
+                pass
         self.root.destroy()
 
     # ------------------------------------------------------------------ capture thread
@@ -904,6 +912,7 @@ class App:
         for d in self.win_devices:
             if d.FriendlyName == value:
                 self.win_audio = WindowsAudioClient(d)
+                self._orig_win_volume = self.win_audio.get_volume()
                 self._save_config()
                 break
 
