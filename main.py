@@ -6,9 +6,11 @@ import webbrowser
 import requests
 import websocket
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 import customtkinter as ctk
 from PIL import Image, ImageTk
+import logging
+import argparse
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -28,6 +30,8 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL
 
 import atexit
+
+log = logging.getLogger("VisualStimEdger")
 
 _sct = None
 
@@ -69,9 +73,9 @@ class DickDetector:
             layer_names = net.getLayerNames()
             self._output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
             self._net = net
-            print("[DickDetector] Model loaded OK")
+            log.info("DickDetector: model loaded OK")
         except Exception as e:
-            print(f"[DickDetector] Failed to load model: {e}")
+            log.warning(f"DickDetector: failed to load model: {e}")
 
     @property
     def available(self):
@@ -119,7 +123,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -291,7 +295,7 @@ def capture_window_region(hwnd, rel_box):
             if x2-x1 <= 0 or y2-y1 <= 0: return None
             return frame[y1:y2, x1:x2].copy()
     except Exception as e:
-        print(f"Capture Exception: {e}")
+        log.debug(f"Capture exception: {e}")
         return None
 
 def select_head(frame_cv, parent=None):
@@ -403,14 +407,14 @@ class RestimClient:
                 self.ws         = ws
                 self._backoff   = self._BACKOFF_INITIAL  # reset on success
                 self._connecting = False
-            print(f"[Restim] Connected at {ws_url}")
+            log.info(f"Restim: connected at {ws_url}")
             self.set_volume(self.volume, instant=True)
         except Exception as e:
             with self._lock:
                 self._backoff      = min(self._backoff * 2, self._BACKOFF_MAX)
                 self._next_attempt = time.time() + self._backoff
                 self._connecting   = False
-            print(f"[Restim] Connect failed — retry in {self._backoff:.0f}s: {e}")
+            log.debug(f"Restim: connect failed, retry in {self._backoff:.0f}s: {e}")
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
         with self._lock:
@@ -438,7 +442,7 @@ def list_audio_devices():
         # at least sees something in the dropdown (better than an empty list).
         return render if render else list(devices)
     except Exception as e:
-        print(f"[WinAudio] Could not enumerate devices: {e}")
+        log.error(f"WinAudio: could not enumerate devices: {e}")
         return []
 
 
@@ -448,9 +452,9 @@ class WindowsAudioClient:
         try:
             interface = device._dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
             self._volume_interface = interface.QueryInterface(IAudioEndpointVolume)
-            print(f"[WinAudio] Connected to: {device.FriendlyName}")
+            log.info(f"WinAudio: connected to {device.FriendlyName}")
         except Exception as e:
-            print(f"[WinAudio] Failed to activate device: {e}")
+            log.error(f"WinAudio: failed to activate device: {e}")
 
     @property
     def connected(self):
@@ -467,7 +471,7 @@ class WindowsAudioClient:
         try:
             self._volume_interface.SetMasterVolumeLevelScalar(vol, None)
         except Exception as e:
-            print(f"[WinAudio] set_volume failed: {e}")
+            log.warning(f"WinAudio: set_volume failed: {e}")
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.get_volume() + delta, floor=floor, ceiling=ceiling)
@@ -780,7 +784,7 @@ class App:
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
-            print(f"[Config] Save failed: {e}")
+            log.warning(f"Config: save failed: {e}")
 
     def _load_config(self):
         try:
@@ -805,9 +809,9 @@ class App:
                 self._on_mode_change()
             if "port"        in data: self.port_var.set(data["port"])
             if "device_name" in data: self._device_combo.set(data["device_name"])
-            print("[Config] Loaded from", CONFIG_PATH)
+            log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
-            print(f"[Config] Load failed: {e}")
+            log.warning(f"Config: load failed: {e}")
 
     def _on_close(self):
         self._running = False
@@ -860,22 +864,22 @@ class App:
 
     def _set_ruin(self):
         self.heights["Ruin"] = self.head_y
-        print(f"Ruin height set at Y: {self.head_y}")
+        log.info(f"Ruin height set at Y={self.head_y}")
         self._save_config()
 
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
-        print(f"Edging height set at Y: {self.head_y}")
+        log.info(f"Edging height set at Y={self.head_y}")
         self._save_config()
 
     def _set_erect(self):
         self.heights["Erect"] = self.head_y
-        print(f"Erect height set at Y: {self.head_y}")
+        log.info(f"Erect height set at Y={self.head_y}")
         self._save_config()
 
     def _set_flaccid(self):
         self.heights["Flaccid"] = self.head_y
-        print(f"Flaccid height set at Y: {self.head_y}")
+        log.info(f"Flaccid height set at Y={self.head_y}")
         self._save_config()
 
     def _reselect_feed(self):
@@ -940,12 +944,23 @@ class App:
                         pass
 
     def _refresh_devices(self):
-        self.win_devices = list_audio_devices()
+        try:
+            self.win_devices = list_audio_devices()
+        except Exception as e:
+            log.error(f"Audio device scan failed: {e}")
+            messagebox.showerror(
+                "Audio Device Error",
+                f"Could not scan audio devices:\n{e}\n\n"
+                "Try running as Administrator if this keeps happening."
+            )
+            self.win_devices = []
         names = [d.FriendlyName for d in self.win_devices]
         self._device_combo.configure(values=names)
         if names:
             self._device_combo.set(names[0])
             self._on_device_select(names[0])
+        else:
+            log.warning("No audio output devices found")
 
     def _on_device_select(self, value):
         for d in self.win_devices:
@@ -984,14 +999,23 @@ class App:
             return
 
         self._frame_times.append(time.time())
-        self._maybe_yolo_reanchor(frame)
-        self._run_tracker(frame)
+
+        # Performance: in non-Expert modes skip every other frame for tracking/volume.
+        # Video display still updates every frame for smooth playback.
+        self._proc_frame_count = getattr(self, '_proc_frame_count', 0) + 1
+        heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
+
+        if heavy:
+            self._maybe_yolo_reanchor(frame)
+            self._run_tracker(frame)
 
         state = self._determine_state(self.head_y)
 
-        self._update_stats(state)
+        if heavy:
+            self._update_stats(state)
+            self._tick_volume()
+
         self._draw_height_lines(frame)
-        self._tick_volume()
         self._update_status_label(state)
         self._display_frame(frame)
 
@@ -1191,7 +1215,7 @@ class App:
                 elif mode == "windows" and self.win_audio and self.win_audio.connected:
                     self.win_audio.set_volume(floor_val, floor=floor_val, ceiling=ceil_val)
                 self._ruin_start = None
-                print("[Ruin] Triggered — volume dropped to floor")
+                log.info("Ruin triggered — volume dropped to floor")
         else:
             self._ruin_start = None  # reset timer if head leaves ruin zone
 
@@ -1255,21 +1279,32 @@ class App:
 
 
 def main():
-    print("Cock Volume Controller starting...")
+    parser = argparse.ArgumentParser(description="VisualStimEdger")
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable verbose debug logging to console")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    log.info(f"VisualStimEdger v{VERSION} starting")
 
     hwnd, rel_box = select_region()
     if not hwnd or rel_box['width'] <= 10 or rel_box['height'] <= 10:
-        print("Invalid region selected. Exiting.")
+        log.warning("Invalid region selected — exiting")
         return
 
     initial_frame = capture_window_region(hwnd, rel_box)
     if initial_frame is None:
-        print("Failed to capture window. Ensure it is not fully minimized.")
+        log.error("Failed to capture window — ensure it is not fully minimised")
         return
 
     bbox = select_head(initial_frame)
     if bbox[2] == 0 or bbox[3] == 0:
-        print("No head selected. Exiting.")
+        log.info("No head selected — exiting")
         return
 
     App(hwnd, rel_box, initial_frame, bbox).run()

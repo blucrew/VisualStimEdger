@@ -91,3 +91,4 @@ The tracker uses size and position plausibility filters to reject sudden jumps, 
 
 **No audio devices showing**
 Click **Refresh**. If still empty, check that pycaw installed correctly (`pip install pycaw`).
+On Windows 11, audio device enumeration can fail due to permissions — try running the app as Administrator once to confirm this is the issue.
