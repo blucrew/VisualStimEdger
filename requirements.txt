@@ -5,3 +5,4 @@ Pillow
 websocket-client
 pywin32
 pycaw
+customtkinter==5.2.2

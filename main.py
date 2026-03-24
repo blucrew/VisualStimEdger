@@ -7,7 +7,11 @@ import requests
 import websocket
 import tkinter as tk
 from tkinter import ttk
+import customtkinter as ctk
 from PIL import Image, ImageTk
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
 from mss import mss
 import win32gui
 import win32ui
@@ -124,13 +128,13 @@ VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
 
-# Aggressiveness levels: (label, delta multiplier)
-AGGR_LEVELS = [
-    ("Easy",   0.4),
-    ("Middle", 1.0),
-    ("Hard",   2.0),
-    ("Expert", 4.0),
-]
+# Aggressiveness levels: name → delta multiplier
+AGGR_LEVELS = {
+    "Easy":   0.4,
+    "Middle": 1.0,
+    "Hard":   2.0,
+    "Expert": 4.0,
+}
 
 CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
 
@@ -471,7 +475,19 @@ def check_for_update(on_update_available):
 
 
 class App:
-    # YOLO reanchoring
+    # ── Colour palette ────────────────────────────────────────────────────────
+    _C_BG        = "#0d0d0d"
+    _C_SURFACE   = "#1a1a1a"
+    _C_SURFACE2  = "#242424"
+    _C_RED       = "#cc2200"
+    _C_RED_HOV   = "#991800"
+    _C_YELLOW    = "#ffcc00"
+    _C_YELLOW_H  = "#e6b500"
+    _C_TEXT      = "#eeeeee"
+    _C_TEXT_DIM  = "#666666"
+    _C_BORDER    = "#2e2e2e"
+
+    # ── YOLO reanchoring
     _YOLO_INTERVAL = 15    # run detector every N frames
     _YOLO_CONFIRM  = 2     # consecutive detections in same area before reanchoring
     _YOLO_MAX_JUMP = 2.0   # max allowed jump as multiple of current bbox diagonal
@@ -525,14 +541,13 @@ class App:
         self.win_devices = []
 
         # Root window
-        self.root = tk.Tk()
-        self.root.title("Cock Volume Controller")
-        self.root.configure(bg="#222")
+        self.root = ctk.CTk()
+        self.root.title("VisualStimEdger")
 
         # tkinter vars — must be created after root exists
         self.min_vol_var = tk.DoubleVar(value=0.0)
         self.max_vol_var = tk.DoubleVar(value=100.0)
-        self.aggr_var    = tk.IntVar(value=1)
+        self.aggr_var    = tk.StringVar(value="Middle")
         self.mode_var    = tk.StringVar(value="restim")
         self.port_var    = tk.StringVar(value="12346")
 
@@ -549,109 +564,174 @@ class App:
 
     def _build_ui(self):
         root = self.root
+        root.configure(fg_color=self._C_BG)
 
-        # Update banner (hidden until an update is found)
-        self._update_banner = tk.Frame(root, bg="#b8860b")
-        self._update_label  = tk.Label(self._update_banner, text="", bg="#b8860b", fg="white",
-                                       font=("Arial", 10, "bold"))
-        self._update_label.pack(side=tk.LEFT, padx=10, pady=4)
-        self._update_btn = tk.Button(self._update_banner, text="Download", bg="#8B6914", fg="white",
-                                     font=("Arial", 10, "bold"), relief=tk.FLAT, cursor="hand2")
-        self._update_btn.pack(side=tk.RIGHT, padx=10, pady=4)
+        P   = 12          # standard outer padding
+        lbl = ctk.CTkFont(size=11, weight="bold")
+        btn = ctk.CTkFont(size=12, weight="bold")
 
-        # Video feed + height buttons (stored so the update banner can be inserted before it)
-        top_frame = tk.Frame(root, bg="#222")
-        top_frame.pack(padx=10, pady=10)
+        # ── Update banner (hidden until needed) ───────────────────────────────
+        self._update_banner = ctk.CTkFrame(root, fg_color="#7a5c00", corner_radius=0)
+        self._update_label  = ctk.CTkLabel(self._update_banner, text="",
+                                           text_color="white", font=lbl)
+        self._update_label.pack(side=tk.LEFT, padx=P, pady=6)
+        self._update_btn = ctk.CTkButton(self._update_banner, text="Download", width=100,
+                                         fg_color="#b8860b", hover_color="#8B6914",
+                                         text_color="white", font=lbl, corner_radius=4)
+        self._update_btn.pack(side=tk.RIGHT, padx=P, pady=6)
+
+        # ── Video + calibration buttons ───────────────────────────────────────
+        top_frame = ctk.CTkFrame(root, fg_color="transparent")
+        top_frame.pack(padx=P, pady=P, fill=tk.X)
         self._first_widget = top_frame
 
-        self.video_label = tk.Label(top_frame, bg="#222")
-        self.video_label.pack(side=tk.LEFT)
+        # video — plain tk.Label so ImageTk works without wrapping
+        vid_shell = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE,
+                                 corner_radius=8, border_width=1, border_color=self._C_BORDER)
+        vid_shell.pack(side=tk.LEFT)
+        self.video_label = tk.Label(vid_shell, bg=self._C_SURFACE)
+        self.video_label.pack(padx=3, pady=3)
 
-        btn_font         = ("Arial", 12, "bold")
-        height_btn_frame = tk.Frame(top_frame, bg="#222")
-        height_btn_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
-        tk.Button(height_btn_frame, text="Set Ruin Height",    command=self._set_ruin,    bg="#cc0000", fg="white", font=btn_font).pack(fill=tk.X, pady=(0, 2))
-        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
-        tk.Button(height_btn_frame, text="Set Edging Height",  command=self._set_edging,  bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=2)
-        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
-        tk.Button(height_btn_frame, text="Set Erect Height",   command=self._set_erect,   bg="#99ff99", font=btn_font).pack(fill=tk.X, pady=2)
-        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
-        tk.Button(height_btn_frame, text="Set Flaccid Height", command=self._set_flaccid, bg="#9999ff", font=btn_font).pack(fill=tk.X, pady=(2, 0))
+        # height buttons — stacked right of video
+        hbf = ctk.CTkFrame(top_frame, fg_color="transparent")
+        hbf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
 
-        lbl_font = ("Arial", 10, "bold")
+        def _hbtn(parent, text, cmd, color, hover):
+            ctk.CTkButton(parent, text=text, command=cmd, font=btn, height=38,
+                          fg_color=color, hover_color=hover,
+                          text_color="white", corner_radius=6).pack(fill=tk.X, pady=3)
 
-        # Volume floor / ceiling
-        vol_frame = tk.Frame(root, bg="#222")
-        vol_frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(vol_frame, text="Vol Floor (%):",   bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-        tk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.min_vol_var,
-                 bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 10))
-        tk.Label(vol_frame, text="Vol Ceiling (%):", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-        tk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.max_vol_var,
-                 bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 0))
+        _hbtn(hbf, "Set Ruin Height",    self._set_ruin,    "#7a0000", "#550000")
+        _hbtn(hbf, "Set Edging Height",  self._set_edging,  self._C_RED,    self._C_RED_HOV)
+        _hbtn(hbf, "Set Erect Height",   self._set_erect,   "#1a5c2e",      "#114420")
+        _hbtn(hbf, "Set Flaccid Height", self._set_flaccid, "#1a2e5c",      "#11203e")
 
-        # Aggressiveness dial
-        aggr_frame = tk.Frame(root, bg="#222")
-        aggr_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
-        tk.Label(aggr_frame, text="Aggressiveness:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-        self._aggr_name_label = tk.Label(aggr_frame, text=AGGR_LEVELS[1][0], bg="#222", fg="#ffcc00",
-                                         font=("Arial", 10, "bold"), width=7)
-        self._aggr_name_label.pack(side=tk.RIGHT, padx=(0, 5))
-        tk.Scale(aggr_frame, from_=0, to=3, resolution=1, orient=tk.HORIZONTAL,
-                 variable=self.aggr_var, command=self._on_aggr_change,
-                 bg="#222", fg="white", highlightthickness=0, showvalue=0, length=180,
-                 tickinterval=1).pack(side=tk.LEFT, padx=(8, 4))
+        def _divider():
+            ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=3)
 
-        # Mode toggle
-        mode_frame = tk.Frame(root, bg="#222")
-        mode_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
-        tk.Label(mode_frame, text="Output mode:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT, padx=(0, 8))
-        tk.Radiobutton(mode_frame, text="Restim",        variable=self.mode_var, value="restim",
-                       bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                       command=self._on_mode_change).pack(side=tk.LEFT)
-        tk.Radiobutton(mode_frame, text="Windows Audio", variable=self.mode_var, value="windows",
-                       bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                       command=self._on_mode_change).pack(side=tk.LEFT, padx=(8, 0))
+        _divider()
+
+        # ── Volume floor / ceiling ────────────────────────────────────────────
+        vol_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        vol_card.pack(fill=tk.X, padx=P, pady=4)
+
+        def _slider_row(parent, label_text, var, val_attr, callback):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=(6, 3))
+            ctk.CTkLabel(row, text=label_text, font=lbl,
+                         text_color=self._C_TEXT, width=90, anchor="w").pack(side=tk.LEFT)
+            vl = ctk.CTkLabel(row, text=f"{var.get():.0f}%", font=lbl,
+                              text_color=self._C_YELLOW, width=44, anchor="e")
+            vl.pack(side=tk.RIGHT)
+            setattr(self, val_attr, vl)
+            ctk.CTkSlider(row, from_=0, to=100, variable=var, command=callback,
+                          button_color=self._C_YELLOW, button_hover_color=self._C_YELLOW_H,
+                          progress_color=self._C_YELLOW, fg_color=self._C_SURFACE2,
+                          width=220).pack(side=tk.RIGHT, padx=(0, 8))
+
+        _slider_row(vol_card, "Vol Floor",   self.min_vol_var, "_floor_lbl", self._on_floor_change)
+        _slider_row(vol_card, "Vol Ceiling", self.max_vol_var, "_ceil_lbl",  self._on_ceil_change)
+
+        _divider()
+
+        # ── Aggressiveness ────────────────────────────────────────────────────
+        aggr_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        aggr_card.pack(fill=tk.X, padx=P, pady=4)
+        aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
+        aggr_row.pack(fill=tk.X, padx=12, pady=10)
+        ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        ctk.CTkSegmentedButton(
+            aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
+            command=self._on_aggr_change,
+            selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=self._C_TEXT,
+        ).pack(side=tk.RIGHT)
+
+        _divider()
+
+        # ── Output mode ───────────────────────────────────────────────────────
+        mode_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        mode_card.pack(fill=tk.X, padx=P, pady=4)
+        mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
+        mode_row.pack(fill=tk.X, padx=12, pady=10)
+        ctk.CTkLabel(mode_row, text="Output", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        ctk.CTkSegmentedButton(
+            mode_row, values=["restim", "windows"], variable=self.mode_var,
+            command=lambda _: self._on_mode_change(),
+            selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
+            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+        ).pack(side=tk.RIGHT)
 
         # Restim options panel
-        self._restim_opts = tk.Frame(root, bg="#222")
-        tk.Label(self._restim_opts, text="Port:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
-        tk.Entry(self._restim_opts, textvariable=self.port_var, width=6).pack(side=tk.LEFT)
+        self._restim_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        ro = ctk.CTkFrame(self._restim_opts, fg_color="transparent")
+        ro.pack(padx=12, pady=7)
+        ctk.CTkLabel(ro, text="Port:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkEntry(ro, textvariable=self.port_var, width=72,
+                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
         self.port_var.trace_add("write", self._on_port_change)
 
         # Windows Audio options panel
-        self._windows_opts = tk.Frame(root, bg="#222")
-        tk.Label(self._windows_opts, text="Device:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
-        self._device_var   = tk.StringVar()
-        self._device_combo = ttk.Combobox(self._windows_opts, textvariable=self._device_var,
-                                          state="readonly", width=35)
-        self._device_combo.pack(side=tk.LEFT, padx=(0, 5))
-        self._device_combo.bind("<<ComboboxSelected>>", self._on_device_select)
-        tk.Button(self._windows_opts, text="Refresh", command=self._refresh_devices,
-                  bg="#444", fg="white", font=("Arial", 9)).pack(side=tk.LEFT)
+        self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        wo = ctk.CTkFrame(self._windows_opts, fg_color="transparent")
+        wo.pack(padx=12, pady=7, fill=tk.X)
+        ctk.CTkLabel(wo, text="Device:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        self._device_combo = ctk.CTkComboBox(
+            wo, values=[], command=self._on_device_select, width=280,
+            fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+            button_color=self._C_RED, button_hover_color=self._C_RED_HOV,
+            dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
+        )
+        self._device_combo.pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkButton(wo, text="Refresh", command=self._refresh_devices, width=72,
+                      fg_color=self._C_SURFACE2, hover_color="#333",
+                      text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                      font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
 
-        # Show default mode panel
-        self._restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+        self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))
 
-        # Re-select + hold buttons
-        reselect_frame = tk.Frame(root, bg="#222")
-        reselect_frame.pack(fill=tk.X, padx=10, pady=5)
-        tk.Button(reselect_frame, text="Re-Select Video Feed Area", command=self._reselect_feed,
-                  bg="#555", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        tk.Button(reselect_frame, text="Re-Select Cock Head", command=self._reselect_head,
-                  bg="#444", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-        self._hold_btn = tk.Button(reselect_frame, text="Hold Volume",
-                                   command=self._toggle_hold,
-                                   bg="#555", fg="white", font=("Arial", 10, "bold"), width=12)
-        self._hold_btn.pack(side=tk.LEFT, padx=5)
+        _divider()
 
-        self.info_label = tk.Label(root, text="State: Erect | Vol: 50% | WS: Disconnected",
-                                   font=("Arial", 14), bg="#222", fg="white")
-        self.info_label.pack(pady=(10, 2))
+        # ── Controls row ──────────────────────────────────────────────────────
+        ctrl = ctk.CTkFrame(root, fg_color="transparent")
+        ctrl.pack(fill=tk.X, padx=P, pady=6)
 
-        self.stats_label = tk.Label(root, text="Session: 00:00  |  Edges: 0",
-                                    font=("Arial", 9), bg="#222", fg="#aaaaaa")
-        self.stats_label.pack(pady=(0, 8))
+        def _ghost_btn(parent, text, cmd, **kw):
+            return ctk.CTkButton(
+                parent, text=text, command=cmd, height=34,
+                fg_color=self._C_SURFACE2, hover_color="#333",
+                text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                font=ctk.CTkFont(size=10), **kw,
+            )
+
+        _ghost_btn(ctrl, "Re-Select Feed", self._reselect_feed).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+        _ghost_btn(ctrl, "Re-Select Head", self._reselect_head).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=4)
+        self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
+                                    font=ctk.CTkFont(size=10, weight="bold"), width=120)
+        self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+        _divider()
+
+        # ── Status labels ─────────────────────────────────────────────────────
+        self.info_label = ctk.CTkLabel(
+            root, text="State: --  |  Vol: --  |  WS: Disconnected",
+            font=ctk.CTkFont(size=15, weight="bold"), text_color=self._C_TEXT,
+        )
+        self.info_label.pack(pady=(8, 2))
+
+        self.stats_label = ctk.CTkLabel(
+            root, text="Session: 00:00  |  Edges: 0",
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+        )
+        self.stats_label.pack(pady=(0, 10))
 
     def _start_update_check(self):
         def callback(latest, url):
@@ -689,13 +769,16 @@ class App:
             if "min_vol"        in data: self.min_vol_var.set(data["min_vol"])
             if "max_vol"        in data: self.max_vol_var.set(data["max_vol"])
             if "aggressiveness" in data:
-                self.aggr_var.set(data["aggressiveness"])
-                self._on_aggr_change()
+                val = data["aggressiveness"]
+                # Handle old int format from previous sessions
+                if isinstance(val, int):
+                    val = list(AGGR_LEVELS.keys())[min(val, len(AGGR_LEVELS) - 1)]
+                self.aggr_var.set(val)
             if "mode" in data:
                 self.mode_var.set(data["mode"])
                 self._on_mode_change()
             if "port"        in data: self.port_var.set(data["port"])
-            if "device_name" in data: self._device_var.set(data["device_name"])
+            if "device_name" in data: self._device_combo.set(data["device_name"])
             print("[Config] Loaded from", CONFIG_PATH)
         except Exception as e:
             print(f"[Config] Load failed: {e}")
@@ -729,8 +812,8 @@ class App:
     # ------------------------------------------------------------------ callbacks
 
     def _show_update_banner(self, latest, url):
-        self._update_label.config(text=f"Update available: v{latest}")
-        self._update_btn.config(command=lambda: webbrowser.open(url))
+        self._update_label.configure(text=f"Update available: v{latest}")
+        self._update_btn.configure(command=lambda: webbrowser.open(url))
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
     def _set_ruin(self):
@@ -776,7 +859,13 @@ class App:
         self.tracking_paused = False
 
     def _on_aggr_change(self, *_):
-        self._aggr_name_label.config(text=AGGR_LEVELS[self.aggr_var.get()][0])
+        self._save_config()
+
+    def _on_floor_change(self, val):
+        self._floor_lbl.configure(text=f"{float(val):.0f}%")
+
+    def _on_ceil_change(self, val):
+        self._ceil_lbl.configure(text=f"{float(val):.0f}%")
 
     def _on_mode_change(self):
         if self.mode_var.get() == "restim":
@@ -804,23 +893,29 @@ class App:
 
     def _refresh_devices(self):
         self.win_devices = list_audio_devices()
-        self._device_combo["values"] = [d.FriendlyName for d in self.win_devices]
-        if self.win_devices:
-            self._device_combo.current(0)
-            self._on_device_select(None)
+        names = [d.FriendlyName for d in self.win_devices]
+        self._device_combo.configure(values=names)
+        if names:
+            self._device_combo.set(names[0])
+            self._on_device_select(names[0])
 
-    def _on_device_select(self, _event):
-        idx = self._device_combo.current()
-        if 0 <= idx < len(self.win_devices):
-            self.win_audio = WindowsAudioClient(self.win_devices[idx])
-            self._save_config()
+    def _on_device_select(self, value):
+        for d in self.win_devices:
+            if d.FriendlyName == value:
+                self.win_audio = WindowsAudioClient(d)
+                self._save_config()
+                break
 
     def _toggle_hold(self):
         self.hold_active = not self.hold_active
         if self.hold_active:
-            self._hold_btn.config(text="HELD [|]", bg="#cc4400")
+            self._hold_btn.configure(text="HELD [|]",
+                                     fg_color=self._C_RED, hover_color=self._C_RED_HOV,
+                                     border_color=self._C_RED)
         else:
-            self._hold_btn.config(text="Hold Volume", bg="#555")
+            self._hold_btn.configure(text="Hold Volume",
+                                     fg_color=self._C_SURFACE2, hover_color="#333",
+                                     border_color=self._C_BORDER)
 
     # ------------------------------------------------------------------ frame loop
 
@@ -967,7 +1062,7 @@ class App:
         else:
             pcts = {"Edging": 0.0, "Erect": 0.0, "Flaccid": 0.0}
 
-        self.stats_label.config(
+        self.stats_label.configure(
             text=(f"Session: {m:02d}:{s:02d}  |  Edges: {self.edge_count}  |  "
                   f"Edging {pcts['Edging']:.0f}%  "
                   f"Erect {pcts['Erect']:.0f}%  "
@@ -993,7 +1088,7 @@ class App:
 
         position   = (smoothed_y             - self.heights["Edging"]) / full_range
         erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
-        _, aggr_mult = AGGR_LEVELS[self.aggr_var.get()]
+        aggr_mult = AGGR_LEVELS.get(self.aggr_var.get(), 1.0)
 
         # Velocity: normalised rate of change across the history window.
         # Positive = moving toward flaccid, negative = moving toward edging.
@@ -1094,10 +1189,10 @@ class App:
         yolo_str = (f"YOLO: {self.detector.last_conf:.0%}"
                     if self.detector.available and self.detector.last_conf > 0 else "YOLO: --")
 
-        self.info_label.config(
+        self.info_label.configure(
             text=(f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
                   f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}"),
-            fg=conn_color,
+            text_color=conn_color,
         )
 
     def _display_frame(self, frame):
