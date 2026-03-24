@@ -119,7 +119,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.1.4"
+VERSION = "1.1.5"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -422,10 +422,13 @@ class RestimClient:
 
 
 def list_audio_devices():
-    """Return active render (output) devices as list of pycaw AudioDevice objects."""
+    """Return all render (output) devices as list of pycaw AudioDevice objects.
+    We intentionally skip the state==1 (ACTIVE only) filter so that Bluetooth,
+    USB, and temporarily-disconnected devices still appear in the list."""
     try:
         devices = AudioUtilities.GetAllDevices()
-        return [d for d in devices if d.flow == 0 and d.state == 1]
+        # flow==0 → eRender (output). Include all states so BT/USB devices show up.
+        return [d for d in devices if d.flow == 0]
     except Exception as e:
         print(f"[WinAudio] Could not enumerate devices: {e}")
         return []
