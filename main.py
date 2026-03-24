@@ -19,7 +19,17 @@ import sys
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL
 
-sct_global = mss()
+import atexit
+
+_sct = None
+
+def _get_sct():
+    """Lazy singleton mss instance, closed cleanly on process exit."""
+    global _sct
+    if _sct is None:
+        _sct = mss()
+        atexit.register(_sct.close)
+    return _sct
 
 
 def resource_path(relative):
@@ -107,10 +117,6 @@ TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
-# YOLO reanchoring tuning
-YOLO_INTERVAL = 15     # run detector every N frames
-YOLO_CONFIRM  = 2      # consecutive detections in same area before reanchoring
-YOLO_MAX_JUMP = 2.0    # max allowed jump as multiple of current bbox diagonal
 
 # Aggressiveness levels: (label, delta multiplier)
 AGGR_LEVELS = [
@@ -253,7 +259,7 @@ def capture_window_region(hwnd, rel_box):
             abs_width = rel_box['width']
             abs_height = rel_box['height']
             monitor = {"top": abs_y1, "left": abs_x1, "width": abs_width, "height": abs_height}
-            grab = sct_global.grab(monitor)
+            grab = _get_sct().grab(monitor)
             return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
             
         else:
@@ -338,33 +344,36 @@ def select_head(frame_cv, parent=None):
 
 class RestimClient:
     def __init__(self, host, port, axis):
-        self.host = host
-        self.port = port
-        self.axis = axis
-        self.ws = None
-        self.volume = 0.5 
-        self.connect()
+        self.host   = host
+        self.port   = port
+        self.axis   = axis
+        self.volume = 0.5
+        self.ws     = None
+        self._lock  = threading.Lock()
+        # Connect lazily on first use — don't block startup if Restim isn't running
 
     def connect(self):
-        try:
-            ws_url = f"ws://{self.host}:{self.port}"
-            self.ws = websocket.create_connection(ws_url, timeout=2.0)
-            print(f"[Restim] Connected to WebSocket at {ws_url}")
-            self.set_volume(self.volume, instant=True)
-        except Exception as e:
-            print(f"[Restim] WebSocket connection failed: {e}. Ensure WebSocket Server is enabled on port {self.port}")
-            self.ws = None
+        with self._lock:
+            try:
+                ws_url = f"ws://{self.host}:{self.port}"
+                ws = websocket.create_connection(ws_url, timeout=2.0)
+                self.ws = ws
+                print(f"[Restim] Connected to WebSocket at {ws_url}")
+                self.set_volume(self.volume, instant=True)
+            except Exception as e:
+                print(f"[Restim] WebSocket connection failed: {e}. Ensure WebSocket Server is enabled on port {self.port}")
+                self.ws = None
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
-        self.volume = max(floor, min(ceiling, vol))
-        if self.ws:
-            try:
-                val_int = int(round(self.volume * 9999))
-                interval = 0 if instant else int(VOLUME_UPDATE_INTERVAL * 1000)
-                cmd = f"{self.axis}{val_int:04d}I{interval}"
-                self.ws.send(cmd)
-            except Exception:
-                self.ws = None
+        with self._lock:
+            self.volume = max(floor, min(ceiling, vol))
+            if self.ws:
+                try:
+                    val_int  = int(round(self.volume * 9999))
+                    interval = 0 if instant else int(VOLUME_UPDATE_INTERVAL * 1000)
+                    self.ws.send(f"{self.axis}{val_int:04d}I{interval}")
+                except Exception:
+                    self.ws = None
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
@@ -431,16 +440,23 @@ def check_for_update(on_update_available):
 
 
 class App:
+    # YOLO reanchoring
+    _YOLO_INTERVAL = 15    # run detector every N frames
+    _YOLO_CONFIRM  = 2     # consecutive detections in same area before reanchoring
+    _YOLO_MAX_JUMP = 2.0   # max allowed jump as multiple of current bbox diagonal
+    # Tracker plausibility
+    _SIZE_RATIO_MAX  = 2.5
+    _MAX_JUMP_FACTOR = 2.5
+
     def __init__(self, hwnd, rel_box, initial_frame, bbox):
         # Capture / window
         self.hwnd    = hwnd
         self.rel_box = rel_box
 
         # Tracking state
-        self.head_y             = bbox[1] + bbox[3] // 2
-        self.heights            = {"Edging": None, "Erect": None, "Flaccid": None}
-        self.current_state      = "Erect"
-        self.last_vol_time      = time.time()
+        self.head_y          = bbox[1] + bbox[3] // 2
+        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None}
+        self.last_vol_time   = time.time()
         self.tracking_paused    = False
         self.last_bbox          = tuple(int(v) for v in bbox)
         self.tracking_ok        = True
@@ -490,9 +506,10 @@ class App:
                                      font=("Arial", 10, "bold"), relief=tk.FLAT, cursor="hand2")
         self._update_btn.pack(side=tk.RIGHT, padx=10, pady=4)
 
-        # Video feed + height buttons
+        # Video feed + height buttons (stored so the update banner can be inserted before it)
         top_frame = tk.Frame(root, bg="#222")
         top_frame.pack(padx=10, pady=10)
+        self._first_widget = top_frame
 
         self.video_label = tk.Label(top_frame, bg="#222")
         self.video_label.pack(side=tk.LEFT)
@@ -583,7 +600,7 @@ class App:
     def _show_update_banner(self, latest, url):
         self._update_label.config(text=f"Update available: v{latest}")
         self._update_btn.config(command=lambda: webbrowser.open(url))
-        self._update_banner.pack(fill=tk.X, before=self.root.winfo_children()[0])
+        self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
@@ -674,7 +691,6 @@ class App:
         self._run_tracker(frame)
 
         state = self._determine_state(self.head_y)
-        self.current_state = state
 
         self._draw_height_lines(frame)
         self._tick_volume()
@@ -685,7 +701,7 @@ class App:
 
     def _maybe_yolo_reanchor(self, frame):
         self.yolo_frame_counter += 1
-        if not self.detector.available or self.yolo_frame_counter < YOLO_INTERVAL:
+        if not self.detector.available or self.yolo_frame_counter < self._YOLO_INTERVAL:
             return
         self.yolo_frame_counter = 0
 
@@ -700,7 +716,7 @@ class App:
         det_cx, det_cy = yx + yw // 2, yy + yh // 2
         diag = np.sqrt(pw ** 2 + ph ** 2)
 
-        if np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2) > diag * YOLO_MAX_JUMP:
+        if np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2) > diag * self._YOLO_MAX_JUMP:
             self.yolo_candidate = None
             return
 
@@ -714,7 +730,7 @@ class App:
 
         self.yolo_candidate = (yolo_bbox, hits)
 
-        if hits >= YOLO_CONFIRM:
+        if hits >= self._YOLO_CONFIRM:
             self.tracker.init(frame, yolo_bbox)
             self.last_bbox      = yolo_bbox
             self.yolo_candidate = None
@@ -722,9 +738,6 @@ class App:
             cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
 
     def _run_tracker(self, frame):
-        SIZE_RATIO_MAX  = 2.5
-        MAX_JUMP_FACTOR = 2.5
-
         success, new_bbox = self.tracker.update(frame)
         if success:
             x, y, w, h_box = [int(v) for v in new_bbox]
@@ -735,10 +748,10 @@ class App:
 
             size_ok = (
                 0 < w <= frame.shape[1] and 0 < h_box <= frame.shape[0] and
-                (1 / SIZE_RATIO_MAX) < (w / max(pw, 1)) < SIZE_RATIO_MAX and
-                (1 / SIZE_RATIO_MAX) < (h_box / max(ph, 1)) < SIZE_RATIO_MAX
+                (1 / self._SIZE_RATIO_MAX) < (w / max(pw, 1)) < self._SIZE_RATIO_MAX and
+                (1 / self._SIZE_RATIO_MAX) < (h_box / max(ph, 1)) < self._SIZE_RATIO_MAX
             )
-            jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * MAX_JUMP_FACTOR
+            jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * self._MAX_JUMP_FACTOR
 
             if size_ok and jump_ok:
                 self.last_bbox   = (x, y, w, h_box)
