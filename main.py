@@ -430,9 +430,421 @@ def check_for_update(on_update_available):
         pass  # silently ignore — no internet, rate limit, etc.
 
 
+class App:
+    def __init__(self, hwnd, rel_box, initial_frame, bbox):
+        # Capture / window
+        self.hwnd    = hwnd
+        self.rel_box = rel_box
+
+        # Tracking state
+        self.head_y             = bbox[1] + bbox[3] // 2
+        self.heights            = {"Edging": None, "Erect": None, "Flaccid": None}
+        self.current_state      = "Erect"
+        self.last_vol_time      = time.time()
+        self.tracking_paused    = False
+        self.last_bbox          = tuple(int(v) for v in bbox)
+        self.tracking_ok        = True
+        self.yolo_frame_counter = 0
+        self.yolo_candidate     = None  # (bbox, hits) pending confirmation
+
+        # CV
+        self.tracker  = cv2.TrackerCSRT_create()
+        self.tracker.init(initial_frame, bbox)
+        self.detector = DickDetector()
+
+        # Output clients
+        self.restim      = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
+        self.win_audio   = None
+        self.win_devices = []
+
+        # Root window
+        self.root = tk.Tk()
+        self.root.title("Cock Volume Controller")
+        self.root.configure(bg="#222")
+
+        # tkinter vars — must be created after root exists
+        self.min_vol_var = tk.DoubleVar(value=0.0)
+        self.max_vol_var = tk.DoubleVar(value=100.0)
+        self.aggr_var    = tk.IntVar(value=1)
+        self.mode_var    = tk.StringVar(value="restim")
+        self.port_var    = tk.StringVar(value="12346")
+
+        self._build_ui()
+        self._start_update_check()
+
+    def run(self):
+        self.root.after(5, self._update_frame)
+        self.root.mainloop()
+
+    # ------------------------------------------------------------------ UI
+
+    def _build_ui(self):
+        root = self.root
+
+        # Update banner (hidden until an update is found)
+        self._update_banner = tk.Frame(root, bg="#b8860b")
+        self._update_label  = tk.Label(self._update_banner, text="", bg="#b8860b", fg="white",
+                                       font=("Arial", 10, "bold"))
+        self._update_label.pack(side=tk.LEFT, padx=10, pady=4)
+        self._update_btn = tk.Button(self._update_banner, text="Download", bg="#8B6914", fg="white",
+                                     font=("Arial", 10, "bold"), relief=tk.FLAT, cursor="hand2")
+        self._update_btn.pack(side=tk.RIGHT, padx=10, pady=4)
+
+        # Video feed + height buttons
+        top_frame = tk.Frame(root, bg="#222")
+        top_frame.pack(padx=10, pady=10)
+
+        self.video_label = tk.Label(top_frame, bg="#222")
+        self.video_label.pack(side=tk.LEFT)
+
+        btn_font         = ("Arial", 12, "bold")
+        height_btn_frame = tk.Frame(top_frame, bg="#222")
+        height_btn_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        tk.Button(height_btn_frame, text="Set Edging Height",  command=self._set_edging,  bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=(0, 2))
+        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
+        tk.Button(height_btn_frame, text="Set Erect Height",   command=self._set_erect,   bg="#99ff99", font=btn_font).pack(fill=tk.X, pady=2)
+        tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
+        tk.Button(height_btn_frame, text="Set Flaccid Height", command=self._set_flaccid, bg="#9999ff", font=btn_font).pack(fill=tk.X, pady=(2, 0))
+
+        lbl_font = ("Arial", 10, "bold")
+
+        # Volume floor / ceiling
+        vol_frame = tk.Frame(root, bg="#222")
+        vol_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(vol_frame, text="Vol Floor (%):",   bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
+        tk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.min_vol_var,
+                 bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 10))
+        tk.Label(vol_frame, text="Vol Ceiling (%):", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
+        tk.Scale(vol_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.max_vol_var,
+                 bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 0))
+
+        # Aggressiveness dial
+        aggr_frame = tk.Frame(root, bg="#222")
+        aggr_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        tk.Label(aggr_frame, text="Aggressiveness:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
+        self._aggr_name_label = tk.Label(aggr_frame, text=AGGR_LEVELS[1][0], bg="#222", fg="#ffcc00",
+                                         font=("Arial", 10, "bold"), width=7)
+        self._aggr_name_label.pack(side=tk.RIGHT, padx=(0, 5))
+        tk.Scale(aggr_frame, from_=0, to=3, resolution=1, orient=tk.HORIZONTAL,
+                 variable=self.aggr_var, command=self._on_aggr_change,
+                 bg="#222", fg="white", highlightthickness=0, showvalue=0, length=180,
+                 tickinterval=1).pack(side=tk.LEFT, padx=(8, 4))
+
+        # Mode toggle
+        mode_frame = tk.Frame(root, bg="#222")
+        mode_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
+        tk.Label(mode_frame, text="Output mode:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Radiobutton(mode_frame, text="Restim",        variable=self.mode_var, value="restim",
+                       bg="#222", fg="white", selectcolor="#444", font=lbl_font,
+                       command=self._on_mode_change).pack(side=tk.LEFT)
+        tk.Radiobutton(mode_frame, text="Windows Audio", variable=self.mode_var, value="windows",
+                       bg="#222", fg="white", selectcolor="#444", font=lbl_font,
+                       command=self._on_mode_change).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Restim options panel
+        self._restim_opts = tk.Frame(root, bg="#222")
+        tk.Label(self._restim_opts, text="Port:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
+        tk.Entry(self._restim_opts, textvariable=self.port_var, width=6).pack(side=tk.LEFT)
+        self.port_var.trace_add("write", self._on_port_change)
+
+        # Windows Audio options panel
+        self._windows_opts = tk.Frame(root, bg="#222")
+        tk.Label(self._windows_opts, text="Device:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
+        self._device_var   = tk.StringVar()
+        self._device_combo = ttk.Combobox(self._windows_opts, textvariable=self._device_var,
+                                          state="readonly", width=35)
+        self._device_combo.pack(side=tk.LEFT, padx=(0, 5))
+        self._device_combo.bind("<<ComboboxSelected>>", self._on_device_select)
+        tk.Button(self._windows_opts, text="Refresh", command=self._refresh_devices,
+                  bg="#444", fg="white", font=("Arial", 9)).pack(side=tk.LEFT)
+
+        # Show default mode panel
+        self._restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        # Re-select buttons
+        reselect_frame = tk.Frame(root, bg="#222")
+        reselect_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Button(reselect_frame, text="Re-Select Video Feed Area", command=self._reselect_feed,
+                  bg="#555", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+        tk.Button(reselect_frame, text="Re-Select Cock Head", command=self._reselect_head,
+                  bg="#444", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
+
+        self.info_label = tk.Label(root, text="State: Erect | Vol: 50% | WS: Disconnected",
+                                   font=("Arial", 14), bg="#222", fg="white")
+        self.info_label.pack(pady=10)
+
+    def _start_update_check(self):
+        def callback(latest, url):
+            self.root.after(0, self._show_update_banner, latest, url)
+        threading.Thread(target=check_for_update, args=(callback,), daemon=True).start()
+
+    # ------------------------------------------------------------------ callbacks
+
+    def _show_update_banner(self, latest, url):
+        self._update_label.config(text=f"Update available: v{latest}")
+        self._update_btn.config(command=lambda: webbrowser.open(url))
+        self._update_banner.pack(fill=tk.X, before=self.root.winfo_children()[0])
+
+    def _set_edging(self):
+        self.heights["Edging"] = self.head_y
+        print(f"Edging height set at Y: {self.head_y}")
+
+    def _set_erect(self):
+        self.heights["Erect"] = self.head_y
+        print(f"Erect height set at Y: {self.head_y}")
+
+    def _set_flaccid(self):
+        self.heights["Flaccid"] = self.head_y
+        print(f"Flaccid height set at Y: {self.head_y}")
+
+    def _reselect_feed(self):
+        self.tracking_paused = True
+        new_hwnd, new_rel_box = select_region(self.root)
+        if new_hwnd and new_rel_box['width'] > 10 and new_rel_box['height'] > 10:
+            self.hwnd    = new_hwnd
+            self.rel_box = new_rel_box
+            self._reselect_head()
+        else:
+            self.tracking_paused = False
+
+    def _reselect_head(self):
+        self.tracking_paused = True
+        pause_frame = capture_window_region(self.hwnd, self.rel_box)
+        if pause_frame is not None:
+            new_bbox = select_head(pause_frame, parent=self.root)
+            if new_bbox[2] > 0 and new_bbox[3] > 0:
+                self.tracker.init(pause_frame, new_bbox)
+                self.last_bbox   = new_bbox
+                self.head_y      = new_bbox[1] + new_bbox[3] // 2
+                self.tracking_ok = True
+        self.tracking_paused = False
+
+    def _on_aggr_change(self, *_):
+        self._aggr_name_label.config(text=AGGR_LEVELS[self.aggr_var.get()][0])
+
+    def _on_mode_change(self):
+        if self.mode_var.get() == "restim":
+            self._windows_opts.pack_forget()
+            self._restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+        else:
+            self._restim_opts.pack_forget()
+            self._windows_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+            if not self.win_devices:
+                self._refresh_devices()
+
+    def _on_port_change(self, *_):
+        val = self.port_var.get().strip()
+        if val.isdigit():
+            new_port = int(val)
+            if new_port != self.restim.port:
+                self.restim.port = new_port
+                if self.restim.ws:
+                    try:
+                        self.restim.ws.close()
+                    except Exception:
+                        pass
+                    self.restim.ws = None
+
+    def _refresh_devices(self):
+        self.win_devices = list_audio_devices()
+        self._device_combo["values"] = [d.FriendlyName for d in self.win_devices]
+        if self.win_devices:
+            self._device_combo.current(0)
+            self._on_device_select(None)
+
+    def _on_device_select(self, _event):
+        idx = self._device_combo.current()
+        if 0 <= idx < len(self.win_devices):
+            self.win_audio = WindowsAudioClient(self.win_devices[idx])
+
+    # ------------------------------------------------------------------ frame loop
+
+    def _update_frame(self):
+        if self.tracking_paused:
+            self.root.after(100, self._update_frame)
+            return
+
+        frame = capture_window_region(self.hwnd, self.rel_box)
+        if frame is None:
+            self.info_label.config(text="State: WINDOW HIDDEN? | Vol: -- | WS: --", fg="yellow")
+            self.root.after(200, self._update_frame)
+            return
+
+        self._maybe_yolo_reanchor(frame)
+        self._run_tracker(frame)
+
+        state = self._determine_state(self.head_y)
+        self.current_state = state
+
+        self._draw_height_lines(frame)
+        self._tick_volume()
+        self._update_status_label(state)
+        self._display_frame(frame)
+
+        self.root.after(5, self._update_frame)
+
+    def _maybe_yolo_reanchor(self, frame):
+        self.yolo_frame_counter += 1
+        if not self.detector.available or self.yolo_frame_counter < YOLO_INTERVAL:
+            return
+        self.yolo_frame_counter = 0
+
+        yolo_bbox = self.detector.detect_head(frame)
+        if yolo_bbox is None:
+            self.yolo_candidate = None
+            return
+
+        px, py, pw, ph = self.last_bbox
+        cur_cx, cur_cy = px + pw // 2, py + ph // 2
+        yx, yy, yw, yh = yolo_bbox
+        det_cx, det_cy = yx + yw // 2, yy + yh // 2
+        diag = np.sqrt(pw ** 2 + ph ** 2)
+
+        if np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2) > diag * YOLO_MAX_JUMP:
+            self.yolo_candidate = None
+            return
+
+        if self.yolo_candidate is not None:
+            prev_bbox, hits = self.yolo_candidate
+            pcx = prev_bbox[0] + prev_bbox[2] // 2
+            pcy = prev_bbox[1] + prev_bbox[3] // 2
+            hits = hits + 1 if np.sqrt((det_cx - pcx) ** 2 + (det_cy - pcy) ** 2) <= diag else 1
+        else:
+            hits = 1
+
+        self.yolo_candidate = (yolo_bbox, hits)
+
+        if hits >= YOLO_CONFIRM:
+            self.tracker.init(frame, yolo_bbox)
+            self.last_bbox      = yolo_bbox
+            self.yolo_candidate = None
+            x, y, w, h = yolo_bbox
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
+
+    def _run_tracker(self, frame):
+        SIZE_RATIO_MAX  = 2.5
+        MAX_JUMP_FACTOR = 2.5
+
+        success, new_bbox = self.tracker.update(frame)
+        if success:
+            x, y, w, h_box = [int(v) for v in new_bbox]
+            px, py, pw, ph = self.last_bbox
+            prev_cx, prev_cy = px + pw // 2, py + ph // 2
+            new_cx,  new_cy  = x  + w  // 2, y  + h_box // 2
+            diag = np.sqrt(pw ** 2 + ph ** 2)
+
+            size_ok = (
+                0 < w <= frame.shape[1] and 0 < h_box <= frame.shape[0] and
+                (1 / SIZE_RATIO_MAX) < (w / max(pw, 1)) < SIZE_RATIO_MAX and
+                (1 / SIZE_RATIO_MAX) < (h_box / max(ph, 1)) < SIZE_RATIO_MAX
+            )
+            jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * MAX_JUMP_FACTOR
+
+            if size_ok and jump_ok:
+                self.last_bbox   = (x, y, w, h_box)
+                self.tracking_ok = True
+                self.head_y      = new_cy
+                cv2.rectangle(frame, (x, y), (x + w, y + h_box), (0, 255, 0), 2)
+                cv2.circle(frame, (new_cx, new_cy), 4, (0, 0, 255), -1)
+            else:
+                reason = "size" if not size_ok else "jump"
+                cv2.putText(frame, f"TRACKING SUSPECT ({reason}) - Frozen", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                px, py, pw, ph = self.last_bbox
+                cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 165, 255), 2)
+                self.tracking_ok = False
+                self.tracker.init(frame, self.last_bbox)
+        else:
+            cv2.putText(frame, "TRACKING LOST - Frozen at last position", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            px, py, pw, ph = self.last_bbox
+            cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 0, 255), 2)
+            self.tracking_ok = False
+            self.tracker.init(frame, self.last_bbox)
+
+    def _determine_state(self, y_pos):
+        if any(v is None for v in self.heights.values()):
+            return "Erect (Needs Calibration)"
+        dist_edging  = abs(y_pos - self.heights["Edging"])
+        dist_erect   = abs(y_pos - self.heights["Erect"])
+        dist_flaccid = abs(y_pos - self.heights["Flaccid"])
+        minimum = min(dist_edging, dist_erect, dist_flaccid)
+        if minimum == dist_edging:  return "Edging"
+        if minimum == dist_flaccid: return "Flaccid"
+        return "Erect"
+
+    def _draw_height_lines(self, frame):
+        fw = frame.shape[1]
+        if self.heights["Edging"]  is not None: cv2.line(frame, (0, self.heights["Edging"]),  (fw, self.heights["Edging"]),  (0, 0, 255), 2)
+        if self.heights["Erect"]   is not None: cv2.line(frame, (0, self.heights["Erect"]),   (fw, self.heights["Erect"]),   (0, 255, 0), 2)
+        if self.heights["Flaccid"] is not None: cv2.line(frame, (0, self.heights["Flaccid"]), (fw, self.heights["Flaccid"]), (255, 0, 0), 2)
+
+    def _compute_volume_delta(self):
+        if any(v is None for v in self.heights.values()):
+            return 0.0
+        full_range = self.heights["Flaccid"] - self.heights["Edging"]
+        if abs(full_range) < 1:
+            return 0.0
+        position   = (self.head_y            - self.heights["Edging"]) / full_range
+        erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
+        _, aggr_mult = AGGR_LEVELS[self.aggr_var.get()]
+
+        if 0.0 <= position <= erect_norm:
+            return 0.0
+        if position < 0.0:
+            return -VOLUME_STEP * 0.5 * aggr_mult
+        dist = (position - erect_norm) / max(1.0 - erect_norm, 0.01)
+        return VOLUME_STEP * min(dist, 1.0) * aggr_mult
+
+    def _tick_volume(self):
+        cur_time = time.time()
+        if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
+            return
+        self.last_vol_time = cur_time
+
+        floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+        ceil_val  = self.max_vol_var.get() / 100.0
+        delta     = self._compute_volume_delta()
+        mode      = self.mode_var.get()
+
+        if mode == "restim":
+            if delta != 0.0:
+                self.restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
+            if self.restim.ws is None:
+                threading.Thread(target=self.restim.connect, daemon=True).start()
+        elif mode == "windows" and self.win_audio and self.win_audio.connected and delta != 0.0:
+            self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
+
+    def _update_status_label(self, state):
+        quality_str = "Track: OK" if self.tracking_ok else "Track: LOST"
+        mode = self.mode_var.get()
+        if mode == "restim":
+            conn_color = "#00ff00" if self.restim.ws else "#ff0000"
+            vol_str    = f"{self.restim.volume * 100:.0f}%"
+            src_str    = f"WS: {'Connected' if self.restim.ws else 'Disconnected'}"
+        elif self.win_audio and self.win_audio.connected:
+            conn_color = "#00ff00"
+            vol_str    = f"{self.win_audio.get_volume() * 100:.0f}%"
+            src_str    = "Win Audio: OK"
+        else:
+            conn_color = "#ffaa00"
+            vol_str    = "--"
+            src_str    = "Win Audio: No Device"
+        self.info_label.config(
+            text=f"State: {state}  |  Vol: {vol_str}  |  {quality_str}  |  {src_str}",
+            fg=conn_color,
+        )
+
+    def _display_frame(self, frame):
+        img   = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.video_label.imgtk = imgtk  # prevent GC
+        self.video_label.configure(image=imgtk)
+
+
 def main():
     print("Cock Volume Controller starting...")
-    
+
     hwnd, rel_box = select_region()
     if not hwnd or rel_box['width'] <= 10 or rel_box['height'] <= 10:
         print("Invalid region selected. Exiting.")
@@ -440,407 +852,16 @@ def main():
 
     initial_frame = capture_window_region(hwnd, rel_box)
     if initial_frame is None:
-        print("Failed to capture parent application window. Ensure it is not fully minimized.")
+        print("Failed to capture window. Ensure it is not fully minimized.")
         return
-        
+
     bbox = select_head(initial_frame)
     if bbox[2] == 0 or bbox[3] == 0:
         print("No head selected. Exiting.")
         return
 
-    tracker = cv2.TrackerCSRT_create()
-    tracker.init(initial_frame, bbox)
+    App(hwnd, rel_box, initial_frame, bbox).run()
 
-    detector = DickDetector()
-
-    restim = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
-
-    root = tk.Tk()
-    root.title("Cock Volume Controller")
-    root.configure(bg="#222")
-
-    # --- Update check ---
-    update_banner = tk.Frame(root, bg="#b8860b")
-    update_label  = tk.Label(update_banner, text="", bg="#b8860b", fg="white", font=("Arial", 10, "bold"))
-    update_label.pack(side=tk.LEFT, padx=10, pady=4)
-    update_btn = tk.Button(update_banner, text="Download", bg="#8B6914", fg="white",
-                           font=("Arial", 10, "bold"), relief=tk.FLAT, cursor="hand2")
-    update_btn.pack(side=tk.RIGHT, padx=10, pady=4)
-
-    def _show_update_banner(latest, url):
-        update_label.config(text=f"Update available: v{latest}")
-        update_btn.config(command=lambda: webbrowser.open(url))
-        update_banner.pack(fill=tk.X, before=root.winfo_children()[0])
-
-    threading.Thread(
-        target=check_for_update,
-        args=(lambda latest, url: root.after(0, _show_update_banner, latest, url),),
-        daemon=True
-    ).start()
-
-    app_state = {
-        "hwnd": hwnd,
-        "rel_box": rel_box,
-        "head_y": bbox[1] + bbox[3]//2,
-        "heights": {"Edging": None, "Erect": None, "Flaccid": None},
-        "current_state": "Erect",
-        "last_vol_time": time.time(),
-        "tracking_paused": False,
-        "min_vol_var": tk.DoubleVar(value=0.0),
-        "last_bbox": tuple(int(v) for v in bbox),
-        "tracking_quality": 1.0,
-        "yolo_frame_counter": 0,
-        "yolo_candidate": None,   # (bbox, hits) — pending confirmation before reanchor
-        "mode_var": tk.StringVar(value="restim"),
-        "win_audio": None,
-        "win_devices": [],
-        "max_vol_var": tk.DoubleVar(value=100.0),
-        "aggr_var": tk.IntVar(value=1),
-    }
-    
-    # --- Video + height buttons side by side ---
-    top_frame = tk.Frame(root, bg="#222")
-    top_frame.pack(padx=10, pady=10)
-
-    video_label = tk.Label(top_frame, bg="#222")
-    video_label.pack(side=tk.LEFT)
-
-    def set_edging():
-        app_state["heights"]["Edging"] = app_state["head_y"]
-        print(f"Edging height set at Y: {app_state['head_y']}")
-    def set_erect():
-        app_state["heights"]["Erect"] = app_state["head_y"]
-        print(f"Erect height set at Y: {app_state['head_y']}")
-    def set_flaccid():
-        app_state["heights"]["Flaccid"] = app_state["head_y"]
-        print(f"Flaccid height set at Y: {app_state['head_y']}")
-
-    btn_font = ("Arial", 12, "bold")
-    height_btn_frame = tk.Frame(top_frame, bg="#222")
-    height_btn_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
-    tk.Button(height_btn_frame, text="Set Edging Height", command=set_edging, bg="#ff9999", font=btn_font).pack(fill=tk.X, pady=(0, 2))
-    tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
-    tk.Button(height_btn_frame, text="Set Erect Height", command=set_erect, bg="#99ff99", font=btn_font).pack(fill=tk.X, pady=2)
-    tk.Frame(height_btn_frame, bg="#222").pack(fill=tk.BOTH, expand=True)
-    tk.Button(height_btn_frame, text="Set Flaccid Height", command=set_flaccid, bg="#9999ff", font=btn_font).pack(fill=tk.X, pady=(2, 0))
-
-    def reselect_feed():
-        app_state["tracking_paused"] = True
-        new_hwnd, new_rel_box = select_region(root)
-        if new_hwnd and new_rel_box['width'] > 10 and new_rel_box['height'] > 10:
-            app_state["hwnd"] = new_hwnd
-            app_state["rel_box"] = new_rel_box
-            reselect_head()
-        else:
-            app_state["tracking_paused"] = False
-
-    def reselect_head():
-        app_state["tracking_paused"] = True
-        pause_frame = capture_window_region(app_state["hwnd"], app_state["rel_box"])
-        if pause_frame is not None:
-            new_bbox = select_head(pause_frame, parent=root)
-            if new_bbox[2] > 0 and new_bbox[3] > 0:
-                tracker.init(pause_frame, new_bbox)
-                app_state["last_bbox"] = new_bbox
-                app_state["head_y"] = new_bbox[1] + new_bbox[3]//2
-                app_state["tracking_quality"] = 1.0
-        app_state["tracking_paused"] = False
-    
-    # --- Volume floor / ceiling ---
-    vol_range_frame = tk.Frame(root, bg="#222")
-    vol_range_frame.pack(fill=tk.X, padx=10, pady=5)
-    lbl_font = ("Arial", 10, "bold")
-    tk.Label(vol_range_frame, text="Vol Floor (%):", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-    tk.Scale(vol_range_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app_state["min_vol_var"], bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 10))
-    tk.Label(vol_range_frame, text="Vol Ceiling (%):", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-    tk.Scale(vol_range_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=app_state["max_vol_var"], bg="#222", fg="white", highlightthickness=0, length=120).pack(side=tk.LEFT, padx=(2, 0))
-
-    # --- Aggressiveness dial ---
-    aggr_frame = tk.Frame(root, bg="#222")
-    aggr_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
-    tk.Label(aggr_frame, text="Aggressiveness:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT)
-    aggr_name_label = tk.Label(aggr_frame, text=AGGR_LEVELS[1][0], bg="#222", fg="#ffcc00", font=("Arial", 10, "bold"), width=7)
-    aggr_name_label.pack(side=tk.RIGHT, padx=(0, 5))
-    def _on_aggr_change(*_):
-        aggr_name_label.config(text=AGGR_LEVELS[app_state["aggr_var"].get()][0])
-    tk.Scale(aggr_frame, from_=0, to=3, resolution=1, orient=tk.HORIZONTAL,
-             variable=app_state["aggr_var"], command=_on_aggr_change,
-             bg="#222", fg="white", highlightthickness=0, showvalue=0, length=180,
-             tickinterval=1).pack(side=tk.LEFT, padx=(8, 4))
-
-    # --- Mode toggle ---
-    mode_frame = tk.Frame(root, bg="#222")
-    mode_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
-    tk.Label(mode_frame, text="Output mode:", bg="#222", fg="white", font=lbl_font).pack(side=tk.LEFT, padx=(0, 8))
-    tk.Radiobutton(mode_frame, text="Restim", variable=app_state["mode_var"], value="restim",
-                   bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                   command=_on_mode_change).pack(side=tk.LEFT)
-    tk.Radiobutton(mode_frame, text="Windows Audio", variable=app_state["mode_var"], value="windows",
-                   bg="#222", fg="white", selectcolor="#444", font=lbl_font,
-                   command=_on_mode_change).pack(side=tk.LEFT, padx=(8, 0))
-
-    # --- Restim options ---
-    restim_opts = tk.Frame(root, bg="#222")
-    tk.Label(restim_opts, text="Port:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
-    app_state["port_var"] = tk.StringVar(value="12346")
-    tk.Entry(restim_opts, textvariable=app_state["port_var"], width=6).pack(side=tk.LEFT)
-
-    def on_port_change(*args):
-        val = app_state["port_var"].get().strip()
-        if val.isdigit():
-            new_port = int(val)
-            if new_port != restim.port:
-                restim.port = new_port
-                if restim.ws:
-                    try: restim.ws.close()
-                    except: pass
-                    restim.ws = None
-    app_state["port_var"].trace_add("write", on_port_change)
-
-    # --- Windows Audio options ---
-    windows_opts = tk.Frame(root, bg="#222")
-    tk.Label(windows_opts, text="Device:", bg="#222", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, padx=(10, 2))
-    device_var = tk.StringVar()
-    device_combo = ttk.Combobox(windows_opts, textvariable=device_var, state="readonly", width=35)
-    device_combo.pack(side=tk.LEFT, padx=(0, 5))
-
-    def refresh_devices():
-        app_state["win_devices"] = list_audio_devices()
-        device_combo["values"] = [d.FriendlyName for d in app_state["win_devices"]]
-        if app_state["win_devices"]:
-            device_combo.current(0)
-            _on_device_select(None)
-
-    def _on_device_select(event):
-        idx = device_combo.current()
-        if 0 <= idx < len(app_state["win_devices"]):
-            app_state["win_audio"] = WindowsAudioClient(app_state["win_devices"][idx])
-
-    device_combo.bind("<<ComboboxSelected>>", _on_device_select)
-    tk.Button(windows_opts, text="Refresh", command=refresh_devices, bg="#444", fg="white", font=("Arial", 9)).pack(side=tk.LEFT)
-
-    def _on_mode_change():
-        if app_state["mode_var"].get() == "restim":
-            windows_opts.pack_forget()
-            restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
-        else:
-            restim_opts.pack_forget()
-            windows_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
-            if not app_state["win_devices"]:
-                refresh_devices()
-
-    # Show default (restim) options
-    restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
-    
-    reselect_frame = tk.Frame(root, bg="#222")
-    reselect_frame.pack(fill=tk.X, padx=10, pady=5)
-    tk.Button(reselect_frame, text="Re-Select Video Feed Area", command=reselect_feed, bg="#555", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-    tk.Button(reselect_frame, text="Re-Select Cock Head", command=reselect_head, bg="#444", fg="white", font=("Arial", 10)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=5)
-    
-    info_label = tk.Label(root, text="State: Erect | Vol: 50% | WS: Disconnected", font=("Arial", 14), bg="#222", fg="white")
-    info_label.pack(pady=10)
-
-    def determine_state(y_pos):
-        heights = app_state["heights"]
-        if heights["Edging"] is None or heights["Erect"] is None or heights["Flaccid"] is None:
-            return "Erect (Needs Calibration)"
-
-        dist_edging  = abs(y_pos - heights["Edging"])
-        dist_erect   = abs(y_pos - heights["Erect"])
-        dist_flaccid = abs(y_pos - heights["Flaccid"])
-
-        minimum = min(dist_edging, dist_erect, dist_flaccid)
-        if minimum == dist_edging:  return "Edging"
-        elif minimum == dist_flaccid: return "Flaccid"
-        else: return "Erect"
-
-    def update_frame():
-        if app_state["tracking_paused"]:
-            root.after(100, update_frame)
-            return
-            
-        frame = capture_window_region(app_state["hwnd"], app_state["rel_box"])
-        if frame is None:
-            info_label.config(text="State: WINDOW HIDDEN? | Vol: -- | WS: --", fg="yellow")
-            root.after(200, update_frame)
-            return
-            
-        # --- YOLO reanchor ---
-        app_state["yolo_frame_counter"] += 1
-        if detector.available and app_state["yolo_frame_counter"] >= YOLO_INTERVAL:
-            app_state["yolo_frame_counter"] = 0
-            yolo_bbox = detector.detect_head(frame)
-
-            if yolo_bbox is not None:
-                # Distance gate — reject if detection is too far from current position
-                px, py, pw, ph = app_state["last_bbox"]
-                cur_cx, cur_cy = px + pw // 2, py + ph // 2
-                yx, yy, yw, yh = yolo_bbox
-                det_cx, det_cy = yx + yw // 2, yy + yh // 2
-                diag = np.sqrt(pw ** 2 + ph ** 2)
-                dist = np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2)
-
-                if dist <= diag * YOLO_MAX_JUMP:
-                    # Accumulate confirmation hits
-                    cand = app_state["yolo_candidate"]
-                    if cand is not None:
-                        prev_bbox, hits = cand
-                        # Check the new detection is close to the previous candidate
-                        pcx = prev_bbox[0] + prev_bbox[2] // 2
-                        pcy = prev_bbox[1] + prev_bbox[3] // 2
-                        if np.sqrt((det_cx - pcx) ** 2 + (det_cy - pcy) ** 2) <= diag:
-                            hits += 1
-                        else:
-                            hits = 1  # new candidate, reset
-                    else:
-                        hits = 1
-
-                    app_state["yolo_candidate"] = (yolo_bbox, hits)
-
-                    if hits >= YOLO_CONFIRM:
-                        tracker.init(frame, yolo_bbox)
-                        app_state["last_bbox"] = yolo_bbox
-                        app_state["yolo_candidate"] = None
-                        x, y, w, h = yolo_bbox
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
-                else:
-                    # Too far — could be balls or hand; discard and reset candidate
-                    app_state["yolo_candidate"] = None
-            else:
-                app_state["yolo_candidate"] = None
-
-        success, new_bbox = tracker.update(frame)
-
-        SIZE_RATIO_MAX  = 2.5    # max allowed bbox size change factor per frame
-        MAX_JUMP_FACTOR = 2.5    # max allowed center jump relative to bbox diagonal
-
-        if success:
-            x, y, w, h_box = [int(v) for v in new_bbox]
-            px, py, pw, ph = app_state["last_bbox"]
-
-            # --- Plausibility: size change ---
-            size_ok = (
-                0 < w <= frame.shape[1] and 0 < h_box <= frame.shape[0] and
-                (1/SIZE_RATIO_MAX) < (w / max(pw, 1)) < SIZE_RATIO_MAX and
-                (1/SIZE_RATIO_MAX) < (h_box / max(ph, 1)) < SIZE_RATIO_MAX
-            )
-
-            # --- Plausibility: position jump ---
-            prev_cx, prev_cy = px + pw//2, py + ph//2
-            new_cx, new_cy = x + w//2, y + h_box//2
-            diag = np.sqrt(pw**2 + ph**2)
-            jump = np.sqrt((new_cx - prev_cx)**2 + (new_cy - prev_cy)**2)
-            jump_ok = jump < diag * MAX_JUMP_FACTOR
-
-            if size_ok and jump_ok:
-                app_state["last_bbox"] = (x, y, w, h_box)
-                app_state["tracking_quality"] = 1.0
-                cv2.rectangle(frame, (x, y), (x + w, y + h_box), (0, 255, 0), 2)
-                cv2.circle(frame, (new_cx, new_cy), 4, (0, 0, 255), -1)
-                app_state["head_y"] = new_cy
-            else:
-                # Plausibility failed — freeze at last known position, warn user
-                reason = "size" if not size_ok else "jump"
-                cv2.putText(frame, f"TRACKING SUSPECT ({reason}) - Frozen", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
-                px, py, pw, ph = app_state["last_bbox"]
-                cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 165, 255), 2)
-                app_state["tracking_quality"] = 0.0
-                # Reinit tracker to last good bbox so it can recover from that position
-                tracker.init(frame, app_state["last_bbox"])
-        else:
-            cv2.putText(frame, "TRACKING LOST - Frozen at last position", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            px, py, pw, ph = app_state["last_bbox"]
-            cv2.rectangle(frame, (px, py), (px + pw, py + ph), (0, 0, 255), 2)
-            app_state["tracking_quality"] = 0.0
-            # Reinit at last known good location (not the center)
-            tracker.init(frame, app_state["last_bbox"])
-
-        state = determine_state(app_state["head_y"])
-        app_state["current_state"] = state
-
-        heights = app_state["heights"]
-        if heights["Edging"] is not None:  cv2.line(frame, (0, heights["Edging"]),  (frame.shape[1], heights["Edging"]),  (0, 0, 255), 2)
-        if heights["Erect"] is not None:   cv2.line(frame, (0, heights["Erect"]),   (frame.shape[1], heights["Erect"]),   (0, 255, 0), 2)
-        if heights["Flaccid"] is not None: cv2.line(frame, (0, heights["Flaccid"]), (frame.shape[1], heights["Flaccid"]), (255, 0, 0), 2)
-
-        cur_time = time.time()
-        if cur_time - app_state["last_vol_time"] > VOLUME_UPDATE_INTERVAL:
-            floor_val = app_state["min_vol_var"].get() / 100.0
-            ceil_val  = app_state["max_vol_var"].get() / 100.0
-            floor_val = min(floor_val, ceil_val)
-            mode = app_state["mode_var"].get()
-
-            delta = 0.0
-            if all(v is not None for v in heights.values()):
-                # Normalise head position along the flaccid→edging axis.
-                # position = 0.0  → head exactly at edging height
-                # position = 1.0  → head exactly at flaccid height
-                # erect_norm      → where erect sits in that 0-1 range
-                full_range = heights["Flaccid"] - heights["Edging"]
-                if abs(full_range) >= 1:
-                    position   = (app_state["head_y"] - heights["Edging"]) / full_range
-                    erect_norm = (heights["Erect"]     - heights["Edging"]) / full_range
-
-                    _, aggr_mult = AGGR_LEVELS[app_state["aggr_var"].get()]
-
-                    if 0.0 <= position <= erect_norm:
-                        # Head is in the sweet zone (edging ↔ erect): hold volume
-                        delta = 0.0
-                    elif position < 0.0:
-                        # Past edging threshold — ease off
-                        delta = -VOLUME_STEP * 0.5 * aggr_mult
-                    else:
-                        # Past erect, drifting toward flaccid — nudge up proportionally
-                        dist = (position - erect_norm) / max(1.0 - erect_norm, 0.01)
-                        delta = VOLUME_STEP * min(dist, 1.0) * aggr_mult
-
-            if mode == "restim":
-                if delta != 0.0:
-                    restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
-                if restim.ws is None:
-                    threading.Thread(target=restim.connect, daemon=True).start()
-            elif mode == "windows":
-                win_audio = app_state["win_audio"]
-                if win_audio and win_audio.connected and delta != 0.0:
-                    win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
-
-            app_state["last_vol_time"] = cur_time
-
-        quality = app_state["tracking_quality"]
-        quality_str = f"Track: {quality*100:.0f}%"
-        mode = app_state["mode_var"].get()
-        if mode == "restim":
-            conn_str = "Connected" if restim.ws else "Disconnected"
-            conn_color = "#00ff00" if restim.ws else "#ff0000"
-            vol_str = f"{restim.volume*100:.0f}%"
-            src_str = f"WS: {conn_str}"
-        else:
-            win_audio = app_state["win_audio"]
-            if win_audio and win_audio.connected:
-                conn_color = "#00ff00"
-                vol_str = f"{win_audio.get_volume()*100:.0f}%"
-                src_str = "Win Audio: OK"
-            else:
-                conn_color = "#ffaa00"
-                vol_str = "--"
-                src_str = "Win Audio: No Device"
-        info_label.config(
-            text=f"State: {state}  |  Vol: {vol_str}  |  {quality_str}  |  {src_str}",
-            fg=conn_color
-        )
-
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame_rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
-        video_label.imgtk = imgtk 
-        video_label.configure(image=imgtk)
-        
-        root.after(5, update_frame)
-
-    root.after(5, update_frame)
-    root.mainloop()
 
 if __name__ == "__main__":
     main()
