@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 import time
+import threading
+import webbrowser
+import requests
 import websocket
 import tkinter as tk
 from tkinter import ttk
@@ -17,11 +20,13 @@ from comtypes import CLSCTX_ALL
 sct_global = mss()
 
 # --- CONFIGURATION ---
+VERSION = "1.0.0"
+GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
-RESTIM_PORT = 12346 
+RESTIM_PORT = 12346
 TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
-VOLUME_UPDATE_INTERVAL = 0.5 
+VOLUME_UPDATE_INTERVAL = 0.5
 
 class RegionSelector:
     def __init__(self, parent=None):
@@ -315,6 +320,25 @@ class WindowsAudioClient:
         self.set_volume(self.get_volume() + delta, floor=floor, ceiling=ceiling)
 
 
+def check_for_update(on_update_available):
+    """Runs in a background thread. Calls on_update_available(latest_version, url) if a newer release exists."""
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            timeout=5,
+            headers={"Accept": "application/vnd.github+json"}
+        )
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        latest = data.get("tag_name", "").lstrip("v")
+        url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
+        if latest and tuple(int(x) for x in latest.split(".")) > tuple(int(x) for x in VERSION.split(".")):
+            on_update_available(latest, url)
+    except Exception:
+        pass  # silently ignore — no internet, rate limit, etc.
+
+
 def main():
     print("Cock Volume Controller starting...")
     
@@ -341,6 +365,25 @@ def main():
     root = tk.Tk()
     root.title("Cock Volume Controller")
     root.configure(bg="#222")
+
+    # --- Update check ---
+    update_banner = tk.Frame(root, bg="#b8860b")
+    update_label  = tk.Label(update_banner, text="", bg="#b8860b", fg="white", font=("Arial", 10, "bold"))
+    update_label.pack(side=tk.LEFT, padx=10, pady=4)
+    update_btn = tk.Button(update_banner, text="Download", bg="#8B6914", fg="white",
+                           font=("Arial", 10, "bold"), relief=tk.FLAT, cursor="hand2")
+    update_btn.pack(side=tk.RIGHT, padx=10, pady=4)
+
+    def _show_update_banner(latest, url):
+        update_label.config(text=f"Update available: v{latest}")
+        update_btn.config(command=lambda: webbrowser.open(url))
+        update_banner.pack(fill=tk.X, before=root.winfo_children()[0])
+
+    threading.Thread(
+        target=check_for_update,
+        args=(lambda latest, url: root.after(0, _show_update_banner, latest, url),),
+        daemon=True
+    ).start()
 
     app_state = {
         "hwnd": hwnd,
