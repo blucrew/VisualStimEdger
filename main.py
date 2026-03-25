@@ -1,3 +1,16 @@
+import os
+import sys
+import tempfile
+
+# Redirect comtypes generated-interface cache to a writable location BEFORE
+# pycaw/comtypes are imported.  In a frozen exe (PyInstaller or Nuitka) the
+# bundled comtypes/gen directory is read-only, so COM interface generation
+# silently fails and device enumeration returns nothing.
+import comtypes.gen as _comtypes_gen
+_cache = os.path.join(tempfile.gettempdir(), "VisualStimEdger_comtypes_gen")
+os.makedirs(_cache, exist_ok=True)
+_comtypes_gen.__path__ = [_cache]
+
 import cv2
 import numpy as np
 import time
@@ -24,8 +37,6 @@ import pathlib
 import queue
 from collections import deque
 import ctypes
-import os
-import sys
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL
 
@@ -123,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -143,7 +154,6 @@ AGGR_LEVELS = {
 CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
 
 HEAD_Y_SMOOTH      = 8    # rolling average window for head Y before volume logic
-RUIN_HOLD_SECONDS  = 3.0  # seconds past the ruin line before volume drops to floor
 
 class RegionSelector:
     def __init__(self, parent=None):
@@ -449,44 +459,40 @@ class _SounddeviceAudioDevice:
 def list_audio_devices():
     """Return all render (output) devices.
 
-    Strategy (each level is only tried if the previous yields nothing):
-    1. GetAllDevices() filtered to render (flow==0) endpoints.
-    2. GetAllDevices() unfiltered — in case the flow comparison breaks.
-    3. GetSpeakers() — returns just the default output as a fallback device.
-    4. sounddevice.query_devices() — bypasses pycaw/COM enumeration entirely.
+    sounddevice is tried first — it bypasses COM entirely and is rock-solid
+    for listing.  pycaw is kept only as a fallback for volume control resolution.
     """
-    # Level 1 & 2: full enumeration
+    # Level 1: sounddevice — most reliable for enumeration across all Windows versions
+    try:
+        import sounddevice as sd
+        devs = [_SounddeviceAudioDevice(d['name'])
+                for d in sd.query_devices()
+                if d['max_output_channels'] > 0]
+        if devs:
+            log.info(f"WinAudio: sounddevice found {len(devs)} output device(s)")
+            return devs
+    except Exception as e:
+        log.error(f"WinAudio: sounddevice listing failed: {e}")
+
+    # Level 2 & 3: pycaw full enumeration (fallback)
+    log.warning("WinAudio: sounddevice unavailable — falling back to pycaw")
     try:
         devices = AudioUtilities.GetAllDevices()
         render = [d for d in devices if int(d.flow) == 0]
         if render:
             return render
         if devices:
-            log.warning("WinAudio: flow filter matched nothing — showing all devices")
             return list(devices)
     except Exception as e:
         log.error(f"WinAudio: GetAllDevices failed: {e}")
 
-    # Level 3: default speakers only
+    # Level 4: default speakers only
     try:
-        log.warning("WinAudio: falling back to GetSpeakers() default device")
         default = AudioUtilities.GetSpeakers()
         if default:
             return [_DefaultAudioDevice(default)]
     except Exception as e:
         log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
-
-    # Level 4: sounddevice — queries PortAudio directly, bypasses Windows COM
-    try:
-        import sounddevice as sd
-        devs = [_SounddeviceAudioDevice(d['name'])
-                for i, d in enumerate(sd.query_devices())
-                if d['max_output_channels'] > 0]
-        if devs:
-            log.warning(f"WinAudio: using sounddevice fallback — found {len(devs)} output device(s)")
-            return devs
-    except Exception as e:
-        log.error(f"WinAudio: sounddevice fallback failed: {e}")
 
     return []
 
@@ -616,14 +622,21 @@ class App:
     _MAX_JUMP_FACTOR = 2.5
 
     def __init__(self, hwnd, rel_box, initial_frame, bbox):
+        # Ensure COM is initialised on this thread (fixes pycaw failures on some Win11 setups)
+        try:
+            from comtypes import CoInitialize
+            CoInitialize()
+        except Exception:
+            pass
+
         # Capture / window
         self.hwnd    = hwnd
         self.rel_box = rel_box
 
         # Tracking state
         self.head_y          = bbox[1] + bbox[3] // 2
-        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None, "Ruin": None}
-        self._ruin_start     = None  # timestamp when head crossed the ruin line
+        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None}
+
         self.last_vol_time   = time.time()
         self.tracking_paused    = False
         self.last_bbox          = tuple(int(v) for v in bbox)
@@ -665,9 +678,7 @@ class App:
         # Root window
         self.root = ctk.CTk()
         self.root.title("VisualStimEdger")
-        _icon = (pathlib.Path(sys._MEIPASS) / "icon.ico"
-                 if getattr(sys, "frozen", False)
-                 else pathlib.Path(__file__).parent / "icon.ico")
+        _icon = pathlib.Path(resource_path("icon.ico"))
         if _icon.exists():
             self.root.iconbitmap(str(_icon))
 
@@ -728,7 +739,6 @@ class App:
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=6).pack(fill=tk.X, pady=3)
 
-        _hbtn(hbf, "Set Ruin Height",    self._set_ruin,    "#7a0000", "#550000")
         _hbtn(hbf, "Set Edging Height",  self._set_edging,  self._C_RED,    self._C_RED_HOV)
         _hbtn(hbf, "Set Erect Height",   self._set_erect,   "#1a5c2e",      "#114420")
         _hbtn(hbf, "Set Flaccid Height", self._set_flaccid, "#1a2e5c",      "#11203e")
@@ -781,6 +791,7 @@ class App:
 
         # ── Output mode ───────────────────────────────────────────────────────
         mode_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        self._mode_card = mode_card
         mode_card.pack(fill=tk.X, padx=P, pady=4)
         mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
         mode_row.pack(fill=tk.X, padx=12, pady=10)
@@ -892,7 +903,7 @@ class App:
                 return
             data = json.loads(CONFIG_PATH.read_text())
             # Heights
-            for key in ("Ruin", "Edging", "Erect", "Flaccid"):
+            for key in ("Edging", "Erect", "Flaccid"):
                 if key in data.get("heights", {}):
                     self.heights[key] = data["heights"][key]
             # Sliders / controls
@@ -980,10 +991,6 @@ class App:
         self._update_btn.configure(command=lambda: webbrowser.open(url))
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
-    def _set_ruin(self):
-        self.heights["Ruin"] = self.head_y
-        log.info(f"Ruin height set at Y={self.head_y}")
-        self._save_config()
 
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
@@ -1036,10 +1043,12 @@ class App:
     def _on_mode_change(self):
         if self.mode_var.get() == "restim":
             self._windows_opts.pack_forget()
-            self._restim_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+            self._restim_opts.pack(fill=tk.X, padx=12, pady=(0, 4),
+                                   after=self._mode_card)
         else:
             self._restim_opts.pack_forget()
-            self._windows_opts.pack(fill=tk.X, padx=10, pady=(0, 5))
+            self._windows_opts.pack(fill=tk.X, padx=12, pady=(0, 4),
+                                    after=self._mode_card)
             if not self.win_devices:
                 self._refresh_devices()
         self._save_config()
@@ -1276,7 +1285,6 @@ class App:
 
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
-        if self.heights["Ruin"]    is not None: cv2.line(frame, (0, self.heights["Ruin"]),    (fw, self.heights["Ruin"]),    (0, 0, 180), 2)
         if self.heights["Edging"]  is not None: cv2.line(frame, (0, self.heights["Edging"]),  (fw, self.heights["Edging"]),  (0, 0, 255), 2)
         if self.heights["Erect"]   is not None: cv2.line(frame, (0, self.heights["Erect"]),   (fw, self.heights["Erect"]),   (0, 255, 0), 2)
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, self.heights["Flaccid"]), (fw, self.heights["Flaccid"]), (255, 0, 0), 2)
@@ -1317,36 +1325,6 @@ class App:
         vel_boost = max(0.0, velocity) * 0.5   # moving fast toward flaccid = respond harder
         return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
-    def _check_ruin(self, smoothed_y):
-        """Drop volume to floor if head stays past the ruin line for RUIN_HOLD_SECONDS."""
-        ruin_y   = self.heights.get("Ruin")
-        edging_y = self.heights.get("Edging")
-        flaccid_y = self.heights.get("Flaccid")
-        if ruin_y is None or edging_y is None or flaccid_y is None:
-            return
-
-        full_range = flaccid_y - edging_y
-        if abs(full_range) < 1:
-            return
-
-        ruin_norm = (ruin_y   - edging_y) / full_range  # expected < 0 (past edging)
-        position  = (smoothed_y - edging_y) / full_range
-
-        if position <= ruin_norm:
-            if self._ruin_start is None:
-                self._ruin_start = time.time()
-            elif time.time() - self._ruin_start >= RUIN_HOLD_SECONDS:
-                floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
-                ceil_val  = self.max_vol_var.get() / 100.0
-                mode      = self.mode_var.get()
-                if mode == "restim":
-                    self.restim.set_volume(floor_val, floor=floor_val, ceiling=ceil_val)
-                elif mode == "windows" and self.win_audio and self.win_audio.connected:
-                    self.win_audio.set_volume(floor_val, floor=floor_val, ceiling=ceil_val)
-                self._ruin_start = None
-                log.info("Ruin triggered — volume dropped to floor")
-        else:
-            self._ruin_start = None  # reset timer if head leaves ruin zone
 
     def _tick_volume(self):
         cur_time = time.time()
@@ -1359,7 +1337,7 @@ class App:
 
         history    = self._head_y_history
         smoothed_y = sum(history) / len(history) if history else self.head_y
-        self._check_ruin(smoothed_y)
+
 
         floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
         ceil_val  = self.max_vol_var.get() / 100.0
