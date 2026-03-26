@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1551,7 +1551,7 @@ def show_splash() -> bool:
     root = tk.Tk()
     root.title("VisualStimEdger")
     root.configure(bg="#0d0d0d")
-    root.resizable(False, False)
+    root.resizable(False, True)
     _icon = pathlib.Path(resource_path("icon.ico"))
     if _icon.exists():
         try:
@@ -1633,7 +1633,7 @@ def show_splash() -> bool:
     btn.pack(fill="x", padx=P, pady=(0, P))
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
-    W, H = 580, 510
+    W, H = 580, 640
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
