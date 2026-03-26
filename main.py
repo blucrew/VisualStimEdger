@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.7"
+VERSION = "1.2.8"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1046,10 +1046,12 @@ class App:
 
         elapsed = now - self._auto_obs_start
 
-        # Update button label while settling
+        # Update button label while settling — only once per second to avoid UI stall
         if elapsed < self._AUTO_SETTLE:
             remaining = int(self._AUTO_SETTLE - elapsed) + 1
-            self._auto_btn.configure(text=f"AUTO  (observing {remaining}s...)")
+            if remaining != getattr(self, '_auto_last_remaining', -1):
+                self._auto_last_remaining = remaining
+                self._auto_btn.configure(text=f"AUTO  (observing {remaining}s...)")
             return
 
         # Throttle actual height application
@@ -1065,7 +1067,9 @@ class App:
         self.heights["Erect"]   = (self._auto_min_y + self._auto_max_y) / 2
         self.heights["Flaccid"] = self._auto_max_y
 
-        self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
+        if getattr(self, '_auto_btn_state', None) != "active":
+            self._auto_btn_state = "active"
+            self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
         log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                   f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
 
