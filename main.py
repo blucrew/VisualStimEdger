@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.8"
+VERSION = "1.2.9"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1088,12 +1088,28 @@ class App:
         log.info(f"Flaccid height set at Y={self.head_y}")
         self._save_config()
 
+    def _reset_heights(self):
+        """Clear calibrated heights — called whenever the feed changes."""
+        self.heights = {"Edging": None, "Erect": None, "Flaccid": None, "Ruin": None}
+        self._auto_min_y = None
+        self._auto_max_y = None
+        self._auto_frame_count = 0
+        self._auto_start_time = None
+        self._auto_last_shown_sec = -1
+        if hasattr(self, '_auto_btn_state'):
+            self._auto_btn_state = None
+        if hasattr(self, '_auto_btn'):
+            self._auto_btn.configure(text="AUTO", fg_color=self._C_SURFACE2,
+                                     hover_color="#333")
+        log.info("Heights reset after feed re-selection")
+
     def _reselect_feed(self):
         self.tracking_paused = True
         new_hwnd, new_rel_box = select_region(self.root)
         if new_hwnd and new_rel_box['width'] > 10 and new_rel_box['height'] > 10:
             self.hwnd    = new_hwnd
             self.rel_box = new_rel_box
+            self._reset_heights()
             self._reselect_head()
         else:
             self.tracking_paused = False
