@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.6"
+VERSION = "1.2.7"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -661,6 +661,13 @@ class App:
         # Cum cooldown  (None = not active)
         self._cum_time: float | None = None
 
+        # AUTO calibration
+        self._auto_mode       = True
+        self._auto_min_y: float | None = None
+        self._auto_max_y: float | None = None
+        self._auto_obs_start: float | None = None
+        self._auto_last_apply = 0.0
+
         # Background capture — keeps the main thread free for tracking + UI
         self._frame_queue    = queue.Queue(maxsize=2)
         self._running        = True
@@ -742,6 +749,12 @@ class App:
             ctk.CTkButton(parent, text=text, command=cmd, font=btn, height=38,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=6).pack(fill=tk.X, pady=3)
+
+        self._auto_btn = ctk.CTkButton(
+            hbf, text="AUTO  (observing...)", command=self._toggle_auto,
+            font=btn, height=38, corner_radius=6,
+            fg_color="#b8a000", hover_color="#8a7800", text_color="white")
+        self._auto_btn.pack(fill=tk.X, pady=(0, 6))
 
         _hbtn(hbf, "Set Edging Height",  self._set_edging,  self._C_RED,    self._C_RED_HOV)
         _hbtn(hbf, "Set Erect Height",   self._set_erect,   "#1a5c2e",      "#114420")
@@ -1004,6 +1017,58 @@ class App:
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
 
+    _AUTO_SETTLE   = 5.0   # seconds of observation before first height apply
+    _AUTO_INTERVAL = 2.0   # seconds between re-applies
+
+    def _toggle_auto(self):
+        self._auto_mode = not self._auto_mode
+        if self._auto_mode:
+            self._auto_min_y = self._auto_max_y = None
+            self._auto_obs_start = None
+            self._auto_last_apply = 0.0
+            self._auto_btn.configure(text="AUTO  (observing...)",
+                                     fg_color="#b8a000", hover_color="#8a7800")
+        else:
+            self._auto_btn.configure(text="AUTO  (off)",
+                                     fg_color=self._C_SURFACE2, hover_color="#333")
+
+    def _auto_feed(self, y: float):
+        """Called every heavy frame while AUTO is on and tracking is good."""
+        now = time.time()
+        if self._auto_obs_start is None:
+            self._auto_obs_start = now
+
+        # Expand observed range
+        if self._auto_min_y is None or y < self._auto_min_y:
+            self._auto_min_y = y
+        if self._auto_max_y is None or y > self._auto_max_y:
+            self._auto_max_y = y
+
+        elapsed = now - self._auto_obs_start
+
+        # Update button label while settling
+        if elapsed < self._AUTO_SETTLE:
+            remaining = int(self._AUTO_SETTLE - elapsed) + 1
+            self._auto_btn.configure(text=f"AUTO  (observing {remaining}s...)")
+            return
+
+        # Throttle actual height application
+        if now - self._auto_last_apply < self._AUTO_INTERVAL:
+            return
+        self._auto_last_apply = now
+
+        rng = self._auto_max_y - self._auto_min_y
+        if rng < 8:   # not enough vertical range yet — keep observing
+            return
+
+        self.heights["Edging"]  = self._auto_min_y + 0.05 * rng
+        self.heights["Erect"]   = (self._auto_min_y + self._auto_max_y) / 2
+        self.heights["Flaccid"] = self._auto_max_y
+
+        self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
+        log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
+                  f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
+
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
         log.info(f"Edging height set at Y={self.head_y}")
@@ -1169,6 +1234,8 @@ class App:
         if heavy:
             self._maybe_yolo_reanchor(frame)
             self._run_tracker(frame)
+            if self._auto_mode and self.tracking_ok:
+                self._auto_feed(self.head_y)
 
         state = self._determine_state(self.head_y)
 
