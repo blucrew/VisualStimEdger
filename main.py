@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1543,97 +1543,104 @@ class App:
 
 
 def show_splash() -> bool:
-    """Welcome / setup checklist screen. Returns True if user clicked Start."""
+    """Welcome / setup checklist screen. Returns True if user clicked Start.
+    Uses plain tkinter (not CTk) — more reliable for a pre-launch window."""
     import tkinter as tk
-    started = tk.BooleanVar(value=False)
+    from tkinter import font as tkfont
 
-    root = ctk.CTk()
+    root = tk.Tk()
     root.title("VisualStimEdger")
-    root.configure(fg_color="#0d0d0d")
+    root.configure(bg="#0d0d0d")
     root.resizable(False, False)
     _icon = pathlib.Path(resource_path("icon.ico"))
     if _icon.exists():
-        root.iconbitmap(str(_icon))
+        try:
+            root.iconbitmap(str(_icon))
+        except Exception:
+            pass
 
-    P = 28
+    started = False
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    ctk.CTkLabel(root, text="VisualStimEdger",
-                 font=ctk.CTkFont(size=26, weight="bold"),
-                 text_color="#eeeeee").pack(pady=(P, 2))
-    ctk.CTkLabel(root, text=f"v{VERSION}  ·  edge smarter",
-                 font=ctk.CTkFont(size=11), text_color="#666666").pack(pady=(0, P))
+    BG       = "#0d0d0d"
+    CARD     = "#1a1a1a"
+    RED      = "#cc2200"
+    YELLOW   = "#ffcc00"
+    TEXT     = "#eeeeee"
+    DIM      = "#666666"
+    SUBDIM   = "#888888"
+    P        = 24
 
-    # ── What you need card ─────────────────────────────────────────────────────
-    card = ctk.CTkFrame(root, fg_color="#1a1a1a", corner_radius=10)
-    card.pack(fill="x", padx=P, pady=(0, 12))
+    f_title  = tkfont.Font(family="Segoe UI", size=20, weight="bold")
+    f_sub    = tkfont.Font(family="Segoe UI", size=10)
+    f_head   = tkfont.Font(family="Segoe UI", size=12, weight="bold")
+    f_body   = tkfont.Font(family="Segoe UI", size=10)
+    f_num    = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+    f_btn    = tkfont.Font(family="Segoe UI", size=13, weight="bold")
 
-    ctk.CTkLabel(card, text="Before you hit Start",
-                 font=ctk.CTkFont(size=13, weight="bold"),
-                 text_color="#ffcc00").pack(anchor="w", padx=16, pady=(14, 6))
+    tk.Label(root, text="VisualStimEdger", font=f_title,
+             bg=BG, fg=TEXT).pack(pady=(P, 2))
+    tk.Label(root, text=f"v{VERSION}  ·  edge smarter", font=f_sub,
+             bg=BG, fg=DIM).pack(pady=(0, P//2))
+
+    # Card
+    card = tk.Frame(root, bg=CARD, padx=16, pady=12)
+    card.pack(fill="x", padx=P, pady=(0, 10))
+
+    tk.Label(card, text="Before you hit Start", font=f_head,
+             bg=CARD, fg=YELLOW, anchor="w").pack(anchor="w", pady=(0, 8))
 
     steps = [
         ("1", "Open your camera feed",
-             "OBS, a webcam app, a browser stream — anything that shows your cock\n"
-             "in a window on screen. It does NOT need to be full-screen."),
-        ("2", "Make sure it's visible and not minimised",
-             "The app will ask you to draw a box around that window.\n"
-             "If it's behind other windows, bring it to the front now."),
-        ("3", "You'll then mark the head of your cock",
-             "Draw a small box around the tip. An electrode or ring on the head\n"
-             "tracks even better than skin alone."),
-        ("4", "Calibrate three heights during your session",
-             "Flaccid → Erect → Edging.  AUTO mode can do this for you.\n"
-             "You can re-calibrate at any time without restarting."),
+              "OBS, webcam app, browser stream — anything showing your cock in a window.\n"
+              "It does NOT need to be full-screen."),
+        ("2", "Keep it visible and not minimised",
+              "The app will ask you to draw a box around that window.\n"
+              "Bring it to the front before hitting Start."),
+        ("3", "You'll mark the tip of your cock",
+              "Draw a small box around the head. An electrode or ring tracks\n"
+              "even better than skin alone."),
+        ("4", "Calibrate Flaccid / Erect / Edging heights",
+              "Do this during your session. AUTO mode can handle it for you.\n"
+              "Re-calibrate any time without restarting."),
     ]
 
     for num, title, body in steps:
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(fill="x", padx=16, pady=4)
-        ctk.CTkLabel(row, text=num, width=24, height=24,
-                     fg_color="#cc2200", corner_radius=12,
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="white").pack(side="left", anchor="n", pady=2)
-        txt = ctk.CTkFrame(row, fg_color="transparent")
-        txt.pack(side="left", padx=(10, 0), fill="x", expand=True)
-        ctk.CTkLabel(txt, text=title,
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#eeeeee", anchor="w").pack(anchor="w")
-        ctk.CTkLabel(txt, text=body,
-                     font=ctk.CTkFont(size=11), text_color="#888888",
-                     anchor="w", justify="left").pack(anchor="w")
+        row = tk.Frame(card, bg=CARD)
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=num, font=f_num, bg=RED, fg="white",
+                 width=2, relief="flat").pack(side="left", anchor="n", padx=(0, 8))
+        col = tk.Frame(row, bg=CARD)
+        col.pack(side="left", fill="x", expand=True)
+        tk.Label(col, text=title, font=f_head, bg=CARD,
+                 fg=TEXT, anchor="w").pack(anchor="w")
+        tk.Label(col, text=body, font=f_body, bg=CARD,
+                 fg=SUBDIM, anchor="w", justify="left").pack(anchor="w")
 
-    ctk.CTkFrame(card, fg_color="transparent", height=10).pack()  # bottom padding
+    tk.Label(root,
+             text="Controls volume only — does not generate e-stim signals.\n"
+                  "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
+             font=f_body, bg=BG, fg=DIM, justify="center").pack(pady=(4, 12))
 
-    # ── Note ──────────────────────────────────────────────────────────────────
-    ctk.CTkLabel(root,
-                 text="This app controls volume only — it does not generate e-stim signals.\n"
-                      "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
-                 font=ctk.CTkFont(size=10), text_color="#555555",
-                 justify="center").pack(pady=(0, 16))
-
-    # ── Start button ──────────────────────────────────────────────────────────
     def _start():
-        started.set(True)
+        nonlocal started
+        started = True
         root.destroy()
 
-    ctk.CTkButton(root, text="I'm ready — select my camera feed  →",
-                  command=_start, height=46,
-                  font=ctk.CTkFont(size=14, weight="bold"),
-                  fg_color="#cc2200", hover_color="#991800",
-                  text_color="white", corner_radius=8).pack(
-                      fill="x", padx=P, pady=(0, P))
+    btn = tk.Button(root, text="I'm ready — select my camera feed  \u2192",
+                    font=f_btn, bg=RED, fg="white", activebackground="#991800",
+                    activeforeground="white", relief="flat", bd=0,
+                    cursor="hand2", command=_start, pady=12)
+    btn.pack(fill="x", padx=P, pady=(0, P))
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
-    # Set a fixed size first so the window is never invisible
-    W, H = 560, 520
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    W, H = 540, 500
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
     root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
-    # Force to front — Windows blocks focus steal so use topmost briefly
     root.attributes("-topmost", True)
-    root.after(300, lambda: root.attributes("-topmost", False))
+    root.after(400, lambda: root.attributes("-topmost", False))
     root.mainloop()
-    return started.get()
+    return started
 
 
 def main():
