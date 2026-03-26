@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.9"
+VERSION = "1.3.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1232,6 +1232,10 @@ class App:
 
     # ------------------------------------------------------------------ frame loop
 
+    # Throttle constants (ms)
+    _DISPLAY_INTERVAL_MS  = 50   # max 20 fps for the preview panel
+    _STATUS_INTERVAL_MS   = 250  # max 4 fps for the status label text
+
     def _update_frame(self):
         if self.tracking_paused:
             self.root.after(100, self._update_frame)
@@ -1240,14 +1244,13 @@ class App:
         try:
             frame = self._frame_queue.get_nowait()
         except queue.Empty:
-            # Capture thread hasn't produced a frame yet — try again shortly
-            self.root.after(10, self._update_frame)
+            self.root.after(16, self._update_frame)
             return
 
-        self._frame_times.append(time.time())
+        now = time.time()
+        self._frame_times.append(now)
 
-        # Performance: in non-Expert modes skip every other frame for tracking/volume.
-        # Video display still updates every frame for smooth playback.
+        # Tracking + volume: every other frame in non-Expert modes
         self._proc_frame_count = getattr(self, '_proc_frame_count', 0) + 1
         heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
 
@@ -1263,12 +1266,21 @@ class App:
             self._update_stats(state)
             self._tick_volume()
 
-        self._draw_height_lines(frame)
-        self._draw_tracking_overlay(frame)
-        self._update_status_label(state)
-        self._display_frame(frame)
+        # Status label — throttled to _STATUS_INTERVAL_MS
+        _last_status = getattr(self, '_last_status_time', 0.0)
+        if now - _last_status >= self._STATUS_INTERVAL_MS / 1000:
+            self._update_status_label(state)
+            self._last_status_time = now
 
-        self.root.after(5, self._update_frame)
+        # Video display — throttled to _DISPLAY_INTERVAL_MS
+        _last_disp = getattr(self, '_last_display_time', 0.0)
+        if now - _last_disp >= self._DISPLAY_INTERVAL_MS / 1000:
+            self._draw_height_lines(frame)
+            self._draw_tracking_overlay(frame)
+            self._display_frame(frame)
+            self._last_display_time = now
+
+        self.root.after(16, self._update_frame)
 
     def _maybe_yolo_reanchor(self, frame):
         self.yolo_frame_counter += 1
