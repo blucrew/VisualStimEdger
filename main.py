@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1625,14 +1625,13 @@ def show_splash() -> bool:
                       fill="x", padx=P, pady=(0, P))
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
-    # Force a full layout pass so widget sizes are real, not 1x1
-    root.update()
-    w = max(root.winfo_width(), 520)
-    h = max(root.winfo_height(), 440)
+    # Set a fixed size first so the window is never invisible
+    W, H = 560, 520
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
-    root.lift()
-    root.focus_force()
+    root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+    # Force to front — Windows blocks focus steal so use topmost briefly
+    root.attributes("-topmost", True)
+    root.after(300, lambda: root.attributes("-topmost", False))
     root.mainloop()
     return started.get()
 
