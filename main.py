@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -658,6 +658,9 @@ class App:
         # Hold
         self.hold_active = False
 
+        # Cum cooldown  (None = not active)
+        self._cum_time: float | None = None
+
         # Background capture — keeps the main thread free for tracking + UI
         self._frame_queue    = queue.Queue(maxsize=2)
         self._running        = True
@@ -690,6 +693,7 @@ class App:
         self.port_var    = tk.StringVar(value="12346")
 
         self._build_ui()
+        self._on_aggr_change()   # set initial aggressiveness colour
         self._load_config()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._start_update_check()
@@ -743,6 +747,13 @@ class App:
         _hbtn(hbf, "Set Erect Height",   self._set_erect,   "#1a5c2e",      "#114420")
         _hbtn(hbf, "Set Flaccid Height", self._set_flaccid, "#1a2e5c",      "#11203e")
 
+        # spacer pushes cum button to bottom
+        ctk.CTkFrame(hbf, fg_color="transparent").pack(fill=tk.BOTH, expand=True)
+        ctk.CTkButton(hbf, text="I've CUM", command=self._on_cum,
+                      font=btn, height=38, corner_radius=6,
+                      fg_color="white", hover_color="#dddddd",
+                      text_color="#0d0d0d").pack(fill=tk.X, pady=3)
+
         def _divider():
             ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=3)
 
@@ -778,14 +789,15 @@ class App:
         aggr_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
-        ctk.CTkSegmentedButton(
+        self._aggr_seg = ctk.CTkSegmentedButton(
             aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
             command=self._on_aggr_change,
-            selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
+            selected_color="#1a8a1a", selected_hover_color="#145c14",
             unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
             font=ctk.CTkFont(size=11, weight="bold"),
             text_color=self._C_TEXT,
-        ).pack(side=tk.RIGHT)
+        )
+        self._aggr_seg.pack(side=tk.RIGHT)
 
         _divider()
 
@@ -1029,8 +1041,30 @@ class App:
                 self.tracking_ok = True
         self.tracking_paused = False
 
-    def _on_aggr_change(self, *_):
+    _AGGR_COLORS = {
+        "Easy":   ("#1a8a1a", "#145c14"),
+        "Middle": ("#b8a000", "#8a7800"),
+        "Hard":   ("#cc6600", "#994c00"),
+        "Expert": ("#cc2200", "#991800"),
+    }
+
+    def _on_aggr_change(self, val=None):
+        val = val or self.aggr_var.get()
+        col, hov = self._AGGR_COLORS.get(val, (self._C_RED, self._C_RED_HOV))
+        self._aggr_seg.configure(selected_color=col, selected_hover_color=hov)
         self._save_config()
+
+    def _on_cum(self):
+        """Drop volume to 0, hold 5 min, ramp back to floor over 5 min."""
+        self._cum_time = time.time()
+        floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+        ceil_val  = self.max_vol_var.get() / 100.0
+        mode = self.mode_var.get()
+        if mode == "restim":
+            self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
+        elif self.win_audio and self.win_audio.connected:
+            self.win_audio.set_volume(0.0, 0.0, 1.0)
+        log.info("Cum triggered — volume silenced for 5 min")
 
     def _on_floor_change(self, val):
         self._floor_lbl.configure(text=f"{float(val):.0f}%")
@@ -1326,11 +1360,35 @@ class App:
         return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
 
+    _CUM_SILENCE = 300.0   # seconds at zero
+    _CUM_RAMP    = 300.0   # seconds ramping back to floor
+
     def _tick_volume(self):
         cur_time = time.time()
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
             return
         self.last_vol_time = cur_time
+
+        # ── Cum cooldown overrides everything ─────────────────────────────────
+        if self._cum_time is not None:
+            elapsed   = cur_time - self._cum_time
+            floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+            ceil_val  = self.max_vol_var.get() / 100.0
+            if elapsed < self._CUM_SILENCE:
+                target = 0.0
+            elif elapsed < self._CUM_SILENCE + self._CUM_RAMP:
+                progress = (elapsed - self._CUM_SILENCE) / self._CUM_RAMP
+                target   = floor_val * progress
+            else:
+                self._cum_time = None   # cooldown over — fall through to normal
+                target = None
+            if target is not None:
+                mode = self.mode_var.get()
+                if mode == "restim":
+                    self.restim.set_volume(target, floor=0.0, ceiling=ceil_val)
+                elif self.win_audio and self.win_audio.connected:
+                    self.win_audio.set_volume(target, 0.0, 1.0)
+                return
 
         if self.hold_active:
             return  # Volume frozen by user
