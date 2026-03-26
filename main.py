@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1612,14 +1612,14 @@ def show_splash() -> bool:
         col = tk.Frame(row, bg=CARD)
         col.pack(side="left", fill="x", expand=True)
         tk.Label(col, text=title, font=f_head, bg=CARD,
-                 fg=TEXT, anchor="w").pack(anchor="w")
+                 fg=TEXT, anchor="w", wraplength=440).pack(anchor="w")
         tk.Label(col, text=body, font=f_body, bg=CARD,
-                 fg=SUBDIM, anchor="w", justify="left").pack(anchor="w")
+                 fg=SUBDIM, anchor="w", justify="left", wraplength=440).pack(anchor="w")
 
     tk.Label(root,
              text="Controls volume only — does not generate e-stim signals.\n"
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
-             font=f_body, bg=BG, fg=DIM, justify="center").pack(pady=(4, 12))
+             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
 
     def _start():
         nonlocal started
@@ -1633,7 +1633,7 @@ def show_splash() -> bool:
     btn.pack(fill="x", padx=P, pady=(0, P))
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
-    W, H = 540, 500
+    W, H = 580, 510
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
     root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
