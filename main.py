@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1542,6 +1542,98 @@ class App:
         self.video_label.configure(image=imgtk)
 
 
+def show_splash() -> bool:
+    """Welcome / setup checklist screen. Returns True if user clicked Start."""
+    import tkinter as tk
+    started = tk.BooleanVar(value=False)
+
+    root = ctk.CTk()
+    root.title("VisualStimEdger")
+    root.configure(fg_color="#0d0d0d")
+    root.resizable(False, False)
+    _icon = pathlib.Path(resource_path("icon.ico"))
+    if _icon.exists():
+        root.iconbitmap(str(_icon))
+
+    P = 28
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text="VisualStimEdger",
+                 font=ctk.CTkFont(size=26, weight="bold"),
+                 text_color="#eeeeee").pack(pady=(P, 2))
+    ctk.CTkLabel(root, text=f"v{VERSION}  ·  edge smarter",
+                 font=ctk.CTkFont(size=11), text_color="#666666").pack(pady=(0, P))
+
+    # ── What you need card ─────────────────────────────────────────────────────
+    card = ctk.CTkFrame(root, fg_color="#1a1a1a", corner_radius=10)
+    card.pack(fill="x", padx=P, pady=(0, 12))
+
+    ctk.CTkLabel(card, text="Before you hit Start",
+                 font=ctk.CTkFont(size=13, weight="bold"),
+                 text_color="#ffcc00").pack(anchor="w", padx=16, pady=(14, 6))
+
+    steps = [
+        ("1", "Open your camera feed",
+             "OBS, a webcam app, a browser stream — anything that shows your cock\n"
+             "in a window on screen. It does NOT need to be full-screen."),
+        ("2", "Make sure it's visible and not minimised",
+             "The app will ask you to draw a box around that window.\n"
+             "If it's behind other windows, bring it to the front now."),
+        ("3", "You'll then mark the head of your cock",
+             "Draw a small box around the tip. An electrode or ring on the head\n"
+             "tracks even better than skin alone."),
+        ("4", "Calibrate three heights during your session",
+             "Flaccid → Erect → Edging.  AUTO mode can do this for you.\n"
+             "You can re-calibrate at any time without restarting."),
+    ]
+
+    for num, title, body in steps:
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(row, text=num, width=24, height=24,
+                     fg_color="#cc2200", corner_radius=12,
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="white").pack(side="left", anchor="n", pady=2)
+        txt = ctk.CTkFrame(row, fg_color="transparent")
+        txt.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        ctk.CTkLabel(txt, text=title,
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color="#eeeeee", anchor="w").pack(anchor="w")
+        ctk.CTkLabel(txt, text=body,
+                     font=ctk.CTkFont(size=11), text_color="#888888",
+                     anchor="w", justify="left").pack(anchor="w")
+
+    ctk.CTkFrame(card, fg_color="transparent", height=10).pack()  # bottom padding
+
+    # ── Note ──────────────────────────────────────────────────────────────────
+    ctk.CTkLabel(root,
+                 text="This app controls volume only — it does not generate e-stim signals.\n"
+                      "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
+                 font=ctk.CTkFont(size=10), text_color="#555555",
+                 justify="center").pack(pady=(0, 16))
+
+    # ── Start button ──────────────────────────────────────────────────────────
+    def _start():
+        started.set(True)
+        root.destroy()
+
+    ctk.CTkButton(root, text="I'm ready — select my camera feed  →",
+                  command=_start, height=46,
+                  font=ctk.CTkFont(size=14, weight="bold"),
+                  fg_color="#cc2200", hover_color="#991800",
+                  text_color="white", corner_radius=8).pack(
+                      fill="x", padx=P, pady=(0, P))
+
+    root.protocol("WM_DELETE_WINDOW", root.destroy)
+    root.update_idletasks()
+    # Centre on screen
+    w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+    root.mainloop()
+    return started.get()
+
+
 def main():
     parser = argparse.ArgumentParser(description="VisualStimEdger")
     parser.add_argument("--debug", action="store_true",
@@ -1555,6 +1647,10 @@ def main():
     )
 
     log.info(f"VisualStimEdger v{VERSION} starting")
+
+    if not show_splash():
+        log.info("Splash closed without starting — exiting")
+        return
 
     hwnd, rel_box = select_region()
     if not hwnd or rel_box['width'] <= 10 or rel_box['height'] <= 10:
