@@ -1391,15 +1391,24 @@ class App:
 
     def _reselect_head(self):
         self.tracking_paused = True
-        pause_frame = capture_window_region(self.hwnd, self.rel_box)
-        if pause_frame is not None:
+        try:
+            pause_frame = capture_window_region(self.hwnd, self.rel_box)
+            if pause_frame is None:
+                messagebox.showwarning(
+                    "Capture Failed",
+                    "Could not grab a frame from the video feed.\n\n"
+                    "Make sure the feed window is not minimised, then try again.",
+                    parent=self.root,
+                )
+                return
             new_bbox = select_head(pause_frame, parent=self.root)
             if new_bbox[2] > 0 and new_bbox[3] > 0:
                 self.tracker.init(pause_frame, new_bbox)
                 self.last_bbox   = new_bbox
                 self.head_y      = new_bbox[1] + new_bbox[3] // 2
                 self.tracking_ok = True
-        self.tracking_paused = False
+        finally:
+            self.tracking_paused = False
 
     _AGGR_COLORS = {
         "Easy":   ("#1a8a1a", "#145c14"),
@@ -1593,50 +1602,55 @@ class App:
     _STATUS_INTERVAL_MS   = 250  # max 4 fps for the status label text
 
     def _update_frame(self):
-        if self.tracking_paused:
-            self.root.after(100, self._update_frame)
-            return
-
+        # Always reschedule — even if an exception occurs mid-frame the loop
+        # must not die, otherwise the UI freezes permanently.
         try:
-            frame = self._frame_queue.get_nowait()
-        except queue.Empty:
-            self.root.after(16, self._update_frame)
-            return
+            if self.tracking_paused:
+                return
 
-        now = time.time()
-        self._frame_times.append(now)
+            try:
+                frame = self._frame_queue.get_nowait()
+            except queue.Empty:
+                return
 
-        # Tracking + volume: every other frame in non-Expert modes
-        self._proc_frame_count = getattr(self, '_proc_frame_count', 0) + 1
-        heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
+            now = time.time()
+            self._frame_times.append(now)
 
-        if heavy:
-            self._maybe_yolo_reanchor(frame)
-            self._run_tracker(frame)
-            if self._auto_mode and self.tracking_ok:
-                self._auto_feed(self.head_y)
+            # Tracking + volume: every other frame in non-Expert modes
+            self._proc_frame_count = getattr(self, '_proc_frame_count', 0) + 1
+            heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
 
-        state = self._determine_state(self.head_y)
+            if heavy:
+                self._maybe_yolo_reanchor(frame)
+                self._run_tracker(frame)
+                if self._auto_mode and self.tracking_ok:
+                    self._auto_feed(self.head_y)
 
-        if heavy:
-            self._update_stats(state)
-            self._tick_volume()
+            state = self._determine_state(self.head_y)
 
-        # Status label — throttled to _STATUS_INTERVAL_MS
-        _last_status = getattr(self, '_last_status_time', 0.0)
-        if now - _last_status >= self._STATUS_INTERVAL_MS / 1000:
-            self._update_status_label(state)
-            self._last_status_time = now
+            if heavy:
+                self._update_stats(state)
+                self._tick_volume()
 
-        # Video display — throttled to _DISPLAY_INTERVAL_MS
-        _last_disp = getattr(self, '_last_display_time', 0.0)
-        if now - _last_disp >= self._DISPLAY_INTERVAL_MS / 1000:
-            self._draw_height_lines(frame)
-            self._draw_tracking_overlay(frame)
-            self._display_frame(frame)
-            self._last_display_time = now
+            # Status label — throttled to _STATUS_INTERVAL_MS
+            _last_status = getattr(self, '_last_status_time', 0.0)
+            if now - _last_status >= self._STATUS_INTERVAL_MS / 1000:
+                self._update_status_label(state)
+                self._last_status_time = now
 
-        self.root.after(16, self._update_frame)
+            # Video display — throttled to _DISPLAY_INTERVAL_MS
+            _last_disp = getattr(self, '_last_display_time', 0.0)
+            if now - _last_disp >= self._DISPLAY_INTERVAL_MS / 1000:
+                self._draw_height_lines(frame)
+                self._draw_tracking_overlay(frame)
+                self._display_frame(frame)
+                self._last_display_time = now
+
+        except Exception:
+            log.exception("_update_frame: unhandled exception — loop continues")
+        finally:
+            interval = 100 if self.tracking_paused else 16
+            self.root.after(interval, self._update_frame)
 
     def _maybe_yolo_reanchor(self, frame):
         self.yolo_frame_counter += 1
