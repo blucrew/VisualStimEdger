@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.6"
+VERSION = "1.3.7"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -949,17 +949,25 @@ class App:
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
 
-    def _on_close(self):
+    def _cleanup(self):
+        """Non-UI cleanup — safe to call from atexit or _on_close."""
+        if getattr(self, '_cleaned_up', False):
+            return
+        self._cleaned_up = True
         self._running = False
-        self._save_config()
-        # Restore Windows audio volume to what it was when we took over
-        if self.win_audio and self.win_audio.connected and self._orig_win_volume is not None:
-            try:
-                self.win_audio._volume_interface.SetMasterVolumeLevelScalar(
-                    self._orig_win_volume, None)
-            except Exception:
-                pass
-        # Clean up WebSocket connection
+
+        # Wait for capture thread to finish (max 1.5 s)
+        t = getattr(self, '_capture_thread', None)
+        if t and t.is_alive():
+            t.join(timeout=1.5)
+
+        # Zero out Restim before closing socket
+        try:
+            self.restim.set_volume(0.0, instant=True)
+        except Exception:
+            pass
+
+        # Close WebSocket
         with self.restim._lock:
             old_ws = self.restim.ws
             self.restim.ws = None
@@ -968,6 +976,19 @@ class App:
                 old_ws.close()
             except Exception:
                 pass
+
+        # Restore Windows audio to pre-session level
+        if self.win_audio and self.win_audio.connected and self._orig_win_volume is not None:
+            try:
+                self.win_audio._volume_interface.SetMasterVolumeLevelScalar(
+                    self._orig_win_volume, None)
+                log.info(f"WinAudio: restored volume to {self._orig_win_volume:.2f}")
+            except Exception:
+                pass
+
+    def _on_close(self):
+        self._save_config()
+        self._cleanup()
         self.root.destroy()
 
     # ------------------------------------------------------------------ capture thread
@@ -1676,7 +1697,9 @@ def main():
         log.info("No head selected — exiting")
         return
 
-    App(hwnd, rel_box, initial_frame, bbox).run()
+    app = App(hwnd, rel_box, initial_frame, bbox)
+    atexit.register(app._cleanup)   # catches crashes / force-kills
+    app.run()
 
 
 if __name__ == "__main__":
