@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.7"
+VERSION = "1.3.8"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -600,6 +600,167 @@ def check_for_update(on_update_available):
         pass  # silently ignore — no internet, rate limit, etc.
 
 
+# ── MP3 player ────────────────────────────────────────────────────────────────
+try:
+    import miniaudio as _miniaudio
+    _MINIAUDIO_OK = True
+except ImportError:
+    _miniaudio = None
+    _MINIAUDIO_OK = False
+    log.warning("miniaudio not installed — MP3 mode unavailable")
+
+
+class MusicPlayer:
+    """Streams audio files with per-chunk volume control via miniaudio."""
+
+    EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.m4a'}
+
+    def __init__(self):
+        self._device    = None
+        self._stop_flag = False
+        self._state     = "stopped"   # stopped | playing | paused
+        self._skip      = 0           # +1 next, -1 prev (set from main thread)
+        self._playlist  = []          # list[pathlib.Path]
+        self._idx       = 0
+        self.loop_mode  = "folder"    # "track" | "folder"
+        self.volume     = 0.5         # 0.0–1.0, written from main thread, read from audio thread
+        # UI notification — set by audio thread, read by main thread (strings are atomic)
+        self.track_name = ""
+        self.track_info = ""          # e.g. "3 / 12"
+
+    # ── Generator ─────────────────────────────────────────────────────────────
+    def _gen(self):
+        required_frames = yield b""   # prime
+        while not self._stop_flag:
+            if not self._playlist or self._state == "stopped":
+                required_frames = yield bytes(required_frames * 8)  # silence
+                continue
+
+            path = self._playlist[self._idx]
+            self.track_name = path.stem
+            self.track_info = f"{self._idx + 1} / {len(self._playlist)}"
+
+            try:
+                src = _miniaudio.stream_file(
+                    str(path),
+                    output_format=_miniaudio.SampleFormat.FLOAT32,
+                    nchannels=2, sample_rate=44100,
+                    frames_to_read=4096,
+                )
+            except Exception as e:
+                log.error(f"MusicPlayer: cannot open {path.name}: {e}")
+                self._idx = (self._idx + 1) % len(self._playlist)
+                continue
+
+            for chunk in src:
+                if self._stop_flag:
+                    return
+
+                # Handle skip (next/prev)
+                skip = self._skip
+                if skip:
+                    self._skip = 0
+                    self._idx  = (self._idx + skip) % len(self._playlist)
+                    break
+
+                # Pause — yield silence, stay in loop
+                while self._state == "paused" and not self._stop_flag and not self._skip:
+                    required_frames = yield bytes(required_frames * 8)
+
+                if self._stop_flag:
+                    return
+
+                vol  = max(0.0, min(1.0, self.volume))
+                data = np.frombuffer(chunk.samples, dtype=np.float32).copy()
+                data *= vol
+                required_frames = yield data.tobytes()
+            else:
+                # Natural track end
+                if self.loop_mode == "track":
+                    continue          # replay same index
+                self._idx = (self._idx + 1) % len(self._playlist)
+
+    # ── Device control ────────────────────────────────────────────────────────
+    def _start(self):
+        self._stop_flag = False
+        gen = self._gen()
+        next(gen)
+        try:
+            self._device = _miniaudio.PlaybackDevice(
+                output_format=_miniaudio.SampleFormat.FLOAT32,
+                nchannels=2, sample_rate=44100,
+                buffersize_msec=150,
+            )
+            self._device.start(gen)
+        except Exception as e:
+            log.error(f"MusicPlayer: device start failed: {e}")
+            self._device = None
+
+    def _stop_device(self):
+        self._stop_flag = True
+        self._state     = "stopped"
+        if self._device:
+            try:
+                self._device.stop()
+            except Exception:
+                pass
+            self._device = None
+
+    # ── Public API ────────────────────────────────────────────────────────────
+    def load_file(self, path: str):
+        self._stop_device()
+        self._playlist  = [pathlib.Path(path)]
+        self._idx       = 0
+        self.loop_mode  = "track"
+        self._state     = "playing"
+        self._start()
+
+    def load_folder(self, folder: str):
+        files = sorted(
+            [f for f in pathlib.Path(folder).iterdir()
+             if f.is_file() and f.suffix.lower() in self.EXTS],
+            key=lambda f: f.name.lower(),
+        )
+        if not files:
+            log.warning("MusicPlayer: no audio files in folder")
+            return
+        self._stop_device()
+        self._playlist = files
+        self._idx      = 0
+        self.loop_mode = "folder"
+        self._state    = "playing"
+        self._start()
+
+    def play(self):
+        if self._state == "paused":
+            self._state = "playing"
+        elif self._state == "stopped" and self._playlist:
+            self._state = "playing"
+            if not self._device:
+                self._start()
+
+    def pause(self):
+        if self._state == "playing":
+            self._state = "paused"
+
+    def stop(self):
+        self._stop_device()
+
+    def next_track(self):
+        if self._playlist:
+            self._skip = 1
+
+    def prev_track(self):
+        if self._playlist:
+            self._skip = -1
+
+    def adjust_volume(self, delta: float, floor: float, ceiling: float):
+        self.volume = max(floor, min(ceiling, self.volume + delta))
+
+    def cleanup(self):
+        self._stop_device()
+
+
 class App:
     # ── Colour palette ────────────────────────────────────────────────────────
     _C_BG        = "#0d0d0d"
@@ -680,10 +841,11 @@ class App:
         self.detector = DickDetector()
 
         # Output clients
-        self.restim      = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
+        self.restim           = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
         self.win_audio        = None
         self.win_devices      = []
         self._orig_win_volume = None  # restored on exit
+        self.music_player     = MusicPlayer() if _MINIAUDIO_OK else None
 
         # Root window
         self.root = ctk.CTk()
@@ -822,8 +984,9 @@ class App:
         mode_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(mode_row, text="Output", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
+        _mode_values = ["restim", "windows"] + (["mp3"] if _MINIAUDIO_OK else [])
         ctk.CTkSegmentedButton(
-            mode_row, values=["restim", "windows"], variable=self.mode_var,
+            mode_row, values=_mode_values, variable=self.mode_var,
             command=lambda _: self._on_mode_change(),
             selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
             unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
@@ -858,6 +1021,59 @@ class App:
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
 
         self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))
+
+        # ── MP3 player options panel ───────────────────────────────────────────
+        self._mp3_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        if _MINIAUDIO_OK:
+            mo = ctk.CTkFrame(self._mp3_opts, fg_color="transparent")
+            mo.pack(fill=tk.X, padx=12, pady=(8, 4))
+
+            # File / folder load buttons
+            load_row = ctk.CTkFrame(mo, fg_color="transparent")
+            load_row.pack(fill=tk.X, pady=(0, 4))
+            ctk.CTkButton(load_row, text="📁 Load File", width=110, height=28,
+                          fg_color=self._C_SURFACE, hover_color="#333",
+                          text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                          font=ctk.CTkFont(size=10),
+                          command=self._mp3_load_file).pack(side=tk.LEFT, padx=(0, 6))
+            ctk.CTkButton(load_row, text="📂 Load Folder", width=120, height=28,
+                          fg_color=self._C_SURFACE, hover_color="#333",
+                          text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                          font=ctk.CTkFont(size=10),
+                          command=self._mp3_load_folder).pack(side=tk.LEFT, padx=(0, 10))
+            self._mp3_track_lbl = ctk.CTkLabel(load_row, text="No file loaded",
+                                               font=ctk.CTkFont(size=10),
+                                               text_color=self._C_TEXT_DIM,
+                                               anchor="w")
+            self._mp3_track_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            # Transport controls
+            ctrl_row = ctk.CTkFrame(mo, fg_color="transparent")
+            ctrl_row.pack(pady=(0, 4))
+            btn_kw = dict(width=44, height=32, fg_color=self._C_SURFACE,
+                          hover_color="#333", text_color=self._C_TEXT,
+                          border_width=1, border_color=self._C_BORDER,
+                          font=ctk.CTkFont(size=13))
+            ctk.CTkButton(ctrl_row, text="⏮", command=self._mp3_prev, **btn_kw).pack(side=tk.LEFT, padx=2)
+            self._mp3_play_btn = ctk.CTkButton(ctrl_row, text="▶", command=self._mp3_play_pause, **btn_kw)
+            self._mp3_play_btn.pack(side=tk.LEFT, padx=2)
+            ctk.CTkButton(ctrl_row, text="⏹", command=self._mp3_stop, **btn_kw).pack(side=tk.LEFT, padx=2)
+            ctk.CTkButton(ctrl_row, text="⏭", command=self._mp3_next, **btn_kw).pack(side=tk.LEFT, padx=2)
+
+            # Loop mode
+            loop_row = ctk.CTkFrame(mo, fg_color="transparent")
+            loop_row.pack(pady=(0, 6))
+            ctk.CTkLabel(loop_row, text="Loop:", font=ctk.CTkFont(size=10),
+                         text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
+            self._mp3_loop_var = tk.StringVar(value="folder")
+            ctk.CTkSegmentedButton(
+                loop_row, values=["track", "folder"],
+                variable=self._mp3_loop_var,
+                command=self._mp3_on_loop_change,
+                selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
+                unselected_color=self._C_SURFACE, unselected_hover_color="#333",
+                font=ctk.CTkFont(size=10), text_color=self._C_TEXT,
+            ).pack(side=tk.LEFT)
 
         _divider()
 
@@ -917,6 +1133,9 @@ class App:
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
+                "mp3_path":    getattr(self, '_mp3_last_path', ""),
+                "mp3_path_type": getattr(self, '_mp3_last_type', "file"),
+                "mp3_loop":    self._mp3_loop_var.get() if _MINIAUDIO_OK else "folder",
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -945,6 +1164,34 @@ class App:
                 self._on_mode_change()
             if "port"        in data: self.port_var.set(data["port"])
             if "device_name" in data: self._device_combo.set(data["device_name"])
+            if _MINIAUDIO_OK and self.music_player:
+                if "mp3_loop" in data:
+                    self._mp3_loop_var.set(data["mp3_loop"])
+                    self.music_player.loop_mode = data["mp3_loop"]
+                mp3_path = data.get("mp3_path", "")
+                mp3_type = data.get("mp3_path_type", "file")
+                if mp3_path and pathlib.Path(mp3_path).exists():
+                    self._mp3_last_path = mp3_path
+                    self._mp3_last_type = mp3_type
+                    # Don't auto-play on load — just prime the label
+                    if mp3_type == "folder":
+                        files = sorted(
+                            [f for f in pathlib.Path(mp3_path).iterdir()
+                             if f.is_file() and f.suffix.lower() in MusicPlayer.EXTS],
+                            key=lambda f: f.name.lower(),
+                        )
+                        if files:
+                            self.music_player._playlist = files
+                            self.music_player._idx = 0
+                            self.music_player.track_name = files[0].stem
+                            self.music_player.track_info = f"1 / {len(files)}"
+                    else:
+                        p = pathlib.Path(mp3_path)
+                        self.music_player._playlist = [p]
+                        self.music_player._idx = 0
+                        self.music_player.track_name = p.stem
+                        self.music_player.track_info = "1 / 1"
+                    self._mp3_update_track_label()
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -974,6 +1221,13 @@ class App:
         if old_ws:
             try:
                 old_ws.close()
+            except Exception:
+                pass
+
+        # Stop MP3 player
+        if self.music_player:
+            try:
+                self.music_player.cleanup()
             except Exception:
                 pass
 
@@ -1181,16 +1435,26 @@ class App:
         self._save_config()
 
     def _on_mode_change(self):
-        if self.mode_var.get() == "restim":
-            self._windows_opts.pack_forget()
-            self._restim_opts.pack(fill=tk.X, padx=12, pady=(0, 4),
+        mode = self.mode_var.get()
+        P    = 12
+        # Hide all panels first
+        self._restim_opts.pack_forget()
+        self._windows_opts.pack_forget()
+        self._mp3_opts.pack_forget()
+        # Stop music if leaving mp3 mode
+        if mode != "mp3" and self.music_player:
+            self.music_player.stop()
+        if mode == "restim":
+            self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
                                    after=self._mode_card)
-        else:
-            self._restim_opts.pack_forget()
-            self._windows_opts.pack(fill=tk.X, padx=12, pady=(0, 4),
+        elif mode == "windows":
+            self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
                                     after=self._mode_card)
             if not self.win_devices:
                 self._refresh_devices()
+        elif mode == "mp3" and _MINIAUDIO_OK:
+            self._mp3_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
+                                after=self._mode_card)
         self._save_config()
 
     def _on_port_change(self, *_):
@@ -1250,6 +1514,77 @@ class App:
             self._hold_btn.configure(text="Hold Volume",
                                      fg_color=self._C_SURFACE2, hover_color="#333",
                                      border_color=self._C_BORDER)
+
+    # ------------------------------------------------------------------ MP3 transport callbacks
+
+    def _mp3_load_file(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="Select audio file",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.ogg *.flac *.m4a"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path and self.music_player:
+            self.music_player.load_file(path)
+            self._mp3_last_path = path
+            self._mp3_last_type = "file"
+            self._mp3_loop_var.set(self.music_player.loop_mode)
+            self._mp3_update_track_label()
+
+    def _mp3_load_folder(self):
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(title="Select music folder")
+        if folder and self.music_player:
+            self.music_player.load_folder(folder)
+            self._mp3_last_path = folder
+            self._mp3_last_type = "folder"
+            self._mp3_loop_var.set(self.music_player.loop_mode)
+            self._mp3_update_track_label()
+
+    def _mp3_play_pause(self):
+        if not self.music_player:
+            return
+        if self.music_player._state == "playing":
+            self.music_player.pause()
+            self._mp3_play_btn.configure(text="▶")
+        else:
+            self.music_player.play()
+            self._mp3_play_btn.configure(text="⏸")
+
+    def _mp3_stop(self):
+        if self.music_player:
+            self.music_player.stop()
+            self._mp3_play_btn.configure(text="▶")
+
+    def _mp3_prev(self):
+        if self.music_player:
+            self.music_player.prev_track()
+
+    def _mp3_next(self):
+        if self.music_player:
+            self.music_player.next_track()
+
+    def _mp3_on_loop_change(self, val):
+        if self.music_player:
+            self.music_player.loop_mode = val
+
+    def _mp3_update_track_label(self):
+        if not self.music_player:
+            return
+        name = self.music_player.track_name
+        info = self.music_player.track_info
+        if name:
+            text = f"{name}  [{info}]" if info else name
+        else:
+            text = "No file loaded"
+        self._mp3_track_lbl.configure(text=text)
+        # Keep play button in sync
+        if self.music_player._state == "playing":
+            self._mp3_play_btn.configure(text="⏸")
+        else:
+            self._mp3_play_btn.configure(text="▶")
 
     # ------------------------------------------------------------------ frame loop
 
@@ -1506,8 +1841,10 @@ class App:
                 mode = self.mode_var.get()
                 if mode == "restim":
                     self.restim.set_volume(target, floor=0.0, ceiling=ceil_val)
-                elif self.win_audio and self.win_audio.connected:
+                elif mode == "windows" and self.win_audio and self.win_audio.connected:
                     self.win_audio.set_volume(target, 0.0, 1.0)
+                elif mode == "mp3" and self.music_player:
+                    self.music_player.volume = target
                 return
 
         if self.hold_active:
@@ -1528,6 +1865,8 @@ class App:
             self.restim.maybe_reconnect()
         elif mode == "windows" and self.win_audio and self.win_audio.connected and delta != 0.0:
             self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
+        elif mode == "mp3" and self.music_player and delta != 0.0:
+            self.music_player.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
 
     def _update_status_label(self, state):
         quality_str = "Track: OK" if self.tracking_ok else "Track: LOST"
@@ -1536,10 +1875,15 @@ class App:
             conn_color = "#00ff00" if self.restim.ws else "#ff0000"
             vol_str    = f"{self.restim.volume * 100:.0f}%"
             src_str    = f"WS: {'Connected' if self.restim.ws else 'Disconnected'}"
-        elif self.win_audio and self.win_audio.connected:
+        elif mode == "windows" and self.win_audio and self.win_audio.connected:
             conn_color = "#00ff00"
             vol_str    = f"{self.win_audio.get_volume() * 100:.0f}%"
             src_str    = "Win Audio: OK"
+        elif mode == "mp3" and self.music_player:
+            self._mp3_update_track_label()
+            conn_color = "#00ff00" if self.music_player._state == "playing" else "#ffaa00"
+            vol_str    = f"{self.music_player.volume * 100:.0f}%"
+            src_str    = f"MP3: {self.music_player.track_name or '—'}"
         else:
             conn_color = "#ffaa00"
             vol_str    = "--"
@@ -1565,14 +1909,19 @@ class App:
 
 def show_splash() -> bool:
     """Welcome / setup checklist screen. Returns True if user clicked Start.
-    Uses plain tkinter (not CTk) — more reliable for a pre-launch window."""
+
+    If splash.png exists, displays it as a background image with the version
+    overlaid dynamically (so the user can Photoshop the design and we always
+    stamp the current version at runtime).  Falls back to plain tkinter widgets
+    when the PNG is absent.
+    """
     import tkinter as tk
     from tkinter import font as tkfont
 
     root = tk.Tk()
     root.title("VisualStimEdger")
     root.configure(bg="#0d0d0d")
-    root.resizable(False, True)
+    root.resizable(False, False)
     _icon = pathlib.Path(resource_path("icon.ico"))
     if _icon.exists():
         try:
@@ -1582,6 +1931,69 @@ def show_splash() -> bool:
 
     started = False
 
+    def _start():
+        nonlocal started
+        started = True
+        root.destroy()
+
+    # ── PNG path (bundled resource) ────────────────────────────────────────────
+    splash_path = pathlib.Path(resource_path("splash.png"))
+
+    if splash_path.exists():
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageTk
+
+            img = Image.open(splash_path).convert("RGBA")
+            W, H = img.size
+
+            # Stamp version text onto the image at the space the designer left
+            draw = ImageDraw.Draw(img)
+            try:
+                f_ver = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 11)
+            except Exception:
+                f_ver = ImageFont.load_default()
+            ver_txt = f"v{VERSION}  ·  edge smarter"
+            bb = draw.textbbox((0, 0), ver_txt, font=f_ver)
+            tx = (W - (bb[2] - bb[0])) // 2
+            draw.text((tx, 170), ver_txt, fill=(100, 100, 100, 255), font=f_ver)
+
+            # Flatten RGBA onto the dark background colour (#0d0d0d = 13,13,13)
+            bg_flat = Image.new("RGB", (W, H), (13, 13, 13))
+            bg_flat.paste(img, mask=img.split()[3])
+
+            photo = ImageTk.PhotoImage(bg_flat)
+
+            lbl = tk.Label(root, image=photo, bg="#0d0d0d", cursor="hand2",
+                           borderwidth=0, highlightthickness=0)
+            lbl.image = photo  # keep reference
+            lbl.pack()
+
+            # Transparent overlay button that sits on top of the baked-in
+            # red Start button (coordinates match make_splash.py BX/BY values
+            # scaled to actual image size; default canvas is 700×640).
+            scale = W / 700
+            bx1 = int(88  * scale)
+            by1 = int(540 * scale)
+            bx2 = int(612 * scale)
+            by2 = int(596 * scale)
+            overlay = tk.Button(
+                root, text="", bg="#cc2200", activebackground="#991800",
+                relief="flat", bd=0, cursor="hand2", command=_start,
+            )
+            overlay.place(x=bx1, y=by1, width=bx2 - bx1, height=by2 - by1)
+
+            root.protocol("WM_DELETE_WINDOW", root.destroy)
+            sw = root.winfo_screenwidth()
+            sh = root.winfo_screenheight()
+            root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+            root.attributes("-topmost", True)
+            root.after(400, lambda: root.attributes("-topmost", False))
+            root.mainloop()
+            return started
+        except Exception as e:
+            log.warning(f"splash.png display failed ({e}) — falling back to widget splash")
+
+    # ── Widget fallback ────────────────────────────────────────────────────────
     BG       = "#0d0d0d"
     CARD     = "#1a1a1a"
     RED      = "#cc2200"
@@ -1598,12 +2010,13 @@ def show_splash() -> bool:
     f_num    = tkfont.Font(family="Segoe UI", size=10, weight="bold")
     f_btn    = tkfont.Font(family="Segoe UI", size=13, weight="bold")
 
+    root.resizable(False, True)
+
     tk.Label(root, text="VisualStimEdger", font=f_title,
              bg=BG, fg=TEXT).pack(pady=(P, 2))
     tk.Label(root, text=f"v{VERSION}  ·  edge smarter", font=f_sub,
              bg=BG, fg=DIM).pack(pady=(0, P//2))
 
-    # Card
     card = tk.Frame(root, bg=CARD, padx=16, pady=12)
     card.pack(fill="x", padx=P, pady=(0, 10))
 
@@ -1641,11 +2054,6 @@ def show_splash() -> bool:
              text="Controls volume only — does not generate e-stim signals.\n"
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
              font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
-
-    def _start():
-        nonlocal started
-        started = True
-        root.destroy()
 
     btn = tk.Button(root, text="I'm ready — select my camera feed  \u2192",
                     font=f_btn, bg=RED, fg="white", activebackground="#991800",

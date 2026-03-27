@@ -7,3 +7,4 @@ pywin32>=306
 pycaw==20251023
 sounddevice>=0.4
 customtkinter==5.2.2
+miniaudio>=1.2
