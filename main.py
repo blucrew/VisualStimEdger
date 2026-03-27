@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.8"
+VERSION = "1.3.9"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
