@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.3.9"
+VERSION = "1.4.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -261,51 +261,61 @@ def capture_window_region(hwnd, rel_box):
         left, top, right, bot = win32gui.GetWindowRect(hwnd)
         w = right - left
         h = bot - top
+        if w <= 0 or h <= 0:
+            return None
 
-        if w <= 0 or h <= 0: return None
-
-        hwndDC = win32gui.GetWindowDC(hwnd)
-        mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
-        saveDC = mfcDC.CreateCompatibleDC()
-
-        saveBitMap = win32ui.CreateBitmap()
-        saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-
-        saveDC.SelectObject(saveBitMap)
-
-        # 2 = PW_RENDERFULLCONTENT
-        result = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
-
+        # ── PrintWindow (works for occluded windows) ──────────────────────────
+        # GDI objects are cleaned up in finally so they never leak, even when
+        # GetBitmapBits / reshape / cvtColor throw on bad GPU-window bitmaps.
+        hwndDC = saveDC = mfcDC = saveBitMap = None
         frame = None
-        if result == 1:
-            bmpinfo = saveBitMap.GetInfo()
-            bmpstr = saveBitMap.GetBitmapBits(True)
-            img = np.frombuffer(bmpstr, dtype=np.uint8).reshape((bmpinfo['bmHeight'], bmpinfo['bmWidth'], 4))
-            frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            
-        win32gui.DeleteObject(saveBitMap.GetHandle())
-        saveDC.DeleteDC()
-        mfcDC.DeleteDC()
-        win32gui.ReleaseDC(hwnd, hwndDC)
-        
-        if frame is None or not frame.any():
-            abs_x1 = left + rel_box['x1']
-            abs_y1 = top + rel_box['y1']
-            abs_width = rel_box['width']
-            abs_height = rel_box['height']
-            monitor = {"top": abs_y1, "left": abs_x1, "width": abs_width, "height": abs_height}
-            grab = _get_sct().grab(monitor)
-            return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
-            
-        else:
+        try:
+            hwndDC    = win32gui.GetWindowDC(hwnd)
+            mfcDC     = win32ui.CreateDCFromHandle(hwndDC)
+            saveDC    = mfcDC.CreateCompatibleDC()
+            saveBitMap = win32ui.CreateBitmap()
+            saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+            saveDC.SelectObject(saveBitMap)
+
+            result = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+            if result == 1:
+                bmpinfo = saveBitMap.GetInfo()
+                bmpstr  = saveBitMap.GetBitmapBits(True)
+                img     = np.frombuffer(bmpstr, dtype=np.uint8).reshape(
+                              (bmpinfo['bmHeight'], bmpinfo['bmWidth'], 4))
+                frame   = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        except Exception as e:
+            log.debug(f"PrintWindow failed: {e}")
+            frame = None
+        finally:
+            if saveBitMap: win32gui.DeleteObject(saveBitMap.GetHandle())
+            if saveDC:     saveDC.DeleteDC()
+            if mfcDC:      mfcDC.DeleteDC()
+            if hwndDC:     win32gui.ReleaseDC(hwnd, hwndDC)
+
+        # ── Crop the PrintWindow result ───────────────────────────────────────
+        if frame is not None and frame.any():
             x1 = max(0, min(w, rel_box['x1']))
             y1 = max(0, min(h, rel_box['y1']))
             x2 = max(0, min(w, rel_box['x2']))
             y2 = max(0, min(h, rel_box['y2']))
-            if x2-x1 <= 0 or y2-y1 <= 0: return None
-            return frame[y1:y2, x1:x2].copy()
+            if x2 - x1 > 0 and y2 - y1 > 0:
+                return frame[y1:y2, x1:x2].copy()
+
+        # ── mss fallback (screen-level grab — works for GPU windows on-screen) ─
+        abs_x1 = left + rel_box['x1']
+        abs_y1 = top  + rel_box['y1']
+        monitor = {
+            "top":    abs_y1,
+            "left":   abs_x1,
+            "width":  rel_box['width'],
+            "height": rel_box['height'],
+        }
+        grab = _get_sct().grab(monitor)
+        return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
+
     except Exception as e:
-        log.debug(f"Capture exception: {e}")
+        log.debug(f"capture_window_region: {e}")
         return None
 
 def select_head(frame_cv, parent=None):
