@@ -134,7 +134,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1798,9 +1798,9 @@ class App:
 
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
-        if self.heights["Edging"]  is not None: cv2.line(frame, (0, self.heights["Edging"]),  (fw, self.heights["Edging"]),  (0, 0, 255), 2)
-        if self.heights["Erect"]   is not None: cv2.line(frame, (0, self.heights["Erect"]),   (fw, self.heights["Erect"]),   (0, 255, 0), 2)
-        if self.heights["Flaccid"] is not None: cv2.line(frame, (0, self.heights["Flaccid"]), (fw, self.heights["Flaccid"]), (255, 0, 0), 2)
+        if self.heights["Edging"]  is not None: cv2.line(frame, (0, int(self.heights["Edging"])),  (fw, int(self.heights["Edging"])),  (0, 0, 255), 2)
+        if self.heights["Erect"]   is not None: cv2.line(frame, (0, int(self.heights["Erect"])),   (fw, int(self.heights["Erect"])),   (0, 255, 0), 2)
+        if self.heights["Flaccid"] is not None: cv2.line(frame, (0, int(self.heights["Flaccid"])), (fw, int(self.heights["Flaccid"])), (255, 0, 0), 2)
 
     def _compute_volume_delta(self):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
