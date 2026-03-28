@@ -1992,16 +1992,16 @@ def show_splash() -> bool:
             img = Image.open(splash_path).convert("RGBA")
             W, H = img.size
 
-            # Stamp version text onto the image at the space the designer left
+            # Stamp version number in the gap below the subtitle
             draw = ImageDraw.Draw(img)
             try:
                 f_ver = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 11)
             except Exception:
                 f_ver = ImageFont.load_default()
-            ver_txt = f"v{VERSION}  ·  edge smarter"
+            ver_txt = f"v{VERSION}"
             bb = draw.textbbox((0, 0), ver_txt, font=f_ver)
             tx = (W - (bb[2] - bb[0])) // 2
-            draw.text((tx, 170), ver_txt, fill=(100, 100, 100, 255), font=f_ver)
+            draw.text((tx, 160), ver_txt, fill=(100, 100, 100, 255), font=f_ver)
 
             # Flatten RGBA onto the dark background colour (#0d0d0d = 13,13,13)
             bg_flat = Image.new("RGB", (W, H), (13, 13, 13))
@@ -2009,24 +2009,48 @@ def show_splash() -> bool:
 
             photo = ImageTk.PhotoImage(bg_flat)
 
-            lbl = tk.Label(root, image=photo, bg="#0d0d0d", cursor="hand2",
+            lbl = tk.Label(root, image=photo, bg="#0d0d0d",
                            borderwidth=0, highlightthickness=0)
             lbl.image = photo  # keep reference
             lbl.pack()
 
-            # Transparent overlay button that sits on top of the baked-in
-            # red Start button (coordinates match make_splash.py BX/BY values
-            # scaled to actual image size; default canvas is 700×640).
+            # Click-zone over the baked-in button in the PNG.
+            # Coordinates detected from splash.png pixel scan.
+            _btn_y1, _btn_y2 = int(511 * H / 585), int(568 * H / 585)
+            _btn_x1, _btn_x2 = int(35 * W / 591), int(556 * W / 591)
+            def _on_click(e):
+                if _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2:
+                    _start()
+            lbl.bind("<Button-1>", _on_click)
+            lbl.configure(cursor="arrow")  # default; cursor set to hand in blink
+
+            # Blink: alternate between normal image and a bright-flash
+            # version to draw attention to the Start button.
+            flash = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            flash_draw = ImageDraw.Draw(flash)
             scale = W / 700
-            bx1 = int(88  * scale)
-            by1 = int(540 * scale)
-            bx2 = int(612 * scale)
-            by2 = int(596 * scale)
-            overlay = tk.Button(
-                root, text="", bg="#cc2200", activebackground="#991800",
-                relief="flat", bd=0, cursor="hand2", command=_start,
-            )
-            overlay.place(x=bx1, y=by1, width=bx2 - bx1, height=by2 - by1)
+            flash_draw.rounded_rectangle(
+                [_btn_x1, _btn_y1, _btn_x2, _btn_y2],
+                radius=int(12 * scale), fill=(255, 255, 255, 60))
+            img_bright = Image.alpha_composite(img, flash)
+            bg_bright = Image.new("RGB", (W, H), (13, 13, 13))
+            bg_bright.paste(img_bright, mask=img_bright.split()[3])
+            photo_bright = ImageTk.PhotoImage(bg_bright)
+
+            blink_state = [False]
+            def _blink():
+                blink_state[0] = not blink_state[0]
+                lbl.configure(image=photo_bright if blink_state[0] else photo)
+                root.after(700, _blink)
+            root.after(700, _blink)
+
+            # Hand cursor when hovering over the button area
+            def _on_motion(e):
+                if _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2:
+                    lbl.configure(cursor="hand2")
+                else:
+                    lbl.configure(cursor="arrow")
+            lbl.bind("<Motion>", _on_motion)
 
             root.protocol("WM_DELETE_WINDOW", root.destroy)
             sw = root.winfo_screenwidth()
