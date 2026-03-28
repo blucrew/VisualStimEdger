@@ -145,7 +145,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -183,21 +183,29 @@ class RegionSelector:
             self.offset_y = mon["top"]
             w, h = mon["width"], mon["height"]
 
-        # Set size first, then use MoveWindow to handle negative coords
+        # overrideredirect must be set before geometry so the window manager
+        # never adds a title-bar (which would shrink the client area).
+        self.root.overrideredirect(True)
+        self.root.configure(background='black')
+        self.root.attributes("-topmost", True)
+
+        # Set size via geometry, then use MoveWindow to handle negative coords
         # (secondary monitor left of primary gives negative offset_x which
         # tkinter geometry strings like "+-1920+0" cannot express correctly).
         self.root.geometry(f"{w}x{h}+0+0")
         self.root.update_idletasks()
         ctypes.windll.user32.MoveWindow(
-            self.root.winfo_id(), self.offset_x, self.offset_y, w, h, False)
-        self.root.overrideredirect(True)
-        
-        self.root.configure(background='black')
-        self.root.attributes("-topmost", True)
+            self.root.winfo_id(), self.offset_x, self.offset_y, w, h, True)
         self.root.config(cursor="cross")
 
-        self.canvas = tk.Canvas(self.root, cursor="cross", bg="black")
+        self.canvas = tk.Canvas(self.root, cursor="cross", bg="black",
+                                highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
+
+        # Overlay label with place() so it doesn't steal space from the canvas.
+        # The canvas must span the full virtual desktop for multi-monitor selection.
+        self.label = tk.Label(self.root, text="Step 1: Draw a box around the video feed on any monitor. Release to lock.", font=("Arial", 28), bg="white", fg="black")
+        self.label.place(relx=0.5, y=50, anchor="n")
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -207,9 +215,6 @@ class RegionSelector:
         self.start_y = None
         self.rect = None
         self.region = None
-        
-        self.label = tk.Label(self.root, text="Step 1: Draw a box around the video feed on any monitor. Release to lock.", font=("Arial", 28), bg="white", fg="black")
-        self.label.pack(pady=50)
         self.root.bind("<Escape>", lambda e: self.root.destroy())
 
     def on_press(self, event):

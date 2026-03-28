@@ -46,6 +46,7 @@ python -m nuitka main.py ^
     --onefile ^
     --zig ^
     --assume-yes-for-downloads ^
+    --enable-plugin=tk-inter ^
     --windows-console-mode=disable ^
     --windows-icon-from-ico=icon.ico ^
     --output-filename=VisualStimEdger.exe ^
