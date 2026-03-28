@@ -1,6 +1,18 @@
 import os
 import sys
 import tempfile
+import ctypes
+
+# ── DPI awareness (must be set before any GUI / coordinate work) ──────────
+# Without this, Windows virtualises coordinates on multi-monitor setups with
+# scaling enabled, causing mss, win32gui and tkinter to disagree on positions.
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PROCESS_PER_MONITOR_DPI_AWARE
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()     # fallback for older Windows
+    except Exception:
+        pass
 
 # Redirect comtypes generated-interface cache to a writable location BEFORE
 # pycaw/comtypes are imported.  In a frozen exe (PyInstaller or Nuitka) the
@@ -36,7 +48,6 @@ import json
 import pathlib
 import queue
 from collections import deque
-import ctypes
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 from comtypes import CLSCTX_ALL
 
@@ -134,7 +145,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -294,7 +305,7 @@ def capture_window_region(hwnd, rel_box):
             if hwndDC:     win32gui.ReleaseDC(hwnd, hwndDC)
 
         # ── Crop the PrintWindow result ───────────────────────────────────────
-        if frame is not None and frame.any():
+        if frame is not None and frame.size > 0 and frame.max() > 0:
             x1 = max(0, min(w, rel_box['x1']))
             y1 = max(0, min(h, rel_box['y1']))
             x2 = max(0, min(w, rel_box['x2']))
@@ -572,7 +583,7 @@ class WindowsAudioClient:
         try:
             return self._volume_interface.GetMasterVolumeLevelScalar()
         except Exception:
-            return 0.0
+            return None
 
     def set_volume(self, vol, floor=0.0, ceiling=1.0):
         vol = max(floor, min(ceiling, vol))
@@ -582,7 +593,10 @@ class WindowsAudioClient:
             log.warning(f"WinAudio: set_volume failed: {e}")
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
-        self.set_volume(self.get_volume() + delta, floor=floor, ceiling=ceiling)
+        cur = self.get_volume()
+        if cur is None:
+            return
+        self.set_volume(cur + delta, floor=floor, ceiling=ceiling)
 
 
 def check_for_update(on_update_available):
@@ -1274,7 +1288,7 @@ class App:
                         pass
                 self._frame_queue.put(frame)
             else:
-                time.sleep(0.05)
+                time.sleep(0.25)
 
     # ------------------------------------------------------------------ callbacks
 
@@ -1375,12 +1389,12 @@ class App:
 
     def _reset_heights(self):
         """Clear calibrated heights — called whenever the feed changes."""
-        self.heights = {"Edging": None, "Erect": None, "Flaccid": None, "Ruin": None}
+        self.heights = {"Edging": None, "Erect": None, "Flaccid": None}
         self._auto_min_y = None
         self._auto_max_y = None
-        self._auto_frame_count = 0
-        self._auto_start_time = None
-        self._auto_last_shown_sec = -1
+        self._auto_obs_start = None
+        self._auto_last_apply = 0.0
+        self._head_y_history.clear()
         if hasattr(self, '_auto_btn_state'):
             self._auto_btn_state = None
         if hasattr(self, '_auto_btn'):
@@ -1416,6 +1430,7 @@ class App:
                 self.tracker.init(pause_frame, new_bbox)
                 self.last_bbox   = new_bbox
                 self.head_y      = new_bbox[1] + new_bbox[3] // 2
+                self._head_y_history.clear()
                 self.tracking_ok = True
         finally:
             self.tracking_paused = False
@@ -1441,8 +1456,10 @@ class App:
         mode = self.mode_var.get()
         if mode == "restim":
             self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
-        elif self.win_audio and self.win_audio.connected:
+        elif mode == "windows" and self.win_audio and self.win_audio.connected:
             self.win_audio.set_volume(0.0, 0.0, 1.0)
+        elif mode == "mp3" and self.music_player:
+            self.music_player.volume = 0.0
         log.info("Cum triggered — volume silenced for 5 min")
 
     def _on_floor_change(self, val):
@@ -1517,7 +1534,7 @@ class App:
             if d.FriendlyName == value:
                 self.win_audio = WindowsAudioClient(d)
                 if self.win_audio.connected:
-                    self._orig_win_volume = self.win_audio.get_volume()
+                    self._orig_win_volume = self.win_audio.get_volume() or 0.5
                 else:
                     self._orig_win_volume = None
                 self._save_config()
@@ -1901,7 +1918,7 @@ class App:
             src_str    = f"WS: {'Connected' if self.restim.ws else 'Disconnected'}"
         elif mode == "windows" and self.win_audio and self.win_audio.connected:
             conn_color = "#00ff00"
-            vol_str    = f"{self.win_audio.get_volume() * 100:.0f}%"
+            vol_str    = f"{(self.win_audio.get_volume() or 0) * 100:.0f}%"
             src_str    = "Win Audio: OK"
         elif mode == "mp3" and self.music_player:
             self._mp3_update_track_label()

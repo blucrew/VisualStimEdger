@@ -13,7 +13,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Installing / updating dependencies...
-pip install -r requirements.txt --quiet
+pip install --only-binary :all: -r requirements.txt --quiet
 if %errorlevel% neq 0 (
     echo.
     echo  Dependency install failed. Try running as Administrator.
