@@ -310,7 +310,7 @@ def capture_window_region(hwnd, rel_box):
             if hwndDC:     win32gui.ReleaseDC(hwnd, hwndDC)
 
         # ── Crop the PrintWindow result ───────────────────────────────────────
-        if frame is not None and frame.size > 0 and frame.max() > 0:
+        if frame is not None and frame.size > 0 and frame.any():
             x1 = max(0, min(w, rel_box['x1']))
             y1 = max(0, min(h, rel_box['y1']))
             x2 = max(0, min(w, rel_box['x2']))
@@ -1539,7 +1539,8 @@ class App:
             if d.FriendlyName == value:
                 self.win_audio = WindowsAudioClient(d)
                 if self.win_audio.connected:
-                    self._orig_win_volume = self.win_audio.get_volume() or 0.5
+                    v = self.win_audio.get_volume()
+                    self._orig_win_volume = v if v is not None else 0.5
                 else:
                     self._orig_win_volume = None
                 self._save_config()
@@ -2015,44 +2016,52 @@ def show_splash() -> bool:
             lbl.pack()
 
             # Click-zone over the baked-in button in the PNG.
-            # Coordinates detected from splash.png pixel scan.
-            _btn_y1, _btn_y2 = int(511 * H / 585), int(568 * H / 585)
-            _btn_x1, _btn_x2 = int(35 * W / 591), int(556 * W / 591)
-            def _on_click(e):
-                if _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2:
-                    _start()
-            lbl.bind("<Button-1>", _on_click)
-            lbl.configure(cursor="arrow")  # default; cursor set to hand in blink
+            # Fractional positions from splash.png pixel scan.
+            _btn_y1 = int(0.873 * H)   # 511/585
+            _btn_y2 = int(0.971 * H)   # 568/585
+            _btn_x1 = int(0.059 * W)   # 35/591
+            _btn_x2 = int(0.941 * W)   # 556/591
+
+            def _in_btn(e):
+                return _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2
+
+            lbl.bind("<Button-1>", lambda e: _start() if _in_btn(e) else None)
+            lbl.configure(cursor="arrow")
 
             # Blink: alternate between normal image and a bright-flash
             # version to draw attention to the Start button.
             flash = Image.new("RGBA", img.size, (0, 0, 0, 0))
             flash_draw = ImageDraw.Draw(flash)
-            scale = W / 700
             flash_draw.rounded_rectangle(
                 [_btn_x1, _btn_y1, _btn_x2, _btn_y2],
-                radius=int(12 * scale), fill=(255, 255, 255, 60))
+                radius=int(12 * W / 700), fill=(255, 255, 255, 60))
             img_bright = Image.alpha_composite(img, flash)
             bg_bright = Image.new("RGB", (W, H), (13, 13, 13))
             bg_bright.paste(img_bright, mask=img_bright.split()[3])
             photo_bright = ImageTk.PhotoImage(bg_bright)
 
+            _blink_id = [None]
             blink_state = [False]
             def _blink():
                 blink_state[0] = not blink_state[0]
                 lbl.configure(image=photo_bright if blink_state[0] else photo)
-                root.after(700, _blink)
-            root.after(700, _blink)
+                _blink_id[0] = root.after(700, _blink)
+            _blink_id[0] = root.after(700, _blink)
 
-            # Hand cursor when hovering over the button area
+            # Hand cursor only when entering/leaving the button area
+            _cursor = ["arrow"]
             def _on_motion(e):
-                if _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2:
-                    lbl.configure(cursor="hand2")
-                else:
-                    lbl.configure(cursor="arrow")
+                want = "hand2" if _in_btn(e) else "arrow"
+                if want != _cursor[0]:
+                    _cursor[0] = want
+                    lbl.configure(cursor=want)
             lbl.bind("<Motion>", _on_motion)
 
-            root.protocol("WM_DELETE_WINDOW", root.destroy)
+            def _close():
+                if _blink_id[0]:
+                    root.after_cancel(_blink_id[0])
+                root.destroy()
+            root.protocol("WM_DELETE_WINDOW", _close)
             sw = root.winfo_screenwidth()
             sh = root.winfo_screenheight()
             root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
