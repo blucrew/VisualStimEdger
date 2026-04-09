@@ -972,6 +972,7 @@ class App:
 
         # Cum cooldown  (None = not active)
         self._cum_count = 0
+        self._denial_count = 0
         self._cum_time: float | None = None
         self._cum_allowed = False
         self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
@@ -1053,6 +1054,19 @@ class App:
                                 activebackground="#e040fb", activeforeground="white")
         settings_menu.add_command(label="Settings...", command=self._open_settings)
         menubar.add_cascade(label="Settings", menu=settings_menu)
+
+        about_menu = tk.Menu(menubar, tearoff=0,
+                             bg="#222238", fg="#e0e0e8",
+                             activebackground="#e040fb", activeforeground="white")
+        about_menu.add_command(label=f"Version  v{VERSION}", state="disabled")
+        about_menu.add_command(label="Dev: Sir Thorn", state="disabled")
+        about_menu.add_separator()
+        about_menu.add_command(label="GitHub (latest release)",
+                               command=lambda: webbrowser.open("https://github.com/blucrew/VisualStimEdger/releases/latest"))
+        about_menu.add_command(label="Ko-fi (support)",
+                               command=lambda: webbrowser.open("https://ko-fi.com/stimstation"))
+        menubar.add_cascade(label="About", menu=about_menu)
+
         root.configure(menu=menubar)
 
         # ── Update banner (hidden until needed) ───────────────────────────────
@@ -1744,6 +1758,7 @@ class App:
             log.info(f"Cum GRANTED (1/{denominator} on {aggr}) — {mins} min window")
         else:
             self._cum_allowed = False
+            self._denial_count += 1
             cooldown = self._CUM_DENY_COOLDOWN.get(aggr, 30)
             self._letmecum_cooldown_until = time.time() + cooldown
             self._letmecum_btn.configure(text="DENIED!", fg_color="#b71c1c",
@@ -2214,10 +2229,17 @@ class App:
         if self._prev_state in self.state_times:
             self.state_times[self._prev_state] += elapsed
 
-        if state == "Edging" and self._prev_state != "Edging":
-            if now - getattr(self, '_last_edge_time', 0.0) >= 10.0:
+        if state == "Edging":
+            if self._prev_state != "Edging":
+                self._edge_enter_time = now
+            elif (now - getattr(self, '_edge_enter_time', now) >= 1.0
+                  and not getattr(self, '_edge_counted', False)
+                  and now - getattr(self, '_last_edge_time', 0.0) >= 10.0):
                 self.edge_count += 1
                 self._last_edge_time = now
+                self._edge_counted = True
+        else:
+            self._edge_counted = False
 
         self._prev_state = state
 
@@ -2419,6 +2441,7 @@ class App:
             "aggressiveness": self.aggr_var.get(),
             "letmecum": letmecum,
             "cum_count": self._cum_count,
+            "denial_count": self._denial_count,
         }))
 
     def _display_frame(self, frame):

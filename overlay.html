@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <title>VisualStimEdger OBS Overlay</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: transparent;
-    font-family: 'Segoe UI', Arial, sans-serif;
+    font-family: 'Rajdhani', 'Segoe UI', Arial, sans-serif;
     color: #eee;
     overflow: hidden;
   }
@@ -51,7 +52,7 @@
   }
   .evt.on { opacity: 1; }
   .evt.g { color: #00e676; text-shadow: 0 0 6px #00e67666; }
-  .evt.r { color: #ff1744; text-shadow: 0 0 6px #ff174466; }
+  .evt.r { color: #ff1744; text-shadow: 0 0 6px #ff174466; font-size: 14px; }
   .evt.p { color: #e040fb; text-shadow: 0 0 6px #e040fb66; }
 
   /* ── Volume bars ──────────────────────── */
@@ -113,12 +114,11 @@
 
   /* ── Zap icon ─────────────────────────── */
   .zap {
-    position: absolute;
-    top: -6px;
-    right: -4px;
-    font-size: 10px;
+    font-size: 20px;
+    line-height: 1;
+    flex-shrink: 0;
     animation: zap 2s ease-in-out infinite;
-    filter: drop-shadow(0 0 3px #e040fb);
+    filter: drop-shadow(0 0 4px #e040fb);
   }
   @keyframes zap {
     0%, 90%, 100% { opacity: 0.3; }
@@ -163,15 +163,31 @@
   }
 
   .loads {
-    text-align: center;
-    font-size: 12px;
-    font-weight: 800;
-    color: #fff;
-    letter-spacing: 1px;
+    display: flex;
+    gap: 4px;
     opacity: 0;
     transition: opacity 0.3s;
   }
   .loads.on { opacity: 1; }
+  .load-card {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 4px 0;
+    text-align: center;
+  }
+  .load-val {
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1.1;
+  }
+  .load-lbl {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #aaa;
+  }
   .dc {
     text-align: center;
     font-size: 8px;
@@ -184,7 +200,7 @@
   <div class="edging" id="edging">EDGING!</div>
   <div class="evt" id="evt"></div>
 
-  <div class="vol-card" style="position:relative">
+  <div class="vol-card">
     <span class="zap">&#9889;</span>
     <div class="bars" id="bars"></div>
     <div class="vol-pct" id="volPct">0%</div>
@@ -205,7 +221,16 @@
     </div>
   </div>
 
-  <div class="loads" id="loads"></div>
+  <div class="loads" id="loads">
+    <div class="load-card" id="loadsCard">
+      <div class="load-val" id="loadsVal">0</div>
+      <div class="load-lbl">Loads</div>
+    </div>
+    <div class="load-card" id="denialsCard">
+      <div class="load-val" id="denialsVal">0</div>
+      <div class="load-lbl">Denied</div>
+    </div>
+  </div>
   <div class="dc" id="dc"></div>
 </div>
 
@@ -229,6 +254,8 @@ const modeEl = document.getElementById('mode');
 const evt = document.getElementById('evt');
 const dc = document.getElementById('dc');
 const loadsEl = document.getElementById('loads');
+const loadsVal = document.getElementById('loadsVal');
+const denialsVal = document.getElementById('denialsVal');
 
 let ws = null, rt = null;
 
@@ -293,8 +320,10 @@ function onMsg(e) {
   evt.className = 'evt' + (et ? ' on ' + ec : '');
 
   const cc = d.cum_count || 0;
-  if (cc > 0) {
-    loadsEl.textContent = 'LOADS: ' + cc;
+  const dc2 = d.denial_count || 0;
+  if (cc > 0 || dc2 > 0) {
+    loadsVal.textContent = cc;
+    denialsVal.textContent = dc2;
     loadsEl.classList.add('on');
   } else {
     loadsEl.classList.remove('on');
