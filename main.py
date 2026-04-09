@@ -912,16 +912,18 @@ class MusicPlayer:
 
 class App:
     # ── Colour palette ────────────────────────────────────────────────────────
-    _C_BG        = "#0d0d0d"
-    _C_SURFACE   = "#1a1a1a"
-    _C_SURFACE2  = "#242424"
+    _C_BG        = "#1a1a2e"
+    _C_SURFACE   = "#222238"
+    _C_SURFACE2  = "#2a2a42"
+    _C_ACCENT    = "#e040fb"
+    _C_ACCENT_H  = "#c030d8"
     _C_RED       = "#cc2200"
     _C_RED_HOV   = "#991800"
-    _C_YELLOW    = "#ffcc00"
-    _C_YELLOW_H  = "#e6b500"
-    _C_TEXT      = "#eeeeee"
-    _C_TEXT_DIM  = "#666666"
-    _C_BORDER    = "#2e2e2e"
+    _C_YELLOW    = "#e040fb"
+    _C_YELLOW_H  = "#c030d8"
+    _C_TEXT      = "#e0e0e8"
+    _C_TEXT_DIM  = "#6a6a80"
+    _C_BORDER    = "#3a3a55"
 
     # ── YOLO reanchoring
     _YOLO_INTERVAL = 15    # run detector every N frames
@@ -969,7 +971,11 @@ class App:
         self.hold_active = False
 
         # Cum cooldown  (None = not active)
+        self._cum_count = 0
         self._cum_time: float | None = None
+        self._cum_allowed = False
+        self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
+        self._denial_phrases = list(self._DENIAL_PHRASES_DEFAULT)
 
         # AUTO calibration
         self._auto_mode       = True
@@ -1038,19 +1044,30 @@ class App:
         lbl = ctk.CTkFont(size=11, weight="bold")
         btn = ctk.CTkFont(size=12, weight="bold")
 
+        # ── Menu bar ─────────────────────────────────────────────────────────
+        menubar = tk.Menu(root, bg="#222238", fg="#e0e0e8",
+                          activebackground="#e040fb", activeforeground="white",
+                          relief="flat", borderwidth=0)
+        settings_menu = tk.Menu(menubar, tearoff=0,
+                                bg="#222238", fg="#e0e0e8",
+                                activebackground="#e040fb", activeforeground="white")
+        settings_menu.add_command(label="Settings...", command=self._open_settings)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        root.configure(menu=menubar)
+
         # ── Update banner (hidden until needed) ───────────────────────────────
-        self._update_banner = ctk.CTkFrame(root, fg_color="#7a5c00", corner_radius=0)
+        self._update_banner = ctk.CTkFrame(root, fg_color="#2a2a42", corner_radius=0)
         self._update_label  = ctk.CTkLabel(self._update_banner, text="",
                                            text_color="white", font=lbl)
         self._update_label.pack(side=tk.LEFT, padx=P, pady=6)
         self._update_btn = ctk.CTkButton(self._update_banner, text="Download", width=100,
-                                         fg_color="#b8860b", hover_color="#8B6914",
+                                         fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                                          text_color="white", font=lbl, corner_radius=4)
         self._update_btn.pack(side=tk.RIGHT, padx=P, pady=6)
 
         # ── Video + calibration buttons ───────────────────────────────────────
         top_frame = ctk.CTkFrame(root, fg_color="transparent")
-        top_frame.pack(padx=P, pady=P, fill=tk.X)
+        top_frame.pack(padx=P, pady=(P, 4), fill=tk.X)
         self._first_widget = top_frame
 
         # video — plain tk.Label so ImageTk works without wrapping
@@ -1058,7 +1075,10 @@ class App:
                                  corner_radius=8, border_width=1, border_color=self._C_BORDER)
         vid_shell.pack(side=tk.LEFT)
         self.video_label = tk.Label(vid_shell, bg=self._C_SURFACE)
-        self.video_label.pack(padx=3, pady=3)
+        self.video_label.pack(padx=3, pady=(3, 0))
+        self._snark_label = ctk.CTkLabel(vid_shell, text="", font=ctk.CTkFont(size=11, slant="italic"),
+                                          text_color="#ff4444", height=20)
+        self._snark_label.pack(padx=3, pady=(0, 3))
 
         # height buttons — stacked right of video
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent")
@@ -1066,46 +1086,54 @@ class App:
 
         def _hbtn_row(parent, text, set_cmd, pick_cmd, color, hover):
             row = ctk.CTkFrame(parent, fg_color="transparent")
-            row.pack(fill=tk.X, pady=3)
-            ctk.CTkButton(row, text=text, command=set_cmd, font=btn, height=38,
+            row.pack(fill=tk.X, pady=1)
+            ctk.CTkButton(row, text=text, command=set_cmd, font=btn, height=28,
                           fg_color=color, hover_color=hover,
-                          text_color="white", corner_radius=6
-                          ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 3))
-            ctk.CTkButton(row, text="Manual \u271a", command=pick_cmd, font=btn, height=38, width=80,
+                          text_color="white", corner_radius=4
+                          ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+            ctk.CTkButton(row, text="Manual \u271a", command=pick_cmd, font=ctk.CTkFont(size=10),
+                          height=28, width=70,
                           fg_color=color, hover_color=hover,
-                          text_color="white", corner_radius=6
+                          text_color="white", corner_radius=4
                           ).pack(side=tk.RIGHT)
             return row
 
         self._auto_btn = ctk.CTkButton(
             hbf, text="AUTO  (observing...)", command=self._toggle_auto,
-            font=btn, height=38, corner_radius=6,
-            fg_color="#b8a000", hover_color="#8a7800", text_color="white")
-        self._auto_btn.pack(fill=tk.X, pady=(0, 6))
+            font=btn, height=28, corner_radius=4,
+            fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
+        self._auto_btn.pack(fill=tk.X, pady=(0, 3))
 
-        _hbtn_row(hbf, "Set Edging Height",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,   self._C_RED_HOV)
-        _hbtn_row(hbf, "Set Erect Height",   self._set_erect,   lambda: self._start_pick("Erect"),   "#1a5c2e",     "#114420")
-        _hbtn_row(hbf, "Set Flaccid Height", self._set_flaccid, lambda: self._start_pick("Flaccid"), "#1a2e5c",     "#11203e")
+        _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,   self._C_RED_HOV)
+        _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   "#2d5a3e",     "#1f4030")
+        _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), "#2a2a55",     "#222248")
 
-        # spacer pushes cum button to bottom
+        # spacer pushes cum buttons to bottom
         ctk.CTkFrame(hbf, fg_color="transparent").pack(fill=tk.BOTH, expand=True)
-        ctk.CTkButton(hbf, text="I've CUM", command=self._on_cum,
-                      font=btn, height=38, corner_radius=6,
-                      fg_color="white", hover_color="#dddddd",
-                      text_color="#0d0d0d").pack(fill=tk.X, pady=3)
+        cum_row = ctk.CTkFrame(hbf, fg_color="transparent")
+        cum_row.pack(fill=tk.X, pady=1)
+        self._letmecum_btn = ctk.CTkButton(
+            cum_row, text="Let me cum?", command=self._on_letmecum,
+            font=btn, height=30, corner_radius=4,
+            fg_color="#2d8a2d", hover_color="#1f6b1f", text_color="white")
+        self._letmecum_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        ctk.CTkButton(cum_row, text="I've CUM", command=self._on_cum,
+                      font=btn, height=30, corner_radius=4,
+                      fg_color="#e0e0e8", hover_color="#c8c8d0",
+                      text_color="#1a1a2e").pack(side=tk.RIGHT, fill=tk.X, expand=True)
 
         def _divider():
-            ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=3)
+            ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
 
         _divider()
 
         # ── Volume floor / ceiling ────────────────────────────────────────────
         vol_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
-        vol_card.pack(fill=tk.X, padx=P, pady=4)
+        vol_card.pack(fill=tk.X, padx=P, pady=2)
 
         def _slider_row(parent, label_text, var, val_attr, callback):
             row = ctk.CTkFrame(parent, fg_color="transparent")
-            row.pack(fill=tk.X, padx=12, pady=(6, 3))
+            row.pack(fill=tk.X, padx=12, pady=(3, 2))
             ctk.CTkLabel(row, text=label_text, font=lbl,
                          text_color=self._C_TEXT, width=90, anchor="w").pack(side=tk.LEFT)
             vl = ctk.CTkLabel(row, text=f"{var.get():.0f}%", font=lbl,
@@ -1124,7 +1152,7 @@ class App:
 
         # ── Aggressiveness ────────────────────────────────────────────────────
         aggr_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
-        aggr_card.pack(fill=tk.X, padx=P, pady=4)
+        aggr_card.pack(fill=tk.X, padx=P, pady=2)
         aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
         aggr_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
@@ -1132,8 +1160,8 @@ class App:
         self._aggr_seg = ctk.CTkSegmentedButton(
             aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
             command=self._on_aggr_change,
-            selected_color="#1a8a1a", selected_hover_color="#145c14",
-            unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
+            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#35354e",
             font=ctk.CTkFont(size=11, weight="bold"),
             text_color=self._C_TEXT,
         )
@@ -1144,7 +1172,7 @@ class App:
         # ── Output mode ───────────────────────────────────────────────────────
         mode_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
         self._mode_card = mode_card
-        mode_card.pack(fill=tk.X, padx=P, pady=4)
+        mode_card.pack(fill=tk.X, padx=P, pady=2)
         mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
         mode_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(mode_row, text="Output", font=lbl,
@@ -1153,8 +1181,8 @@ class App:
         ctk.CTkSegmentedButton(
             mode_row, values=_mode_values, variable=self.mode_var,
             command=lambda _: self._on_mode_change(),
-            selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
-            unselected_color=self._C_SURFACE2, unselected_hover_color="#333",
+            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#35354e",
             font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
         ).pack(side=tk.RIGHT)
 
@@ -1162,11 +1190,31 @@ class App:
         self._restim_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
         ro = ctk.CTkFrame(self._restim_opts, fg_color="transparent")
         ro.pack(padx=12, pady=7)
-        ctk.CTkLabel(ro, text="Port:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkLabel(ro, text="Restim Port:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkEntry(ro, textvariable=self.port_var, width=72,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self.port_var.trace_add("write", self._on_port_change)
+        # OBS overlay URL on same row
+        _overlay_url = f"http://127.0.0.1:{OverlayServer.PORT}"
+        ctk.CTkLabel(ro, text="OBS Overlay:", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(16, 6))
+        _obs_entry = ctk.CTkEntry(ro, width=170,
+                                  fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                                  text_color=self._C_TEXT, font=ctk.CTkFont(size=11))
+        _obs_entry.insert(0, _overlay_url)
+        _obs_entry.configure(state="readonly")
+        _obs_entry.pack(side=tk.LEFT, padx=(0, 4))
+        def _copy_overlay_url():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(_overlay_url)
+            _copy_btn.configure(text="Copied!")
+            self.root.after(1500, lambda: _copy_btn.configure(text="Copy"))
+        _copy_btn = ctk.CTkButton(ro, text="Copy", command=_copy_overlay_url, width=48,
+                                  fg_color=self._C_SURFACE, hover_color="#35354e",
+                                  text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                                  font=ctk.CTkFont(size=10))
+        _copy_btn.pack(side=tk.LEFT)
 
         # Windows Audio options panel
         self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1181,7 +1229,7 @@ class App:
         )
         self._device_combo.pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(wo, text="Refresh", command=self._refresh_devices, width=72,
-                      fg_color=self._C_SURFACE2, hover_color="#333",
+                      fg_color=self._C_SURFACE2, hover_color="#35354e",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
 
@@ -1197,12 +1245,12 @@ class App:
             load_row = ctk.CTkFrame(mo, fg_color="transparent")
             load_row.pack(fill=tk.X, pady=(0, 4))
             ctk.CTkButton(load_row, text="📁 Load File", width=110, height=28,
-                          fg_color=self._C_SURFACE, hover_color="#333",
+                          fg_color=self._C_SURFACE, hover_color="#35354e",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_file).pack(side=tk.LEFT, padx=(0, 6))
             ctk.CTkButton(load_row, text="📂 Load Folder", width=120, height=28,
-                          fg_color=self._C_SURFACE, hover_color="#333",
+                          fg_color=self._C_SURFACE, hover_color="#35354e",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_folder).pack(side=tk.LEFT, padx=(0, 10))
@@ -1216,7 +1264,7 @@ class App:
             ctrl_row = ctk.CTkFrame(mo, fg_color="transparent")
             ctrl_row.pack(pady=(0, 4))
             btn_kw = dict(width=44, height=32, fg_color=self._C_SURFACE,
-                          hover_color="#333", text_color=self._C_TEXT,
+                          hover_color="#35354e", text_color=self._C_TEXT,
                           border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=13))
             ctk.CTkButton(ctrl_row, text="⏮", command=self._mp3_prev, **btn_kw).pack(side=tk.LEFT, padx=2)
@@ -1236,46 +1284,21 @@ class App:
                 variable=self._mp3_loop_var,
                 command=self._mp3_on_loop_change,
                 selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
-                unselected_color=self._C_SURFACE, unselected_hover_color="#333",
+                unselected_color=self._C_SURFACE, unselected_hover_color="#35354e",
                 font=ctk.CTkFont(size=10), text_color=self._C_TEXT,
             ).pack(side=tk.LEFT)
-
-        # ── OBS Overlay ────────────────────────────────────────────────────────
-        obs_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
-        obs_card.pack(fill=tk.X, padx=P, pady=4)
-        obs_row = ctk.CTkFrame(obs_card, fg_color="transparent")
-        obs_row.pack(fill=tk.X, padx=12, pady=8)
-        ctk.CTkLabel(obs_row, text="OBS Overlay", font=lbl,
-                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 8))
-        _overlay_url = f"http://127.0.0.1:{OverlayServer.PORT}"
-        self._obs_entry = ctk.CTkEntry(obs_row, width=200,
-                                       fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
-                                       text_color=self._C_TEXT, font=ctk.CTkFont(size=11))
-        self._obs_entry.insert(0, _overlay_url)
-        self._obs_entry.configure(state="readonly")
-        self._obs_entry.pack(side=tk.LEFT, padx=(0, 6))
-        def _copy_overlay_url():
-            self.root.clipboard_clear()
-            self.root.clipboard_append(_overlay_url)
-            _copy_btn.configure(text="Copied!")
-            self.root.after(1500, lambda: _copy_btn.configure(text="Copy"))
-        _copy_btn = ctk.CTkButton(obs_row, text="Copy", command=_copy_overlay_url, width=56,
-                                  fg_color=self._C_SURFACE2, hover_color="#333",
-                                  text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
-                                  font=ctk.CTkFont(size=10))
-        _copy_btn.pack(side=tk.LEFT)
 
         _divider()
 
         # ── Controls row ──────────────────────────────────────────────────────
         ctrl = ctk.CTkFrame(root, fg_color="transparent")
-        ctrl.pack(fill=tk.X, padx=P, pady=6)
+        ctrl.pack(fill=tk.X, padx=P, pady=3)
 
         def _ghost_btn(parent, text, cmd, **kw):
             kw.setdefault("font", ctk.CTkFont(size=10))
             return ctk.CTkButton(
                 parent, text=text, command=cmd, height=34,
-                fg_color=self._C_SURFACE2, hover_color="#333",
+                fg_color=self._C_SURFACE2, hover_color="#35354e",
                 text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                 **kw,
             )
@@ -1297,13 +1320,13 @@ class App:
             root, text="State: --  |  Vol: --  |  WS: Disconnected",
             font=ctk.CTkFont(size=15, weight="bold"), text_color=self._C_TEXT,
         )
-        self.info_label.pack(pady=(8, 2))
+        self.info_label.pack(pady=(4, 1))
 
         self.stats_label = ctk.CTkLabel(
             root, text="Session: 00:00  |  Edges: 0",
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
         )
-        self.stats_label.pack(pady=(0, 10))
+        self.stats_label.pack(pady=(0, 4))
 
     def _start_update_check(self):
         def callback(latest, url):
@@ -1326,6 +1349,8 @@ class App:
                 "mp3_path":    getattr(self, '_mp3_last_path', ""),
                 "mp3_path_type": getattr(self, '_mp3_last_type', "file"),
                 "mp3_loop":    self._mp3_loop_var.get() if _MINIAUDIO_OK else "folder",
+                "cum_odds":    self._cum_odds,
+                "denial_phrases": self._denial_phrases,
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -1382,6 +1407,10 @@ class App:
                         self.music_player.track_name = p.stem
                         self.music_player.track_info = "1 / 1"
                     self._mp3_update_track_label()
+            if "cum_odds" in data and isinstance(data["cum_odds"], dict):
+                self._cum_odds.update(data["cum_odds"])
+            if "denial_phrases" in data and isinstance(data["denial_phrases"], list):
+                self._denial_phrases = data["denial_phrases"]
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -1503,7 +1532,7 @@ class App:
                                      fg_color="#b8a000", hover_color="#8a7800")
         else:
             self._auto_btn.configure(text="AUTO  (off)",
-                                     fg_color=self._C_SURFACE2, hover_color="#333")
+                                     fg_color=self._C_SURFACE2, hover_color="#35354e")
 
     def _auto_feed(self, y: float):
         """Called every heavy frame while AUTO is on and tracking is good.
@@ -1540,29 +1569,51 @@ class App:
             self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
             if getattr(self, '_auto_btn_state', None) != "active":
                 self._auto_btn_state = "active"
-                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
+                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#2d8a2d", hover_color="#1f6b1f")
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
             self._auto_btn.configure(text=f"AUTO  (flaccid set, need more range)")
 
+    def _disable_auto(self):
+        """Turn off AUTO so manual height settings aren't overwritten."""
+        if self._auto_mode:
+            self._auto_mode = False
+            self._auto_btn.configure(text="AUTO  (off)",
+                                     fg_color=self._C_SURFACE2, hover_color="#35354e")
+
+    def _cancel_pick(self):
+        """Cancel any active Manual pick mode."""
+        if self._pick_height:
+            self._pick_height = None
+            self.video_label.configure(cursor="")
+            self.video_label.unbind("<Button-1>")
+
     def _set_edging(self):
+        self._disable_auto()
+        self._cancel_pick()
         self.heights["Edging"] = self.head_y
         log.info(f"Edging height set at Y={self.head_y}")
         self._save_config()
 
     def _set_erect(self):
+        self._disable_auto()
+        self._cancel_pick()
         self.heights["Erect"] = self.head_y
         log.info(f"Erect height set at Y={self.head_y}")
         self._save_config()
 
     def _set_flaccid(self):
+        self._disable_auto()
+        self._cancel_pick()
         self.heights["Flaccid"] = self.head_y
         log.info(f"Flaccid height set at Y={self.head_y}")
         self._save_config()
 
     def _start_pick(self, which: str):
         """Enter click-to-set mode: next click on video sets that height."""
+        self._disable_auto()
+        self._cancel_pick()
         self._pick_height = which
         self.video_label.configure(cursor="crosshair")
         self.video_label.bind("<Button-1>", self._on_video_click)
@@ -1593,7 +1644,7 @@ class App:
             self._auto_btn_state = None
         if hasattr(self, '_auto_btn'):
             self._auto_btn.configure(text="AUTO", fg_color=self._C_SURFACE2,
-                                     hover_color="#333")
+                                     hover_color="#35354e")
         log.info("Heights reset after feed re-selection")
 
     def _reselect_feed(self):
@@ -1630,8 +1681,8 @@ class App:
             self.tracking_paused = False
 
     _AGGR_COLORS = {
-        "Easy":   ("#1a8a1a", "#145c14"),
-        "Middle": ("#b8a000", "#8a7800"),
+        "Easy":   ("#7c3aed", "#6525d0"),
+        "Middle": ("#e040fb", "#c030d8"),
         "Hard":   ("#cc6600", "#994c00"),
         "Expert": ("#cc2200", "#991800"),
     }
@@ -1642,9 +1693,114 @@ class App:
         self._aggr_seg.configure(selected_color=col, selected_hover_color=hov)
         self._save_config()
 
+    # Odds of "Let me cum?" being granted per aggressiveness level
+    _CUM_ODDS_DEFAULT = {"Easy": 2, "Middle": 4, "Hard": 6, "Expert": 30}
+    _CUM_DENY_COOLDOWN = {"Easy": 30, "Middle": 30, "Hard": 60, "Expert": 120}
+    _CUM_GRANT_TIME = {"Easy": 300, "Middle": 300, "Hard": 180, "Expert": 60}
+    _DENIAL_PHRASES_DEFAULT = [
+        "Not this time.", "Keep trying, gooner.",
+        "Denied. Back to edging.", "Nope. Suffer.",
+        "The answer is no.", "Maybe next time ;)",
+        "Absolutely not.", "You wish.",
+        "Earn it.", "Not even close.",
+        "Haha, no.", "Try again later, perv.",
+        "Permission denied.", "Stay on the edge.",
+    ]
+
+    def _on_letmecum(self):
+        """Roll the dice — grant or deny permission to cum."""
+        import random
+
+        # Check denial cooldown
+        cooldown_left = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
+        if cooldown_left > 0:
+            self._letmecum_btn.configure(text=f"Wait {int(cooldown_left)}s...")
+            return
+
+        aggr = self.aggr_var.get()
+        denominator = self._cum_odds.get(aggr, 4)
+        granted = random.randint(1, denominator) == 1
+        self._last_letmecum_result = "granted" if granted else "denied"
+        self._last_letmecum_time = time.time()
+
+        if granted:
+            self._cum_allowed = True
+            grant_secs = self._CUM_GRANT_TIME.get(aggr, 300)
+            self._cum_grant_expires = time.time() + grant_secs
+            mins = grant_secs // 60
+            self._snark_label.configure(text=f"You've been a good boy. You have {mins} min.",
+                                        text_color="#00c853")
+            self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#00c853",
+                                         hover_color="#00a844")
+            ceil_val = self.max_vol_var.get() / 100.0
+            mode = self.mode_var.get()
+            if mode == "restim":
+                self.restim.set_volume(ceil_val, instant=True, floor=0.0, ceiling=ceil_val)
+            elif mode == "windows" and self.win_audio and self.win_audio.connected:
+                self.win_audio.set_volume(ceil_val, 0.0, ceil_val)
+            elif mode == "mp3" and self.music_player:
+                self.music_player.volume = ceil_val
+            self.root.after(1000, self._tick_cum_grant)
+            log.info(f"Cum GRANTED (1/{denominator} on {aggr}) — {mins} min window")
+        else:
+            self._cum_allowed = False
+            cooldown = self._CUM_DENY_COOLDOWN.get(aggr, 30)
+            self._letmecum_cooldown_until = time.time() + cooldown
+            self._letmecum_btn.configure(text="DENIED!", fg_color="#b71c1c",
+                                         hover_color="#7f0000")
+            snark = random.choice(self._denial_phrases) if self._denial_phrases else "Denied."
+            self._snark_label.configure(text=snark)
+            self.root.after(2000, lambda: self._tick_letmecum_cooldown())
+            log.info(f"Cum DENIED (1/{denominator} on {aggr}) — {cooldown}s cooldown")
+
+    def _tick_letmecum_cooldown(self):
+        """Update the button text with remaining cooldown, then restore."""
+        remaining = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
+        if remaining > 0:
+            self._letmecum_btn.configure(text=f"Wait {int(remaining)}s...",
+                                         fg_color="#b71c1c", hover_color="#7f0000")
+            self.root.after(1000, self._tick_letmecum_cooldown)
+        else:
+            self._letmecum_btn.configure(text="Let me cum?",
+                                         fg_color="#2d8a2d", hover_color="#1f6b1f")
+            self._snark_label.configure(text="")
+
+    def _tick_cum_grant(self):
+        """Countdown the cum grant window. When expired, revoke permission."""
+        if not self._cum_allowed:
+            return
+        remaining = getattr(self, '_cum_grant_expires', 0) - time.time()
+        if remaining > 0:
+            m = int(remaining) // 60
+            s = int(remaining) % 60
+            self._letmecum_btn.configure(text=f"CUM NOW! {m}:{s:02d}")
+            self._snark_label.configure(
+                text=f"You've been a good boy. {m}:{s:02d} remaining.",
+                text_color="#00c853")
+            self.root.after(1000, self._tick_cum_grant)
+        else:
+            # Time's up — revoke permission
+            self._cum_allowed = False
+            self._last_letmecum_result = "expired"
+            self._letmecum_btn.configure(text="Too slow!",
+                                         fg_color="#b71c1c", hover_color="#7f0000")
+            self._snark_label.configure(text="Time's up. Back to edging.",
+                                        text_color="#ff4444")
+            self.root.after(3000, lambda: (
+                self._letmecum_btn.configure(text="Let me cum?",
+                                             fg_color="#2d8a2d", hover_color="#1f6b1f"),
+                self._snark_label.configure(text="")))
+            log.info("Cum grant expired — permission revoked")
+
     def _on_cum(self):
         """Drop volume to 0, hold 5 min, ramp back to floor over 5 min."""
+        self._cum_count += 1
         self._cum_time = time.time()
+        self._cum_allowed = False
+        self._cum_grant_expires = 0
+        self._letmecum_btn.configure(text="Let me cum?", fg_color="#2d8a2d",
+                                     hover_color="#1f6b1f")
+        self._snark_label.configure(text="")
         floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
         ceil_val  = self.max_vol_var.get() / 100.0
         mode = self.mode_var.get()
@@ -1655,6 +1811,78 @@ class App:
         elif mode == "mp3" and self.music_player:
             self.music_player.volume = 0.0
         log.info("Cum triggered — volume silenced for 5 min")
+
+    def _open_settings(self):
+        """Open the settings dialog for cum odds and denial phrases."""
+        win = ctk.CTkToplevel(self.root)
+        win.title("Settings")
+        win.geometry("480x520")
+        win.configure(fg_color=self._C_BG)
+        win.transient(self.root)
+        win.grab_set()
+
+        lbl = ctk.CTkFont(size=11, weight="bold")
+
+        # ── Cum Odds ──────────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="\"Let me cum?\" Odds  (1 in N chance)",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
+        odds_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        odds_vars = {}
+        for level in ("Easy", "Middle", "Hard", "Expert"):
+            row = ctk.CTkFrame(odds_frame, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=4)
+            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+                         width=70, anchor="w").pack(side=tk.LEFT)
+            ctk.CTkLabel(row, text="1 in", font=ctk.CTkFont(size=10),
+                         text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
+            var = tk.IntVar(value=self._cum_odds.get(level, 4))
+            odds_vars[level] = var
+            ctk.CTkEntry(row, textvariable=var, width=60,
+                         fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                         text_color=self._C_TEXT).pack(side=tk.LEFT)
+
+        # ── Denial Phrases ────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Denial Phrases  (one per line)",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        phrases_box = ctk.CTkTextbox(win, height=220,
+                                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                                     text_color=self._C_TEXT, border_width=1,
+                                     font=ctk.CTkFont(size=11))
+        phrases_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        phrases_box.insert("1.0", "\n".join(self._denial_phrases))
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(win, fg_color="transparent")
+        btn_row.pack(fill=tk.X, padx=16, pady=(0, 12))
+
+        def _save():
+            for level, var in odds_vars.items():
+                val = var.get()
+                if val >= 1:
+                    self._cum_odds[level] = val
+            text = phrases_box.get("1.0", "end").strip()
+            self._denial_phrases = [l.strip() for l in text.split("\n") if l.strip()]
+            self._save_config()
+            win.destroy()
+
+        def _reset():
+            self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
+            self._denial_phrases = list(self._DENIAL_PHRASES_DEFAULT)
+            for level, var in odds_vars.items():
+                var.set(self._CUM_ODDS_DEFAULT.get(level, 4))
+            phrases_box.delete("1.0", "end")
+            phrases_box.insert("1.0", "\n".join(self._denial_phrases))
+
+        ctk.CTkButton(btn_row, text="Reset Defaults", command=_reset, width=120,
+                      fg_color=self._C_SURFACE2, hover_color="#35354e",
+                      text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                      font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
+        ctk.CTkButton(btn_row, text="Save", command=_save, width=100,
+                      fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                      text_color="white", font=ctk.CTkFont(size=12, weight="bold")
+                      ).pack(side=tk.RIGHT)
 
     def _on_floor_change(self, val):
         self._floor_lbl.configure(text=f"{float(val):.0f}%")
@@ -1743,7 +1971,7 @@ class App:
                                      border_color=self._C_RED)
         else:
             self._hold_btn.configure(text="Hold Volume",
-                                     fg_color=self._C_SURFACE2, hover_color="#333",
+                                     fg_color=self._C_SURFACE2, hover_color="#35354e",
                                      border_color=self._C_BORDER)
 
     # ------------------------------------------------------------------ MP3 transport callbacks
@@ -1987,7 +2215,9 @@ class App:
             self.state_times[self._prev_state] += elapsed
 
         if state == "Edging" and self._prev_state != "Edging":
-            self.edge_count += 1
+            if now - getattr(self, '_last_edge_time', 0.0) >= 10.0:
+                self.edge_count += 1
+                self._last_edge_time = now
 
         self._prev_state = state
 
@@ -2064,6 +2294,10 @@ class App:
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
             return
         self.last_vol_time = cur_time
+
+        # ── Cum allowed — volume locked at 100% until "I've CUM" ─────────────
+        if getattr(self, '_cum_allowed', False):
+            return
 
         # ── Cum cooldown overrides everything ─────────────────────────────────
         if self._cum_time is not None:
@@ -2159,12 +2393,32 @@ class App:
             if elapsed < total:
                 cum_remaining = total - elapsed
 
+        # "Let me cum?" tattle-tale
+        letmecum = None
+        result = getattr(self, '_last_letmecum_result', None)
+        if result:
+            elapsed_lmc = time.time() - getattr(self, '_last_letmecum_time', 0)
+            if result == "granted" and self._cum_allowed:
+                grant_left = getattr(self, '_cum_grant_expires', 0) - time.time()
+                letmecum = {"result": "granted", "time_left": round(max(grant_left, 0))}
+            elif result == "expired" and elapsed_lmc < 5:
+                letmecum = {"result": "expired"}
+            elif result == "denied":
+                cooldown_left = getattr(self, '_letmecum_cooldown_until', 0) - time.time()
+                if cooldown_left > 0:
+                    letmecum = {"result": "denied", "retry_in": round(cooldown_left)}
+                elif elapsed_lmc < 5:
+                    letmecum = {"result": "denied", "retry_in": 0}
+
         self._overlay.broadcast(json.dumps({
             "state": state,
             "volume": round(vol, 3),
             "edge_count": self.edge_count,
             "session_seconds": round(time.time() - self.session_start),
             "cum_remaining": round(cum_remaining) if cum_remaining else None,
+            "aggressiveness": self.aggr_var.get(),
+            "letmecum": letmecum,
+            "cum_count": self._cum_count,
         }))
 
     def _display_frame(self, frame):
