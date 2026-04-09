@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VisualStimEdger OBS Overlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: transparent;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #eee;
+    overflow: hidden;
+  }
+
+  .overlay {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 280px;
+  }
+
+  /* ── EDGING flash ───────────────────────────────── */
+  .edging-banner {
+    text-align: center;
+    font-size: 42px;
+    font-weight: 900;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: #ff1744;
+    text-shadow: 0 0 20px #ff1744, 0 0 40px #ff1744, 0 0 80px #ff174488;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: opacity 0.15s, transform 0.15s;
+    pointer-events: none;
+  }
+  .edging-banner.active {
+    opacity: 1;
+    transform: scale(1);
+    animation: edgePulse 0.6s ease-in-out infinite alternate;
+  }
+  @keyframes edgePulse {
+    0%   { text-shadow: 0 0 20px #ff1744, 0 0 40px #ff1744; transform: scale(1); }
+    100% { text-shadow: 0 0 30px #ff1744, 0 0 60px #ff1744, 0 0 100px #ff174488; transform: scale(1.05); }
+  }
+
+  /* ── CUM cooldown ───────────────────────────────── */
+  .cum-banner {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 800;
+    color: #7c4dff;
+    text-shadow: 0 0 15px #7c4dff, 0 0 30px #7c4dff88;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .cum-banner.active {
+    opacity: 1;
+    animation: cumPulse 1.2s ease-in-out infinite alternate;
+  }
+  @keyframes cumPulse {
+    0%   { opacity: 0.7; }
+    100% { opacity: 1; }
+  }
+
+  /* ── Volume bar ─────────────────────────────────── */
+  .vol-container {
+    background: rgba(0,0,0,0.55);
+    border-radius: 8px;
+    padding: 10px 14px;
+    backdrop-filter: blur(6px);
+  }
+  .vol-label {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .vol-track {
+    height: 10px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .vol-fill {
+    height: 100%;
+    border-radius: 5px;
+    width: 0%;
+    transition: width 0.25s ease, background 0.25s ease;
+    background: #4caf50;
+  }
+
+  /* ── Stats row ──────────────────────────────────── */
+  .stats {
+    display: flex;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .stat-box {
+    background: rgba(0,0,0,0.55);
+    border-radius: 8px;
+    padding: 8px 14px;
+    backdrop-filter: blur(6px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 80px;
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: #ff1744;
+  }
+  .stat-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #999;
+  }
+
+  /* ── Disconnected ───────────────────────────────── */
+  .disconnected {
+    text-align: center;
+    font-size: 12px;
+    color: #666;
+    padding: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="overlay">
+  <div class="edging-banner" id="edgingBanner">EDGING!</div>
+  <div class="cum-banner" id="cumBanner"></div>
+
+  <div class="vol-container">
+    <div class="vol-label">
+      <span>Volume</span>
+      <span id="volPct">0%</span>
+    </div>
+    <div class="vol-track">
+      <div class="vol-fill" id="volFill"></div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box">
+      <span class="stat-value" id="edgeCount">0</span>
+      <span class="stat-label">Edges</span>
+    </div>
+    <div class="stat-box">
+      <span class="stat-value" id="sessionTime">0:00</span>
+      <span class="stat-label">Session</span>
+    </div>
+  </div>
+
+  <div class="disconnected" id="connStatus"></div>
+</div>
+
+<script>
+const WS_URL = 'ws://127.0.0.1:12347';
+const volFill = document.getElementById('volFill');
+const volPct = document.getElementById('volPct');
+const edgingBanner = document.getElementById('edgingBanner');
+const cumBanner = document.getElementById('cumBanner');
+const edgeCount = document.getElementById('edgeCount');
+const sessionTime = document.getElementById('sessionTime');
+const connStatus = document.getElementById('connStatus');
+
+let ws = null;
+let reconnectTimer = null;
+
+function volColor(pct) {
+  if (pct < 40) return '#4caf50';       // green
+  if (pct < 70) return '#ffeb3b';       // yellow
+  if (pct < 90) return '#ff9800';       // orange
+  return '#ff1744';                      // red
+}
+
+function fmtTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function onMessage(evt) {
+  let d;
+  try { d = JSON.parse(evt.data); } catch { return; }
+
+  // Volume bar
+  const vol = Math.round((d.volume || 0) * 100);
+  volFill.style.width = vol + '%';
+  volFill.style.background = volColor(vol);
+  volPct.textContent = vol + '%';
+
+  // Edging banner
+  const isEdging = d.state === 'Edging';
+  edgingBanner.classList.toggle('active', isEdging);
+
+  // Cum cooldown
+  if (d.cum_remaining != null && d.cum_remaining > 0) {
+    cumBanner.classList.add('active');
+    cumBanner.textContent = 'CUM COOLDOWN ' + fmtTime(d.cum_remaining);
+  } else {
+    cumBanner.classList.remove('active');
+    cumBanner.textContent = '';
+  }
+
+  // Stats
+  edgeCount.textContent = d.edge_count || 0;
+  sessionTime.textContent = fmtTime(d.session_seconds || 0);
+
+  connStatus.textContent = '';
+}
+
+function connect() {
+  if (ws && ws.readyState <= 1) return;
+  ws = new WebSocket(WS_URL);
+  ws.onmessage = onMessage;
+  ws.onopen = () => { connStatus.textContent = ''; };
+  ws.onclose = () => {
+    connStatus.textContent = 'Waiting for VisualStimEdger...';
+    scheduleReconnect();
+  };
+  ws.onerror = () => { ws.close(); };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, 2000);
+}
+
+connect();
+</script>
+</body>
+</html>

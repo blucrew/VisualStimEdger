@@ -145,11 +145,11 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
-TCODE_AXIS = 'L0'
+TCODE_AXIS = 'V0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
@@ -437,7 +437,7 @@ class RestimClient:
 
     def _connect_bg(self):
         try:
-            ws_url = f"ws://{self.host}:{self.port}"
+            ws_url = f"ws://{self.host}:{self.port}/tcode"
             ws = websocket.create_connection(ws_url, timeout=2.0)
             with self._lock:
                 self.ws         = ws
@@ -627,6 +627,126 @@ def check_for_update(on_update_available):
             pass
     except Exception:
         pass  # silently ignore — no internet, rate limit, etc.
+
+
+# ── OBS overlay WebSocket server ──────────────────────────────────────────────
+import asyncio, struct, hashlib, base64, socket as _socket
+
+class OverlayServer:
+    """Tiny WebSocket server that broadcasts JSON state to OBS browser sources."""
+    PORT = 12347
+
+    def __init__(self):
+        self._clients: list = []
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self):
+        server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
+        log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
+        async with server:
+            await server.serve_forever()
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5)
+            headers = request.decode(errors='ignore')
+            key = None
+            for line in headers.split('\r\n'):
+                if line.lower().startswith('sec-websocket-key:'):
+                    key = line.split(':', 1)[1].strip()
+
+            if not key:
+                # Regular HTTP request — serve overlay.html
+                html_path = os.path.join(os.path.dirname(__file__), "overlay.html")
+                try:
+                    with open(html_path, 'rb') as f:
+                        body = f.read()
+                    writer.write(
+                        b'HTTP/1.1 200 OK\r\n'
+                        b'Content-Type: text/html; charset=utf-8\r\n'
+                        b'Access-Control-Allow-Origin: *\r\n'
+                        b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
+                        b'Connection: close\r\n\r\n' + body
+                    )
+                except FileNotFoundError:
+                    writer.write(b'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+                await writer.drain()
+                writer.close()
+                return
+
+            # WebSocket upgrade
+            accept = base64.b64encode(
+                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
+            ).decode()
+            writer.write(
+                f'HTTP/1.1 101 Switching Protocols\r\n'
+                f'Upgrade: websocket\r\n'
+                f'Connection: Upgrade\r\n'
+                f'Sec-WebSocket-Accept: {accept}\r\n\r\n'.encode()
+            )
+            await writer.drain()
+        except Exception:
+            writer.close()
+            return
+
+        with self._lock:
+            self._clients.append(writer)
+        try:
+            # Keep connection alive — read and discard client frames
+            while True:
+                data = await reader.read(1024)
+                if not data:
+                    break
+        except Exception:
+            pass
+        finally:
+            with self._lock:
+                if writer in self._clients:
+                    self._clients.remove(writer)
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    def broadcast(self, payload: str):
+        """Send a text WebSocket frame to all connected clients."""
+        frame = self._ws_text_frame(payload)
+        with self._lock:
+            dead = []
+            for w in self._clients:
+                try:
+                    w.write(frame)
+                except Exception:
+                    dead.append(w)
+            for w in dead:
+                self._clients.remove(w)
+
+    @staticmethod
+    def _ws_text_frame(text: str) -> bytes:
+        data = text.encode()
+        length = len(data)
+        if length < 126:
+            header = struct.pack('!BB', 0x81, length)
+        elif length < 65536:
+            header = struct.pack('!BBH', 0x81, 126, length)
+        else:
+            header = struct.pack('!BBQ', 0x81, 127, length)
+        return header + data
+
+    def stop(self):
+        if self._loop:
+            self._loop.call_soon_threadsafe(self._loop.stop)
 
 
 # ── MP3 player ────────────────────────────────────────────────────────────────
@@ -858,6 +978,14 @@ class App:
         self._auto_obs_start: float | None = None
         self._auto_last_apply = 0.0
 
+        # Click-to-set height picking mode: None or "Edging"/"Erect"/"Flaccid"
+        self._pick_height: str | None = None
+
+        # OBS overlay WebSocket server
+        self._overlay = OverlayServer()
+        self._overlay.start()
+        self._last_overlay_broadcast = 0.0
+
         # Background capture — keeps the main thread free for tracking + UI
         self._frame_queue    = queue.Queue(maxsize=2)
         self._running        = True
@@ -936,10 +1064,18 @@ class App:
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent")
         hbf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
 
-        def _hbtn(parent, text, cmd, color, hover):
-            ctk.CTkButton(parent, text=text, command=cmd, font=btn, height=38,
+        def _hbtn_row(parent, text, set_cmd, pick_cmd, color, hover):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill=tk.X, pady=3)
+            ctk.CTkButton(row, text=text, command=set_cmd, font=btn, height=38,
                           fg_color=color, hover_color=hover,
-                          text_color="white", corner_radius=6).pack(fill=tk.X, pady=3)
+                          text_color="white", corner_radius=6
+                          ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 3))
+            ctk.CTkButton(row, text="Manual \u271a", command=pick_cmd, font=btn, height=38, width=80,
+                          fg_color=color, hover_color=hover,
+                          text_color="white", corner_radius=6
+                          ).pack(side=tk.RIGHT)
+            return row
 
         self._auto_btn = ctk.CTkButton(
             hbf, text="AUTO  (observing...)", command=self._toggle_auto,
@@ -947,9 +1083,9 @@ class App:
             fg_color="#b8a000", hover_color="#8a7800", text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 6))
 
-        _hbtn(hbf, "Set Edging Height",  self._set_edging,  self._C_RED,    self._C_RED_HOV)
-        _hbtn(hbf, "Set Erect Height",   self._set_erect,   "#1a5c2e",      "#114420")
-        _hbtn(hbf, "Set Flaccid Height", self._set_flaccid, "#1a2e5c",      "#11203e")
+        _hbtn_row(hbf, "Set Edging Height",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,   self._C_RED_HOV)
+        _hbtn_row(hbf, "Set Erect Height",   self._set_erect,   lambda: self._start_pick("Erect"),   "#1a5c2e",     "#114420")
+        _hbtn_row(hbf, "Set Flaccid Height", self._set_flaccid, lambda: self._start_pick("Flaccid"), "#1a2e5c",     "#11203e")
 
         # spacer pushes cum button to bottom
         ctk.CTkFrame(hbf, fg_color="transparent").pack(fill=tk.BOTH, expand=True)
@@ -1103,6 +1239,31 @@ class App:
                 unselected_color=self._C_SURFACE, unselected_hover_color="#333",
                 font=ctk.CTkFont(size=10), text_color=self._C_TEXT,
             ).pack(side=tk.LEFT)
+
+        # ── OBS Overlay ────────────────────────────────────────────────────────
+        obs_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        obs_card.pack(fill=tk.X, padx=P, pady=4)
+        obs_row = ctk.CTkFrame(obs_card, fg_color="transparent")
+        obs_row.pack(fill=tk.X, padx=12, pady=8)
+        ctk.CTkLabel(obs_row, text="OBS Overlay", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 8))
+        _overlay_url = f"http://127.0.0.1:{OverlayServer.PORT}"
+        self._obs_entry = ctk.CTkEntry(obs_row, width=200,
+                                       fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                                       text_color=self._C_TEXT, font=ctk.CTkFont(size=11))
+        self._obs_entry.insert(0, _overlay_url)
+        self._obs_entry.configure(state="readonly")
+        self._obs_entry.pack(side=tk.LEFT, padx=(0, 6))
+        def _copy_overlay_url():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(_overlay_url)
+            _copy_btn.configure(text="Copied!")
+            self.root.after(1500, lambda: _copy_btn.configure(text="Copy"))
+        _copy_btn = ctk.CTkButton(obs_row, text="Copy", command=_copy_overlay_url, width=56,
+                                  fg_color=self._C_SURFACE2, hover_color="#333",
+                                  text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                                  font=ctk.CTkFont(size=10))
+        _copy_btn.pack(side=tk.LEFT)
 
         _divider()
 
@@ -1260,6 +1421,13 @@ class App:
             except Exception:
                 pass
 
+        # Stop overlay server
+        if hasattr(self, '_overlay'):
+            try:
+                self._overlay.stop()
+            except Exception:
+                pass
+
         # Restore Windows audio to pre-session level
         if self.win_audio and self.win_audio.connected and self._orig_win_volume is not None:
             try:
@@ -1292,6 +1460,7 @@ class App:
                     except queue.Empty:
                         pass
                 self._frame_queue.put(frame)
+                time.sleep(0.03)   # ~30 fps cap — no point capturing faster
             else:
                 time.sleep(0.25)
 
@@ -1321,8 +1490,8 @@ class App:
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
 
-    _AUTO_SETTLE   = 5.0   # seconds of observation before first height apply
-    _AUTO_INTERVAL = 2.0   # seconds between re-applies
+    _AUTO_INTERVAL      = 2.0   # seconds between re-applies
+    _AUTO_GOOD_RANGE    = 40    # pixels of range before setting Edging/Erect
 
     def _toggle_auto(self):
         self._auto_mode = not self._auto_mode
@@ -1337,45 +1506,45 @@ class App:
                                      fg_color=self._C_SURFACE2, hover_color="#333")
 
     def _auto_feed(self, y: float):
-        """Called every heavy frame while AUTO is on and tracking is good."""
+        """Called every heavy frame while AUTO is on and tracking is good.
+
+        Strategy: Flaccid is set immediately to the lowest observed position
+        (highest Y). Edging and Erect are only set once we've seen enough
+        vertical range to be confident — you won't get a full stroke in
+        the first few seconds.
+        """
         now = time.time()
         if self._auto_obs_start is None:
             self._auto_obs_start = now
 
         # Expand observed range
+        changed = False
         if self._auto_min_y is None or y < self._auto_min_y:
             self._auto_min_y = y
+            changed = True
         if self._auto_max_y is None or y > self._auto_max_y:
             self._auto_max_y = y
+            changed = True
 
-        elapsed = now - self._auto_obs_start
-
-        # Update button label while settling — only once per second to avoid UI stall
-        if elapsed < self._AUTO_SETTLE:
-            remaining = int(self._AUTO_SETTLE - elapsed) + 1
-            if remaining != getattr(self, '_auto_last_remaining', -1):
-                self._auto_last_remaining = remaining
-                self._auto_btn.configure(text=f"AUTO  (observing {remaining}s...)")
-            return
-
-        # Throttle actual height application
-        if now - self._auto_last_apply < self._AUTO_INTERVAL:
+        if not changed and now - self._auto_last_apply < self._AUTO_INTERVAL:
             return
         self._auto_last_apply = now
 
-        rng = self._auto_max_y - self._auto_min_y
-        if rng < 8:   # not enough vertical range yet — keep observing
-            return
-
-        self.heights["Edging"]  = self._auto_min_y + 0.05 * rng
-        self.heights["Erect"]   = (self._auto_min_y + self._auto_max_y) / 2
+        # Always set Flaccid to lowest observed position (highest Y)
         self.heights["Flaccid"] = self._auto_max_y
 
-        if getattr(self, '_auto_btn_state', None) != "active":
-            self._auto_btn_state = "active"
-            self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
-        log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
-                  f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
+        rng = self._auto_max_y - self._auto_min_y
+        if rng >= self._AUTO_GOOD_RANGE:
+            # Enough range — set Edging and Erect
+            self.heights["Edging"] = self._auto_min_y + 0.05 * rng
+            self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
+            if getattr(self, '_auto_btn_state', None) != "active":
+                self._auto_btn_state = "active"
+                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#1a8a1a", hover_color="#145c14")
+            log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
+                      f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
+        else:
+            self._auto_btn.configure(text=f"AUTO  (flaccid set, need more range)")
 
     def _set_edging(self):
         self.heights["Edging"] = self.head_y
@@ -1391,6 +1560,26 @@ class App:
         self.heights["Flaccid"] = self.head_y
         log.info(f"Flaccid height set at Y={self.head_y}")
         self._save_config()
+
+    def _start_pick(self, which: str):
+        """Enter click-to-set mode: next click on video sets that height."""
+        self._pick_height = which
+        self.video_label.configure(cursor="crosshair")
+        self.video_label.bind("<Button-1>", self._on_video_click)
+        log.info(f"Pick mode: click on video to set {which} height")
+
+    def _on_video_click(self, event):
+        """Handle click on video label to set the height being picked."""
+        which = self._pick_height
+        if not which:
+            return
+        y = event.y
+        self.heights[which] = y
+        log.info(f"{which} height set at Y={y} via click")
+        self._save_config()
+        self._pick_height = None
+        self.video_label.configure(cursor="")
+        self.video_label.unbind("<Button-1>")
 
     def _reset_heights(self):
         """Clear calibrated heights — called whenever the feed changes."""
@@ -1671,6 +1860,11 @@ class App:
                 self._update_status_label(state)
                 self._last_status_time = now
 
+            # OBS overlay broadcast — 4 Hz
+            if now - self._last_overlay_broadcast >= 0.25:
+                self._last_overlay_broadcast = now
+                self._broadcast_overlay(state)
+
             # Video display — throttled to _DISPLAY_INTERVAL_MS
             _last_disp = getattr(self, '_last_display_time', 0.0)
             if now - _last_disp >= self._DISPLAY_INTERVAL_MS / 1000:
@@ -1682,7 +1876,7 @@ class App:
         except Exception:
             log.exception("_update_frame: unhandled exception — loop continues")
         finally:
-            interval = 100 if self.tracking_paused else 16
+            interval = 100 if self.tracking_paused else 33  # ~30fps poll
             self.root.after(interval, self._update_frame)
 
     def _maybe_yolo_reanchor(self, frame):
@@ -1946,6 +2140,32 @@ class App:
                   f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}"),
             text_color=conn_color,
         )
+
+    def _broadcast_overlay(self, state):
+        mode = self.mode_var.get()
+        if mode == "restim":
+            vol = self.restim.volume
+        elif mode == "windows" and self.win_audio and self.win_audio.connected:
+            vol = self.win_audio.get_volume() or 0
+        elif mode == "mp3" and self.music_player:
+            vol = self.music_player.volume
+        else:
+            vol = 0
+
+        cum_remaining = None
+        if self._cum_time is not None:
+            elapsed = time.time() - self._cum_time
+            total = self._CUM_SILENCE + self._CUM_RAMP
+            if elapsed < total:
+                cum_remaining = total - elapsed
+
+        self._overlay.broadcast(json.dumps({
+            "state": state,
+            "volume": round(vol, 3),
+            "edge_count": self.edge_count,
+            "session_seconds": round(time.time() - self.session_start),
+            "cum_remaining": round(cum_remaining) if cum_remaining else None,
+        }))
 
     def _display_frame(self, frame):
         img   = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
