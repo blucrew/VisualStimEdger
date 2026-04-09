@@ -55,6 +55,7 @@ python -m nuitka main.py ^
     --include-data-files=splash.png=splash.png ^
     --include-data-files=models/yolo-fastest.cfg=models/yolo-fastest.cfg ^
     --include-data-files=models/best.weights=models/best.weights ^
+    --include-data-files=overlay.html=overlay.html ^
     --include-module=sounddevice ^
     --include-module=miniaudio
 if %errorlevel% neq 0 (
