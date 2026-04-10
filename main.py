@@ -162,6 +162,17 @@ AGGR_LEVELS = {
     "Expert": 4.0,
 }
 
+# Edge-count threshold before pre-emptive sweet-zone denial unlocks.
+# None = never unlocks (pure reactive mechanic). Lower = meaner sooner.
+# After unlocking, strength escalates slightly per additional edge (capped),
+# so the tool tightens progressively across a long session.
+PREEMPT_UNLOCK = {
+    "Easy":   None,   # disabled — reactive only, gentle strength
+    "Middle": None,   # disabled — reactive only, normal strength
+    "Hard":   3,      # 3 reactive edges, then predictive, escalating
+    "Expert": 0,      # predictive from the first moment
+}
+
 CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
 
 HEAD_Y_SMOOTH      = 8    # rolling average window for head Y before volume logic
@@ -820,7 +831,7 @@ class MusicPlayer:
                     return
 
                 vol  = max(0.0, min(1.0, self.volume))
-                data = np.frombuffer(chunk.samples, dtype=np.float32).copy()
+                data = np.frombuffer(chunk, dtype=np.float32).copy()
                 data *= vol
                 required_frames = yield data.tobytes()
             else:
@@ -910,20 +921,94 @@ class MusicPlayer:
         self._stop_device()
 
 
+class Tooltip:
+    """Hover tooltip for any tkinter widget."""
+    def __init__(self, widget, text, delay=400):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._tip = None
+        self._after_id = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._cancel, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self, _event=None):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+        if self._tip:
+            self._tip.destroy()
+            self._tip = None
+
+    def _show(self):
+        if self._tip:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self._tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.attributes("-topmost", True)
+        lbl = tk.Label(tw, text=self.text, background="#444444", foreground="#eeeeee",
+                       relief="solid", borderwidth=1, font=("Segoe UI", 9),
+                       padx=6, pady=3, wraplength=280, justify="left")
+        lbl.pack()
+
+
+THEMES = {
+    "ReThorn": {
+        "BG": "#2d2d2d", "SURFACE": "#383838", "SURFACE2": "#404040",
+        "ACCENT": "#F5A623", "ACCENT_H": "#d48e1a",
+        "RED": "#FF4444", "RED_HOV": "#cc3636",
+        "GREEN": "#3EC941", "GREEN_H": "#32a435",
+        "BLUE": "#444CFC", "BLUE_H": "#363dca",
+        "YELLOW": "#F5A623", "YELLOW_H": "#d48e1a",
+        "TEXT": "#e0e0e8", "TEXT_DIM": "#8a8a8a", "BORDER": "#9C9C9C",
+    },
+    "OG": {
+        "BG": "#1a1a2e", "SURFACE": "#222238", "SURFACE2": "#2a2a42",
+        "ACCENT": "#e040fb", "ACCENT_H": "#c030d8",
+        "RED": "#cc2200", "RED_HOV": "#991800",
+        "GREEN": "#2d8a2d", "GREEN_H": "#1f6b1f",
+        "BLUE": "#2a2a55", "BLUE_H": "#222248",
+        "YELLOW": "#e040fb", "YELLOW_H": "#c030d8",
+        "TEXT": "#e0e0e8", "TEXT_DIM": "#6a6a80", "BORDER": "#3a3a55",
+    },
+    "Mono": {
+        "BG": "#1e1e1e", "SURFACE": "#2a2a2a", "SURFACE2": "#333333",
+        "ACCENT": "#aaaaaa", "ACCENT_H": "#888888",
+        "RED": "#5a4444", "RED_HOV": "#4a3838",
+        "GREEN": "#445a44", "GREEN_H": "#384a38",
+        "BLUE": "#44445a", "BLUE_H": "#38384a",
+        "YELLOW": "#aaaaaa", "YELLOW_H": "#888888",
+        "TEXT": "#cccccc", "TEXT_DIM": "#666666", "BORDER": "#555555",
+    },
+}
+DEFAULT_THEME = "ReThorn"
+
+
 class App:
-    # ── Colour palette ────────────────────────────────────────────────────────
-    _C_BG        = "#1a1a2e"
-    _C_SURFACE   = "#222238"
-    _C_SURFACE2  = "#2a2a42"
-    _C_ACCENT    = "#e040fb"
-    _C_ACCENT_H  = "#c030d8"
-    _C_RED       = "#cc2200"
-    _C_RED_HOV   = "#991800"
-    _C_YELLOW    = "#e040fb"
-    _C_YELLOW_H  = "#c030d8"
+    # ── Colour palette (set from theme) ──────────────────────────────────────
+    _C_BG        = "#2d2d2d"
+    _C_SURFACE   = "#383838"
+    _C_SURFACE2  = "#404040"
+    _C_ACCENT    = "#F5A623"
+    _C_ACCENT_H  = "#d48e1a"
+    _C_RED       = "#FF4444"
+    _C_RED_HOV   = "#cc3636"
+    _C_GREEN     = "#3EC941"
+    _C_GREEN_H   = "#32a435"
+    _C_BLUE      = "#444CFC"
+    _C_BLUE_H    = "#363dca"
+    _C_YELLOW    = "#F5A623"
+    _C_YELLOW_H  = "#d48e1a"
     _C_TEXT      = "#e0e0e8"
-    _C_TEXT_DIM  = "#6a6a80"
-    _C_BORDER    = "#3a3a55"
+    _C_TEXT_DIM  = "#8a8a8a"
+    _C_BORDER    = "#9C9C9C"
 
     # ── YOLO reanchoring
     _YOLO_INTERVAL = 15    # run detector every N frames
@@ -932,6 +1017,27 @@ class App:
     # Tracker plausibility
     _SIZE_RATIO_MAX  = 2.5
     _MAX_JUMP_FACTOR = 2.5
+
+    def _apply_theme(self, name):
+        """Apply a colour theme by name."""
+        t = THEMES.get(name, THEMES[DEFAULT_THEME])
+        self._theme_name = name
+        self._C_BG       = t["BG"]
+        self._C_SURFACE  = t["SURFACE"]
+        self._C_SURFACE2 = t["SURFACE2"]
+        self._C_ACCENT   = t["ACCENT"]
+        self._C_ACCENT_H = t["ACCENT_H"]
+        self._C_RED      = t["RED"]
+        self._C_RED_HOV  = t["RED_HOV"]
+        self._C_GREEN    = t["GREEN"]
+        self._C_GREEN_H  = t["GREEN_H"]
+        self._C_BLUE     = t["BLUE"]
+        self._C_BLUE_H   = t["BLUE_H"]
+        self._C_YELLOW   = t["YELLOW"]
+        self._C_YELLOW_H = t["YELLOW_H"]
+        self._C_TEXT     = t["TEXT"]
+        self._C_TEXT_DIM = t["TEXT_DIM"]
+        self._C_BORDER   = t["BORDER"]
 
     def __init__(self, hwnd, rel_box, initial_frame, bbox):
         # Ensure COM is initialised on this thread (fixes pycaw failures on some Win11 setups)
@@ -973,6 +1079,10 @@ class App:
         # Cum cooldown  (None = not active)
         self._cum_count = 0
         self._denial_count = 0
+        self._cum_override_range = True   # True = cum goes to 100%, False = respect ceiling
+        self._cum_stopped = False         # True after "I've CUM" until "Resume"
+        self._ui_font_size = 11           # base font size for UI
+        self._theme_name = DEFAULT_THEME
         self._cum_time: float | None = None
         self._cum_allowed = False
         self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
@@ -1025,6 +1135,19 @@ class App:
         self.mode_var    = tk.StringVar(value="restim")
         self.port_var    = tk.StringVar(value="12346")
 
+        # Pre-load font size, theme, cum override before UI build
+        try:
+            if CONFIG_PATH.exists():
+                _pre = json.loads(CONFIG_PATH.read_text())
+                if "ui_font_size" in _pre:
+                    self._ui_font_size = int(_pre["ui_font_size"])
+                if "cum_override_range" in _pre:
+                    self._cum_override_range = bool(_pre["cum_override_range"])
+                if "theme" in _pre and _pre["theme"] in THEMES:
+                    self._theme_name = _pre["theme"]
+        except Exception:
+            pass
+        self._apply_theme(self._theme_name)
         self._build_ui()
         self._on_aggr_change()   # set initial aggressiveness colour
         self._load_config()
@@ -1040,24 +1163,26 @@ class App:
     def _build_ui(self):
         root = self.root
         root.configure(fg_color=self._C_BG)
+        root.minsize(540, 500)
 
         P   = 12          # standard outer padding
-        lbl = ctk.CTkFont(size=11, weight="bold")
-        btn = ctk.CTkFont(size=12, weight="bold")
+        fs  = self._ui_font_size
+        lbl = ctk.CTkFont(size=fs, weight="bold")
+        btn = ctk.CTkFont(size=fs + 1, weight="bold")
 
         # ── Menu bar ─────────────────────────────────────────────────────────
-        menubar = tk.Menu(root, bg="#222238", fg="#e0e0e8",
-                          activebackground="#e040fb", activeforeground="white",
+        menubar = tk.Menu(root, bg=self._C_BG, fg=self._C_TEXT,
+                          activebackground=self._C_ACCENT, activeforeground="white",
                           relief="flat", borderwidth=0)
         settings_menu = tk.Menu(menubar, tearoff=0,
-                                bg="#222238", fg="#e0e0e8",
-                                activebackground="#e040fb", activeforeground="white")
+                                bg=self._C_BG, fg=self._C_TEXT,
+                                activebackground=self._C_ACCENT, activeforeground="white")
         settings_menu.add_command(label="Settings...", command=self._open_settings)
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
         about_menu = tk.Menu(menubar, tearoff=0,
-                             bg="#222238", fg="#e0e0e8",
-                             activebackground="#e040fb", activeforeground="white")
+                             bg=self._C_BG, fg=self._C_TEXT,
+                             activebackground=self._C_ACCENT, activeforeground="white")
         about_menu.add_command(label=f"Version  v{VERSION}", state="disabled")
         about_menu.add_command(label="Dev: Sir Thorn", state="disabled")
         about_menu.add_separator()
@@ -1070,7 +1195,7 @@ class App:
         root.configure(menu=menubar)
 
         # ── Update banner (hidden until needed) ───────────────────────────────
-        self._update_banner = ctk.CTkFrame(root, fg_color="#2a2a42", corner_radius=0)
+        self._update_banner = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=0)
         self._update_label  = ctk.CTkLabel(self._update_banner, text="",
                                            text_color="white", font=lbl)
         self._update_label.pack(side=tk.LEFT, padx=P, pady=6)
@@ -1086,30 +1211,35 @@ class App:
 
         # video — plain tk.Label so ImageTk works without wrapping
         vid_shell = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE,
-                                 corner_radius=8, border_width=1, border_color=self._C_BORDER)
+                                 corner_radius=8, border_width=1, border_color=self._C_BORDER,
+                                 width=330, height=260)
         vid_shell.pack(side=tk.LEFT)
+        vid_shell.pack_propagate(False)
         self.video_label = tk.Label(vid_shell, bg=self._C_SURFACE)
-        self.video_label.pack(padx=3, pady=(3, 0))
+        self.video_label.pack(padx=3, pady=(3, 0), fill=tk.BOTH, expand=True)
         self._snark_label = ctk.CTkLabel(vid_shell, text="", font=ctk.CTkFont(size=11, slant="italic"),
                                           text_color="#ff4444", height=20)
         self._snark_label.pack(padx=3, pady=(0, 3))
 
         # height buttons — stacked right of video
-        hbf = ctk.CTkFrame(top_frame, fg_color="transparent")
-        hbf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
+        hbf = ctk.CTkFrame(top_frame, fg_color="transparent", width=180, height=260)
+        hbf.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0))
+        hbf.pack_propagate(False)
 
         def _hbtn_row(parent, text, set_cmd, pick_cmd, color, hover):
             row = ctk.CTkFrame(parent, fg_color="transparent")
             row.pack(fill=tk.X, pady=1)
+            row.columnconfigure(0, weight=1, uniform="hbtn")
+            row.columnconfigure(1, weight=1, uniform="hbtn")
             ctk.CTkButton(row, text=text, command=set_cmd, font=btn, height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
-                          ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+                          ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
             ctk.CTkButton(row, text="Manual \u271a", command=pick_cmd, font=ctk.CTkFont(size=10),
-                          height=28, width=70,
+                          height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
-                          ).pack(side=tk.RIGHT)
+                          ).grid(row=0, column=1, sticky="ew")
             return row
 
         self._auto_btn = ctk.CTkButton(
@@ -1117,24 +1247,29 @@ class App:
             font=btn, height=28, corner_radius=4,
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
+        Tooltip(self._auto_btn, "Auto-calibrate heights by observing motion range")
 
-        _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,   self._C_RED_HOV)
-        _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   "#2d5a3e",     "#1f4030")
-        _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), "#2a2a55",     "#222248")
+        _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_GREEN,  self._C_GREEN_H)
+        _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   self._C_BLUE,   self._C_BLUE_H)
+        _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), self._C_RED,    self._C_RED_HOV)
 
-        # spacer pushes cum buttons to bottom
-        ctk.CTkFrame(hbf, fg_color="transparent").pack(fill=tk.BOTH, expand=True)
+        # cum buttons anchored at bottom
         cum_row = ctk.CTkFrame(hbf, fg_color="transparent")
-        cum_row.pack(fill=tk.X, pady=1)
+        cum_row.pack(side=tk.BOTTOM, fill=tk.X, pady=1)
+        cum_row.columnconfigure(0, weight=1, uniform="cumbtn")
+        cum_row.columnconfigure(1, weight=1, uniform="cumbtn")
         self._letmecum_btn = ctk.CTkButton(
             cum_row, text="Let me cum?", command=self._on_letmecum,
             font=btn, height=30, corner_radius=4,
-            fg_color="#2d8a2d", hover_color="#1f6b1f", text_color="white")
-        self._letmecum_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        ctk.CTkButton(cum_row, text="I've CUM", command=self._on_cum,
+            fg_color=self._C_GREEN, hover_color=self._C_GREEN_H, text_color="white")
+        self._letmecum_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        Tooltip(self._letmecum_btn, "Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission")
+        self._cum_btn = ctk.CTkButton(cum_row, text="I've CUM", command=self._on_cum,
                       font=btn, height=30, corner_radius=4,
                       fg_color="#e0e0e8", hover_color="#c8c8d0",
-                      text_color="#1a1a2e").pack(side=tk.RIGHT, fill=tk.X, expand=True)
+                      text_color=self._C_BG)
+        self._cum_btn.grid(row=0, column=1, sticky="ew")
+        Tooltip(self._cum_btn, "Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.")
 
         def _divider():
             ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
@@ -1145,28 +1280,115 @@ class App:
         vol_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
         vol_card.pack(fill=tk.X, padx=P, pady=2)
 
-        def _slider_row(parent, label_text, var, val_attr, callback):
-            row = ctk.CTkFrame(parent, fg_color="transparent")
-            row.pack(fill=tk.X, padx=12, pady=(3, 2))
-            ctk.CTkLabel(row, text=label_text, font=lbl,
-                         text_color=self._C_TEXT, width=90, anchor="w").pack(side=tk.LEFT)
-            vl = ctk.CTkLabel(row, text=f"{var.get():.0f}%", font=lbl,
-                              text_color=self._C_YELLOW, width=44, anchor="e")
-            vl.pack(side=tk.RIGHT)
-            setattr(self, val_attr, vl)
-            ctk.CTkSlider(row, from_=0, to=100, variable=var, command=callback,
-                          button_color=self._C_YELLOW, button_hover_color=self._C_YELLOW_H,
-                          progress_color=self._C_YELLOW, fg_color=self._C_SURFACE2,
-                          width=220).pack(side=tk.RIGHT, padx=(0, 8))
+        vol_row = ctk.CTkFrame(vol_card, fg_color="transparent")
+        vol_row.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(vol_row, text="Volume Range", font=lbl,
+                     text_color=self._C_TEXT, anchor="w").pack(side=tk.LEFT)
+        self._range_lbl = ctk.CTkLabel(vol_row, text="0% – 100%", font=lbl,
+                                       text_color=self._C_YELLOW, anchor="e")
+        self._range_lbl.pack(side=tk.RIGHT)
 
-        _slider_row(vol_card, "Vol Floor",   self.min_vol_var, "_floor_lbl", self._on_floor_change)
-        _slider_row(vol_card, "Vol Ceiling", self.max_vol_var, "_ceil_lbl",  self._on_ceil_change)
+        # ── Custom dual-handle range slider ──
+        _track_h, _handle_r = 4, 7
+        _marker_h = 10
+        _canvas_h = _handle_r * 2 + 4 + _marker_h
+        self._range_cv = tk.Canvas(vol_card, height=_canvas_h, bg=self._C_SURFACE,
+                                   highlightthickness=0)
+        self._range_cv.pack(fill=tk.X, padx=18, pady=(0, 8))
+
+        self._range_drag = None  # 'lo' or 'hi'
+
+        def _range_draw(event=None):
+            c = self._range_cv
+            c.delete("all")
+            w = c.winfo_width()
+            if w < 20:
+                return
+            pad = _handle_r + 2
+            track_w = w - pad * 2
+            cy = _marker_h + (_canvas_h - _marker_h) // 2
+            lo = self.min_vol_var.get() / 100.0
+            hi = self.max_vol_var.get() / 100.0
+            lx = pad + lo * track_w
+            hx = pad + hi * track_w
+            # background track
+            c.create_line(pad, cy, pad + track_w, cy, fill=self._C_SURFACE2,
+                          width=_track_h, capstyle="round")
+            # active range
+            c.create_line(lx, cy, hx, cy, fill=self._C_ACCENT,
+                          width=_track_h, capstyle="round")
+            # handles
+            for x in (lx, hx):
+                c.create_oval(x - _handle_r, cy - _handle_r, x + _handle_r, cy + _handle_r,
+                              fill=self._C_ACCENT, outline="")
+            # cum release marker — inverted triangle above the bar
+            cum_frac = 1.0 if self._cum_override_range else hi
+            cum_x = pad + cum_frac * track_w
+            ts = 5  # triangle half-width
+            c.create_polygon(cum_x - ts, 0, cum_x + ts, 0, cum_x, _marker_h - 2,
+                             fill="#3EC941", outline="")
+
+        def _range_press(e):
+            w = self._range_cv.winfo_width()
+            pad = _handle_r + 2
+            track_w = w - pad * 2
+            if track_w < 1:
+                return
+            frac = max(0.0, min(1.0, (e.x - pad) / track_w))
+            lo = self.min_vol_var.get() / 100.0
+            hi = self.max_vol_var.get() / 100.0
+            if abs(frac - lo) < abs(frac - hi):
+                self._range_drag = 'lo'
+            else:
+                self._range_drag = 'hi'
+            _range_move(e)
+
+        def _range_move(e):
+            if not self._range_drag:
+                return
+            w = self._range_cv.winfo_width()
+            pad = _handle_r + 2
+            track_w = w - pad * 2
+            if track_w < 1:
+                return
+            frac = max(0.0, min(1.0, (e.x - pad) / track_w))
+            val = round(frac * 100)
+            if self._range_drag == 'lo':
+                val = min(val, int(self.max_vol_var.get()))
+                self.min_vol_var.set(val)
+            else:
+                val = max(val, int(self.min_vol_var.get()))
+                self.max_vol_var.set(val)
+            lo = int(self.min_vol_var.get())
+            hi = int(self.max_vol_var.get())
+            self._range_lbl.configure(text=f"{lo}% – {hi}%")
+            _range_draw()
+
+        def _range_release(e):
+            self._range_drag = None
+            self._save_config()
+
+        self._range_cv.bind("<ButtonPress-1>", _range_press)
+        self._range_cv.bind("<B1-Motion>", _range_move)
+        self._range_cv.bind("<ButtonRelease-1>", _range_release)
+        self._range_cv.bind("<Configure>", _range_draw)
+        self._range_draw = _range_draw
+        Tooltip(self._range_cv,
+               "Drag left handle = volume floor, right handle = ceiling.\n"
+               "Green triangle = where 'Let me cum?' sends volume.\n"
+               "Change override behavior in Settings > Cum Volume Behavior.")
 
         _divider()
 
         # ── Aggressiveness ────────────────────────────────────────────────────
         aggr_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
         aggr_card.pack(fill=tk.X, padx=P, pady=2)
+        Tooltip(aggr_card,
+               "Controls how fast volume ramps and 'Let me cum?' odds.\n"
+               "Easy: gentle ramps, 1-in-2 odds, 5 min grant\n"
+               "Middle: moderate ramps, 1-in-4 odds, 5 min grant\n"
+               "Hard: fast ramps, 1-in-6 odds, 3 min grant\n"
+               "Expert: aggressive ramps, 1-in-30 odds, 1 min grant")
         aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
         aggr_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
@@ -1175,7 +1397,7 @@ class App:
             aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
             command=self._on_aggr_change,
             selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
-            unselected_color=self._C_SURFACE2, unselected_hover_color="#35354e",
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
             font=ctk.CTkFont(size=11, weight="bold"),
             text_color=self._C_TEXT,
         )
@@ -1191,14 +1413,38 @@ class App:
         mode_row.pack(fill=tk.X, padx=12, pady=10)
         ctk.CTkLabel(mode_row, text="Output", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
-        _mode_values = ["restim", "windows"] + (["mp3"] if _MINIAUDIO_OK else [])
-        ctk.CTkSegmentedButton(
-            mode_row, values=_mode_values, variable=self.mode_var,
-            command=lambda _: self._on_mode_change(),
-            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
-            unselected_color=self._C_SURFACE2, unselected_hover_color="#35354e",
-            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
-        ).pack(side=tk.RIGHT)
+
+        _mode_defs = [
+            ("restim",  "\u26a1 restim",       self._C_ACCENT, self._C_ACCENT_H),
+            ("windows", "\u229e\U0001f50a windows", self._C_BLUE, self._C_BLUE_H),
+        ]
+        if _MINIAUDIO_OK:
+            _mode_defs.append(("mp3", "\u266b mp3", self._C_GREEN, self._C_GREEN_H))
+
+        self._mode_btns = {}
+        mbf = ctk.CTkFrame(mode_row, fg_color="transparent")
+        mbf.pack(side=tk.RIGHT)
+        for mode_key, mode_label, color, hover in _mode_defs:
+            def _sel(m=mode_key):
+                self.mode_var.set(m)
+                self._on_mode_change()
+                self._update_mode_btns()
+            b = ctk.CTkButton(mbf, text=mode_label, command=_sel,
+                              font=ctk.CTkFont(size=11), height=28, corner_radius=4,
+                              fg_color=color, hover_color=hover,
+                              text_color="white", width=10)
+            b.pack(side=tk.LEFT, padx=1)
+            self._mode_btns[mode_key] = (b, color, hover)
+
+        def _update_mode_btns():
+            cur = self.mode_var.get()
+            for mk, (bt, col, hov) in self._mode_btns.items():
+                if mk == cur:
+                    bt.configure(fg_color=col, hover_color=hov)
+                else:
+                    bt.configure(fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
+        self._update_mode_btns = _update_mode_btns
+        _update_mode_btns()
 
         # Restim options panel
         self._restim_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1225,7 +1471,7 @@ class App:
             _copy_btn.configure(text="Copied!")
             self.root.after(1500, lambda: _copy_btn.configure(text="Copy"))
         _copy_btn = ctk.CTkButton(ro, text="Copy", command=_copy_overlay_url, width=48,
-                                  fg_color=self._C_SURFACE, hover_color="#35354e",
+                                  fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                                   text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                                   font=ctk.CTkFont(size=10))
         _copy_btn.pack(side=tk.LEFT)
@@ -1243,7 +1489,7 @@ class App:
         )
         self._device_combo.pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkButton(wo, text="Refresh", command=self._refresh_devices, width=72,
-                      fg_color=self._C_SURFACE2, hover_color="#35354e",
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
 
@@ -1259,12 +1505,12 @@ class App:
             load_row = ctk.CTkFrame(mo, fg_color="transparent")
             load_row.pack(fill=tk.X, pady=(0, 4))
             ctk.CTkButton(load_row, text="📁 Load File", width=110, height=28,
-                          fg_color=self._C_SURFACE, hover_color="#35354e",
+                          fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_file).pack(side=tk.LEFT, padx=(0, 6))
             ctk.CTkButton(load_row, text="📂 Load Folder", width=120, height=28,
-                          fg_color=self._C_SURFACE, hover_color="#35354e",
+                          fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_folder).pack(side=tk.LEFT, padx=(0, 10))
@@ -1278,7 +1524,7 @@ class App:
             ctrl_row = ctk.CTkFrame(mo, fg_color="transparent")
             ctrl_row.pack(pady=(0, 4))
             btn_kw = dict(width=44, height=32, fg_color=self._C_SURFACE,
-                          hover_color="#35354e", text_color=self._C_TEXT,
+                          hover_color="#4a4a4a", text_color=self._C_TEXT,
                           border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=13))
             ctk.CTkButton(ctrl_row, text="⏮", command=self._mp3_prev, **btn_kw).pack(side=tk.LEFT, padx=2)
@@ -1298,7 +1544,7 @@ class App:
                 variable=self._mp3_loop_var,
                 command=self._mp3_on_loop_change,
                 selected_color=self._C_RED, selected_hover_color=self._C_RED_HOV,
-                unselected_color=self._C_SURFACE, unselected_hover_color="#35354e",
+                unselected_color=self._C_SURFACE, unselected_hover_color="#4a4a4a",
                 font=ctk.CTkFont(size=10), text_color=self._C_TEXT,
             ).pack(side=tk.LEFT)
 
@@ -1312,7 +1558,7 @@ class App:
             kw.setdefault("font", ctk.CTkFont(size=10))
             return ctk.CTkButton(
                 parent, text=text, command=cmd, height=34,
-                fg_color=self._C_SURFACE2, hover_color="#35354e",
+                fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                 text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                 **kw,
             )
@@ -1324,6 +1570,7 @@ class App:
         self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
                                     font=ctk.CTkFont(size=10, weight="bold"), width=120)
         self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
 
@@ -1365,6 +1612,9 @@ class App:
                 "mp3_loop":    self._mp3_loop_var.get() if _MINIAUDIO_OK else "folder",
                 "cum_odds":    self._cum_odds,
                 "denial_phrases": self._denial_phrases,
+                "cum_override_range": self._cum_override_range,
+                "ui_font_size": self._ui_font_size,
+                "theme": self._theme_name,
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -1425,6 +1675,13 @@ class App:
                 self._cum_odds.update(data["cum_odds"])
             if "denial_phrases" in data and isinstance(data["denial_phrases"], list):
                 self._denial_phrases = data["denial_phrases"]
+            if "cum_override_range" in data:
+                self._cum_override_range = bool(data["cum_override_range"])
+            # Legacy keys cum_silence / cum_ramp are silently ignored.
+            if "ui_font_size" in data:
+                self._ui_font_size = int(data["ui_font_size"])
+            if "theme" in data and data["theme"] in THEMES:
+                self._theme_name = data["theme"]
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -1546,7 +1803,7 @@ class App:
                                      fg_color="#b8a000", hover_color="#8a7800")
         else:
             self._auto_btn.configure(text="AUTO  (off)",
-                                     fg_color=self._C_SURFACE2, hover_color="#35354e")
+                                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _auto_feed(self, y: float):
         """Called every heavy frame while AUTO is on and tracking is good.
@@ -1583,7 +1840,7 @@ class App:
             self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
             if getattr(self, '_auto_btn_state', None) != "active":
                 self._auto_btn_state = "active"
-                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#2d8a2d", hover_color="#1f6b1f")
+                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
@@ -1594,7 +1851,7 @@ class App:
         if self._auto_mode:
             self._auto_mode = False
             self._auto_btn.configure(text="AUTO  (off)",
-                                     fg_color=self._C_SURFACE2, hover_color="#35354e")
+                                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _cancel_pick(self):
         """Cancel any active Manual pick mode."""
@@ -1658,7 +1915,7 @@ class App:
             self._auto_btn_state = None
         if hasattr(self, '_auto_btn'):
             self._auto_btn.configure(text="AUTO", fg_color=self._C_SURFACE2,
-                                     hover_color="#35354e")
+                                     hover_color="#4a4a4a")
         log.info("Heights reset after feed re-selection")
 
     def _reselect_feed(self):
@@ -1696,9 +1953,9 @@ class App:
 
     _AGGR_COLORS = {
         "Easy":   ("#7c3aed", "#6525d0"),
-        "Middle": ("#e040fb", "#c030d8"),
+        "Middle": ("#F5A623", "#d48e1a"),
         "Hard":   ("#cc6600", "#994c00"),
-        "Expert": ("#cc2200", "#991800"),
+        "Expert": ("#FF4444", "#cc3636"),
     }
 
     def _on_aggr_change(self, val=None):
@@ -1743,17 +2000,20 @@ class App:
             self._cum_grant_expires = time.time() + grant_secs
             mins = grant_secs // 60
             self._snark_label.configure(text=f"You've been a good boy. You have {mins} min.",
-                                        text_color="#00c853")
-            self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#00c853",
-                                         hover_color="#00a844")
-            ceil_val = self.max_vol_var.get() / 100.0
+                                        text_color="#3EC941")
+            self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#3EC941",
+                                         hover_color="#32a435")
+            if self._cum_override_range:
+                target_vol = 1.0
+            else:
+                target_vol = self.max_vol_var.get() / 100.0
             mode = self.mode_var.get()
             if mode == "restim":
-                self.restim.set_volume(ceil_val, instant=True, floor=0.0, ceiling=ceil_val)
+                self.restim.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
             elif mode == "windows" and self.win_audio and self.win_audio.connected:
-                self.win_audio.set_volume(ceil_val, 0.0, ceil_val)
+                self.win_audio.set_volume(target_vol, 0.0, 1.0)
             elif mode == "mp3" and self.music_player:
-                self.music_player.volume = ceil_val
+                self.music_player.volume = target_vol
             self.root.after(1000, self._tick_cum_grant)
             log.info(f"Cum GRANTED (1/{denominator} on {aggr}) — {mins} min window")
         else:
@@ -1761,8 +2021,8 @@ class App:
             self._denial_count += 1
             cooldown = self._CUM_DENY_COOLDOWN.get(aggr, 30)
             self._letmecum_cooldown_until = time.time() + cooldown
-            self._letmecum_btn.configure(text="DENIED!", fg_color="#b71c1c",
-                                         hover_color="#7f0000")
+            self._letmecum_btn.configure(text="DENIED!", fg_color="#FF4444",
+                                         hover_color="#cc3636")
             snark = random.choice(self._denial_phrases) if self._denial_phrases else "Denied."
             self._snark_label.configure(text=snark)
             self.root.after(2000, lambda: self._tick_letmecum_cooldown())
@@ -1773,11 +2033,11 @@ class App:
         remaining = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
         if remaining > 0:
             self._letmecum_btn.configure(text=f"Wait {int(remaining)}s...",
-                                         fg_color="#b71c1c", hover_color="#7f0000")
+                                         fg_color="#FF4444", hover_color="#cc3636")
             self.root.after(1000, self._tick_letmecum_cooldown)
         else:
             self._letmecum_btn.configure(text="Let me cum?",
-                                         fg_color="#2d8a2d", hover_color="#1f6b1f")
+                                         fg_color="#3EC941", hover_color="#32a435")
             self._snark_label.configure(text="")
 
     def _tick_cum_grant(self):
@@ -1791,33 +2051,44 @@ class App:
             self._letmecum_btn.configure(text=f"CUM NOW! {m}:{s:02d}")
             self._snark_label.configure(
                 text=f"You've been a good boy. {m}:{s:02d} remaining.",
-                text_color="#00c853")
+                text_color="#3EC941")
             self.root.after(1000, self._tick_cum_grant)
         else:
             # Time's up — revoke permission
             self._cum_allowed = False
             self._last_letmecum_result = "expired"
             self._letmecum_btn.configure(text="Too slow!",
-                                         fg_color="#b71c1c", hover_color="#7f0000")
+                                         fg_color="#FF4444", hover_color="#cc3636")
             self._snark_label.configure(text="Time's up. Back to edging.",
                                         text_color="#ff4444")
             self.root.after(3000, lambda: (
                 self._letmecum_btn.configure(text="Let me cum?",
-                                             fg_color="#2d8a2d", hover_color="#1f6b1f"),
+                                             fg_color="#3EC941", hover_color="#32a435"),
                 self._snark_label.configure(text="")))
             log.info("Cum grant expired — permission revoked")
 
     def _on_cum(self):
-        """Drop volume to 0, hold 5 min, ramp back to floor over 5 min."""
+        """Hard stop — volume to 0 and pinned there until user presses Resume."""
         self._cum_count += 1
         self._cum_time = time.time()
+        self._cum_stopped = True
         self._cum_allowed = False
         self._cum_grant_expires = 0
-        self._letmecum_btn.configure(text="Let me cum?", fg_color="#2d8a2d",
-                                     hover_color="#1f6b1f")
+        self._letmecum_btn.configure(text="Let me cum?", fg_color="#3EC941",
+                                     hover_color="#32a435")
+        # Disable "Let me cum?" while stopped — no point rolling the dice
+        # when the session has been marked finished.
+        try:
+            self._letmecum_btn.configure(state="disabled")
+        except Exception:
+            pass
         self._snark_label.configure(text="")
-        floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
-        ceil_val  = self.max_vol_var.get() / 100.0
+        # Swap "I've CUM" → "Resume" — single button, same slot, no timer games
+        self._cum_btn.configure(text="Resume", command=self._on_resume,
+                                fg_color=self._C_GREEN,
+                                hover_color=self._C_GREEN_H,
+                                text_color="white")
+        ceil_val = self.max_vol_var.get() / 100.0
         mode = self.mode_var.get()
         if mode == "restim":
             self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
@@ -1825,18 +2096,126 @@ class App:
             self.win_audio.set_volume(0.0, 0.0, 1.0)
         elif mode == "mp3" and self.music_player:
             self.music_player.volume = 0.0
-        log.info("Cum triggered — volume silenced for 5 min")
+        log.info("Cum triggered — session stopped, awaiting Resume")
+
+    def _on_resume(self):
+        """Restart the edging loop after an 'I've CUM' press."""
+        self._cum_stopped = False
+        self._cum_time = None
+        # Swap "Resume" → "I've CUM"
+        self._cum_btn.configure(text="I've CUM", command=self._on_cum,
+                                fg_color="#e0e0e8",
+                                hover_color="#c8c8d0",
+                                text_color=self._C_BG)
+        # Re-enable "Let me cum?"
+        try:
+            self._letmecum_btn.configure(state="normal")
+        except Exception:
+            pass
+        log.info("Session resumed after I've CUM")
 
     def _open_settings(self):
-        """Open the settings dialog for cum odds and denial phrases."""
+        """Open the settings dialog."""
         win = ctk.CTkToplevel(self.root)
         win.title("Settings")
-        win.geometry("480x520")
+        win.geometry("480x740")
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
 
         lbl = ctk.CTkFont(size=11, weight="bold")
+
+        # ── Appearance (Theme + Font) ─────────────────────────────────────────
+        ctk.CTkLabel(win, text="Appearance",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
+        appear_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        appear_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        # Theme selector
+        ctk.CTkLabel(appear_frame, text="Theme", font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM).pack(padx=12, pady=(8, 2), anchor="w")
+        theme_var = tk.StringVar(value=self._theme_name)
+        for tname, tcolors in THEMES.items():
+            row = ctk.CTkFrame(appear_frame, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=2)
+            ctk.CTkRadioButton(row, text=tname, variable=theme_var, value=tname,
+                               font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+                               fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                               border_color=self._C_BORDER, width=100
+                               ).pack(side=tk.LEFT)
+            swatch_cv = tk.Canvas(row, width=120, height=16, bg=self._C_SURFACE,
+                                  highlightthickness=0)
+            swatch_cv.pack(side=tk.LEFT, padx=(8, 0))
+            preview_colors = [tcolors["BG"], tcolors["SURFACE"], tcolors["ACCENT"],
+                              tcolors["RED"], tcolors["GREEN"], tcolors["BLUE"]]
+            for i, col in enumerate(preview_colors):
+                swatch_cv.create_rectangle(i * 20, 1, i * 20 + 18, 15,
+                                           fill=col, outline=tcolors["BORDER"], width=1)
+
+        # Font size
+        ctk.CTkFrame(appear_frame, height=1, fg_color=self._C_BORDER
+                     ).pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(appear_frame, text="Font Size", font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM).pack(padx=12, pady=(0, 2), anchor="w")
+        font_row = ctk.CTkFrame(appear_frame, fg_color="transparent")
+        font_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+        font_var = tk.IntVar(value=self._ui_font_size)
+        font_slider = ctk.CTkSlider(font_row, from_=8, to=18, number_of_steps=10,
+                                     variable=font_var,
+                                     button_color=self._C_ACCENT,
+                                     button_hover_color=self._C_ACCENT_H,
+                                     progress_color=self._C_ACCENT,
+                                     fg_color=self._C_SURFACE2, width=180)
+        font_slider.pack(side=tk.LEFT, padx=(0, 8))
+        font_val_lbl = ctk.CTkLabel(font_row, text=f"{self._ui_font_size}px", font=lbl,
+                                     text_color=self._C_ACCENT, width=36)
+        font_val_lbl.pack(side=tk.LEFT)
+
+        # Live font preview
+        font_preview = ctk.CTkLabel(appear_frame, text="Sample Text Abc 123",
+                                     font=ctk.CTkFont(size=self._ui_font_size, weight="bold"),
+                                     text_color=self._C_TEXT)
+        font_preview.pack(padx=12, pady=(0, 4), anchor="w")
+
+        def _on_font_slide(v):
+            sz = int(float(v))
+            font_val_lbl.configure(text=f"{sz}px")
+            font_preview.configure(font=ctk.CTkFont(size=sz, weight="bold"))
+        font_slider.configure(command=_on_font_slide)
+
+        # Apply button
+        def _apply_appearance():
+            self._theme_name = theme_var.get()
+            self._ui_font_size = int(font_var.get())
+            self._save_config()
+            win.destroy()
+            self._on_close()
+            import sys, os
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        ctk.CTkButton(appear_frame, text="Apply (restarts app)", command=_apply_appearance,
+                      font=ctk.CTkFont(size=10, weight="bold"), height=28, corner_radius=4,
+                      fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                      text_color="white").pack(padx=12, pady=(4, 10), anchor="e")
+
+        # ── Cum Volume Override ───────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Cum Volume Behavior",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        cum_vol_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        cum_vol_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+        override_var = tk.BooleanVar(value=self._cum_override_range)
+        ctk.CTkRadioButton(cum_vol_frame, text="Override to 100% volume (ignore range)",
+                           variable=override_var, value=True,
+                           font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+                           fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                           border_color=self._C_BORDER
+                           ).pack(padx=16, pady=(8, 2), anchor="w")
+        ctk.CTkRadioButton(cum_vol_frame, text="Respect volume ceiling (stay within range)",
+                           variable=override_var, value=False,
+                           font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+                           fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                           border_color=self._C_BORDER
+                           ).pack(padx=16, pady=(2, 8), anchor="w")
 
         # ── Cum Odds ──────────────────────────────────────────────────────────
         ctk.CTkLabel(win, text="\"Let me cum?\" Odds  (1 in N chance)",
@@ -1879,6 +2258,9 @@ class App:
                     self._cum_odds[level] = val
             text = phrases_box.get("1.0", "end").strip()
             self._denial_phrases = [l.strip() for l in text.split("\n") if l.strip()]
+            self._cum_override_range = override_var.get()
+            self._ui_font_size = int(font_var.get())
+            self._theme_name = theme_var.get()
             self._save_config()
             win.destroy()
 
@@ -1891,7 +2273,7 @@ class App:
             phrases_box.insert("1.0", "\n".join(self._denial_phrases))
 
         ctk.CTkButton(btn_row, text="Reset Defaults", command=_reset, width=120,
-                      fg_color=self._C_SURFACE2, hover_color="#35354e",
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
         ctk.CTkButton(btn_row, text="Save", command=_save, width=100,
@@ -1900,11 +2282,19 @@ class App:
                       ).pack(side=tk.RIGHT)
 
     def _on_floor_change(self, val):
-        self._floor_lbl.configure(text=f"{float(val):.0f}%")
+        lo = int(self.min_vol_var.get())
+        hi = int(self.max_vol_var.get())
+        self._range_lbl.configure(text=f"{lo}% – {hi}%")
+        if hasattr(self, '_range_draw'):
+            self._range_draw()
         self._save_config()
 
     def _on_ceil_change(self, val):
-        self._ceil_lbl.configure(text=f"{float(val):.0f}%")
+        lo = int(self.min_vol_var.get())
+        hi = int(self.max_vol_var.get())
+        self._range_lbl.configure(text=f"{lo}% – {hi}%")
+        if hasattr(self, '_range_draw'):
+            self._range_draw()
         self._save_config()
 
     def _on_mode_change(self):
@@ -1986,7 +2376,7 @@ class App:
                                      border_color=self._C_RED)
         else:
             self._hold_btn.configure(text="Hold Volume",
-                                     fg_color=self._C_SURFACE2, hover_color="#35354e",
+                                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                      border_color=self._C_BORDER)
 
     # ------------------------------------------------------------------ MP3 transport callbacks
@@ -2283,7 +2673,8 @@ class App:
 
         position   = (smoothed_y             - self.heights["Edging"]) / full_range
         erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
-        aggr_mult = AGGR_LEVELS.get(self.aggr_var.get(), 1.0)
+        aggr_level = self.aggr_var.get()
+        aggr_mult  = AGGR_LEVELS.get(aggr_level, 1.0)
 
         # Velocity: normalised rate of change across the history window.
         # Positive = moving toward flaccid, negative = moving toward edging.
@@ -2293,9 +2684,25 @@ class App:
             velocity = 0.0
 
         if 0.0 <= position <= erect_norm:
-            # Inside the sweet zone — only react if clearly trending flaccid
-            vel_nudge = max(0.0, velocity) * 0.4
-            return VOLUME_STEP * vel_nudge * aggr_mult
+            # Sweet zone: drift flaccid → nudge volume up;
+            # climb fast toward edge → pre-emptive denial, but only once the
+            # session's edge count has crossed the per-level unlock threshold.
+            # Early edges are "free" (pure reactive behavior from the branches
+            # below); later edges trigger predictive denial inside the ~1–10s
+            # PONR window documented in the Restim edging literature. Strength
+            # then escalates mildly per edge past the threshold, so the tool
+            # tightens progressively across the session.
+            if velocity >= 0.0:
+                vel_nudge = velocity * 0.4
+                return VOLUME_STEP * vel_nudge * aggr_mult
+            unlock = PREEMPT_UNLOCK.get(aggr_level)
+            if unlock is not None and self.edge_count >= unlock:
+                # 1.0 at the unlock point, +0.1 per edge past it, caps at 2.0
+                escalation     = min(2.0, 1.0 + 0.1 * (self.edge_count - unlock))
+                edge_proximity = 1.0 - (position / max(erect_norm, 1e-3))  # 0=at erect, 1=at edge
+                vel_preempt    = (-velocity) * (0.3 + 0.5 * edge_proximity) * escalation
+                return -VOLUME_STEP * vel_preempt * aggr_mult
+            return 0.0
 
         if position < 0.0:
             # Past edging — ease off; dampen further if still moving toward edging
@@ -2308,9 +2715,6 @@ class App:
         return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
 
-    _CUM_SILENCE = 300.0   # seconds at zero
-    _CUM_RAMP    = 300.0   # seconds ramping back to floor
-
     def _tick_volume(self):
         cur_time = time.time()
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
@@ -2321,28 +2725,19 @@ class App:
         if getattr(self, '_cum_allowed', False):
             return
 
-        # ── Cum cooldown overrides everything ─────────────────────────────────
-        if self._cum_time is not None:
-            elapsed   = cur_time - self._cum_time
-            floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
-            ceil_val  = self.max_vol_var.get() / 100.0
-            if elapsed < self._CUM_SILENCE:
-                target = 0.0
-            elif elapsed < self._CUM_SILENCE + self._CUM_RAMP:
-                progress = (elapsed - self._CUM_SILENCE) / self._CUM_RAMP
-                target   = floor_val * progress
-            else:
-                self._cum_time = None   # cooldown over — fall through to normal
-                target = None
-            if target is not None:
-                mode = self.mode_var.get()
-                if mode == "restim":
-                    self.restim.set_volume(target, floor=0.0, ceiling=ceil_val)
-                elif mode == "windows" and self.win_audio and self.win_audio.connected:
-                    self.win_audio.set_volume(target, 0.0, 1.0)
-                elif mode == "mp3" and self.music_player:
-                    self.music_player.volume = target
-                return
+        # ── Session stopped after "I've CUM" — volume pinned at 0 ───────────
+        # (_on_cum set the volume to 0 already; just keep it there every tick
+        # in case something else nudged it.)
+        if self._cum_stopped:
+            ceil_val = self.max_vol_var.get() / 100.0
+            mode = self.mode_var.get()
+            if mode == "restim":
+                self.restim.set_volume(0.0, floor=0.0, ceiling=ceil_val)
+            elif mode == "windows" and self.win_audio and self.win_audio.connected:
+                self.win_audio.set_volume(0.0, 0.0, 1.0)
+            elif mode == "mp3" and self.music_player:
+                self.music_player.volume = 0.0
+            return
 
         if self.hold_active:
             return  # Volume frozen by user
@@ -2408,13 +2803,6 @@ class App:
         else:
             vol = 0
 
-        cum_remaining = None
-        if self._cum_time is not None:
-            elapsed = time.time() - self._cum_time
-            total = self._CUM_SILENCE + self._CUM_RAMP
-            if elapsed < total:
-                cum_remaining = total - elapsed
-
         # "Let me cum?" tattle-tale
         letmecum = None
         result = getattr(self, '_last_letmecum_result', None)
@@ -2437,7 +2825,7 @@ class App:
             "volume": round(vol, 3),
             "edge_count": self.edge_count,
             "session_seconds": round(time.time() - self.session_start),
-            "cum_remaining": round(cum_remaining) if cum_remaining else None,
+            "cum_stopped": self._cum_stopped,
             "aggressiveness": self.aggr_var.get(),
             "letmecum": letmecum,
             "cum_count": self._cum_count,
@@ -2445,7 +2833,16 @@ class App:
         }))
 
     def _display_frame(self, frame):
-        img   = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # Fit image to container, preserving aspect ratio
+        cw = self.video_label.winfo_width()
+        ch = self.video_label.winfo_height()
+        if cw > 1 and ch > 1:
+            iw, ih = img.size
+            scale = min(cw / iw, ch / ih)
+            nw, nh = int(iw * scale), int(ih * scale)
+            if nw > 0 and nh > 0:
+                img = img.resize((nw, nh), Image.LANCZOS)
         imgtk = ImageTk.PhotoImage(image=img)
         self.video_label.imgtk = imgtk  # prevent GC
         self.video_label.configure(image=imgtk)
@@ -2493,7 +2890,7 @@ def show_splash() -> bool:
             # Stamp version number in the gap below the subtitle
             draw = ImageDraw.Draw(img)
             try:
-                f_ver = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 11)
+                f_ver = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 14)
             except Exception:
                 f_ver = ImageFont.load_default()
             ver_txt = f"v{VERSION}"
@@ -2572,19 +2969,19 @@ def show_splash() -> bool:
     # ── Widget fallback ────────────────────────────────────────────────────────
     BG       = "#0d0d0d"
     CARD     = "#1a1a1a"
-    RED      = "#cc2200"
+    RED      = "#FF4444"
     YELLOW   = "#ffcc00"
     TEXT     = "#eeeeee"
     DIM      = "#666666"
     SUBDIM   = "#888888"
     P        = 24
 
-    f_title  = tkfont.Font(family="Segoe UI", size=20, weight="bold")
-    f_sub    = tkfont.Font(family="Segoe UI", size=10)
-    f_head   = tkfont.Font(family="Segoe UI", size=12, weight="bold")
-    f_body   = tkfont.Font(family="Segoe UI", size=10)
-    f_num    = tkfont.Font(family="Segoe UI", size=10, weight="bold")
-    f_btn    = tkfont.Font(family="Segoe UI", size=13, weight="bold")
+    f_title  = tkfont.Font(family="Segoe UI", size=32, weight="bold")
+    f_sub    = tkfont.Font(family="Segoe UI", size=14)
+    f_head   = tkfont.Font(family="Segoe UI", size=16, weight="bold")
+    f_body   = tkfont.Font(family="Segoe UI", size=13)
+    f_num    = tkfont.Font(family="Segoe UI", size=13, weight="bold")
+    f_btn    = tkfont.Font(family="Segoe UI", size=17, weight="bold")
 
     root.resizable(False, True)
 
@@ -2622,9 +3019,9 @@ def show_splash() -> bool:
         col = tk.Frame(row, bg=CARD)
         col.pack(side="left", fill="x", expand=True)
         tk.Label(col, text=title, font=f_head, bg=CARD,
-                 fg=TEXT, anchor="w", wraplength=440).pack(anchor="w")
+                 fg=TEXT, anchor="w", wraplength=420).pack(anchor="w", padx=(8, 0))
         tk.Label(col, text=body, font=f_body, bg=CARD,
-                 fg=SUBDIM, anchor="w", justify="left", wraplength=440).pack(anchor="w")
+                 fg=SUBDIM, anchor="w", justify="left", wraplength=420).pack(anchor="w", padx=(8, 0))
 
     tk.Label(root,
              text="Controls volume only — does not generate e-stim signals.\n"
@@ -2632,7 +3029,7 @@ def show_splash() -> bool:
              font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
 
     btn = tk.Button(root, text="I'm ready — select my camera feed  \u2192",
-                    font=f_btn, bg=RED, fg="white", activebackground="#991800",
+                    font=f_btn, bg=RED, fg="white", activebackground="#cc3636",
                     activeforeground="white", relief="flat", bd=0,
                     cursor="hand2", command=_start, pady=12)
     btn.pack(fill="x", padx=P, pady=(0, P))
