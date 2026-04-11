@@ -145,7 +145,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1891,13 +1891,25 @@ class App:
         log.info(f"Pick mode: click on video to set {which} height")
 
     def _on_video_click(self, event):
-        """Handle click on video label to set the height being picked."""
+        """Handle click on video label to set the height being picked.
+
+        event.y is in widget-space (label pixels, with letterbox padding around
+        the scaled image). We need to invert the display transform so the stored
+        height lives in the SAME coordinate system as self.head_y and the frame
+        that _draw_height_lines paints on — raw source-frame pixels."""
         which = self._pick_height
         if not which:
             return
-        y = event.y
-        self.heights[which] = y
-        log.info(f"{which} height set at Y={y} via click")
+        scale    = getattr(self, "_disp_scale", 1.0) or 1.0
+        offset_y = getattr(self, "_disp_offset_y", 0)
+        frame_h  = getattr(self, "_disp_frame_h", None)
+        y_in_img = event.y - offset_y
+        frame_y  = int(round(y_in_img / scale))
+        if frame_h:
+            frame_y = max(0, min(frame_h - 1, frame_y))
+        self.heights[which] = frame_y
+        log.info(f"{which} height set at Y={frame_y} via click "
+                 f"(label y={event.y}, scale={scale:.3f}, offset_y={offset_y})")
         self._save_config()
         self._pick_height = None
         self.video_label.configure(cursor="")
@@ -2835,14 +2847,23 @@ class App:
     def _display_frame(self, frame):
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # Fit image to container, preserving aspect ratio
+        iw, ih = img.size
         cw = self.video_label.winfo_width()
         ch = self.video_label.winfo_height()
+        scale = 1.0
+        nw, nh = iw, ih
         if cw > 1 and ch > 1:
-            iw, ih = img.size
             scale = min(cw / iw, ch / ih)
             nw, nh = int(iw * scale), int(ih * scale)
             if nw > 0 and nh > 0:
                 img = img.resize((nw, nh), Image.LANCZOS)
+        # Record the transform so clicks on the label can be mapped back to
+        # source-frame coordinates (tk.Label centers the image → letterbox offsets).
+        self._disp_scale    = scale
+        self._disp_offset_x = max(0, (cw - nw) // 2) if cw > 1 else 0
+        self._disp_offset_y = max(0, (ch - nh) // 2) if ch > 1 else 0
+        self._disp_frame_h  = ih
+        self._disp_frame_w  = iw
         imgtk = ImageTk.PhotoImage(image=img)
         self.video_label.imgtk = imgtk  # prevent GC
         self.video_label.configure(image=imgtk)
