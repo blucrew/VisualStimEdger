@@ -145,7 +145,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.1"
+VERSION = "1.7.2"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1134,6 +1134,10 @@ class App:
         self.aggr_var    = tk.StringVar(value="Middle")
         self.mode_var    = tk.StringVar(value="restim")
         self.port_var    = tk.StringVar(value="12346")
+        # Edging sensitivity: pushes the effective Edging line DOWN (toward
+        # Erect) by N pixels, so the Edging state trips earlier than the raw
+        # calibrated line. 0 = strict (the line you actually placed).
+        self.edge_sens_var = tk.IntVar(value=0)
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1273,6 +1277,36 @@ class App:
 
         def _divider():
             ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
+
+        _divider()
+
+        # ── Edging sensitivity ────────────────────────────────────────────────
+        sens_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        sens_card.pack(fill=tk.X, padx=P, pady=2)
+        sens_row = ctk.CTkFrame(sens_card, fg_color="transparent")
+        sens_row.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(sens_row, text="Edging Sensitivity", font=lbl,
+                     text_color=self._C_TEXT, anchor="w").pack(side=tk.LEFT)
+        self._sens_lbl = ctk.CTkLabel(sens_row, text="0 px", font=lbl,
+                                      text_color=self._C_YELLOW, anchor="e")
+        self._sens_lbl.pack(side=tk.RIGHT)
+
+        def _on_sens(val):
+            self._sens_lbl.configure(text=f"{int(float(val))} px")
+            self._save_config()
+
+        self._sens_slider = ctk.CTkSlider(
+            sens_card, from_=0, to=200,
+            number_of_steps=200, variable=self.edge_sens_var,
+            command=_on_sens,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            progress_color=self._C_ACCENT,
+        )
+        self._sens_slider.pack(fill=tk.X, padx=18, pady=(0, 8))
+        Tooltip(self._sens_slider,
+                "Pulls the Edging trigger toward Erect by N pixels.\n"
+                "0 = strict (line where you placed it).\n"
+                "Higher = trips earlier, more hair-trigger.")
 
         _divider()
 
@@ -1604,6 +1638,7 @@ class App:
                 "min_vol":     self.min_vol_var.get(),
                 "max_vol":     self.max_vol_var.get(),
                 "aggressiveness": self.aggr_var.get(),
+                "edge_sens":   int(self.edge_sens_var.get()),
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
@@ -1638,6 +1673,13 @@ class App:
                 if isinstance(val, int):
                     val = list(AGGR_LEVELS.keys())[min(val, len(AGGR_LEVELS) - 1)]
                 self.aggr_var.set(val)
+            if "edge_sens" in data:
+                try:
+                    self.edge_sens_var.set(max(0, min(200, int(data["edge_sens"]))))
+                    if hasattr(self, "_sens_lbl"):
+                        self._sens_lbl.configure(text=f"{int(self.edge_sens_var.get())} px")
+                except Exception:
+                    pass
             if "mode" in data:
                 self.mode_var.set(data["mode"])
                 self._on_mode_change()
@@ -2611,10 +2653,31 @@ class App:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
             cv2.rectangle(frame, (px, py), (px + pw, py + ph), colour, 2)
 
+    def _edging_y(self):
+        """Effective Edging line Y, with sensitivity offset baked in.
+
+        head_y is bbox top-Y — smaller = more erect. To make Edging trip
+        earlier (on less firm position) we nudge the line DOWN in frame
+        space (larger Y) toward Erect. Clamped so we can never cross Erect."""
+        base = self.heights.get("Edging")
+        if base is None:
+            return None
+        try:
+            offset = int(self.edge_sens_var.get())
+        except Exception:
+            offset = 0
+        eff = base + max(0, offset)
+        erect = self.heights.get("Erect")
+        if erect is not None:
+            # Never go past Erect (need a 1-pixel gap for the math to survive).
+            eff = min(eff, erect - 1)
+        return eff
+
     def _determine_state(self, y_pos):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return "Erect (Needs Calibration)"
-        dist_edging  = abs(y_pos - self.heights["Edging"])
+        edging_y = self._edging_y()
+        dist_edging  = abs(y_pos - edging_y)
         dist_erect   = abs(y_pos - self.heights["Erect"])
         dist_flaccid = abs(y_pos - self.heights["Flaccid"])
         minimum = min(dist_edging, dist_erect, dist_flaccid)
@@ -2669,22 +2732,34 @@ class App:
 
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
-        if self.heights["Edging"]  is not None: cv2.line(frame, (0, int(self.heights["Edging"])),  (fw, int(self.heights["Edging"])),  (0, 0, 255), 2)
+        if self.heights["Edging"]  is not None:
+            # Solid line at the calibrated Edging height, plus a dashed line
+            # at the effective (sensitivity-offset) position if it differs.
+            base = int(self.heights["Edging"])
+            cv2.line(frame, (0, base), (fw, base), (0, 0, 255), 2)
+            eff = self._edging_y()
+            if eff is not None and eff != base:
+                eff = int(eff)
+                # Dashed red line at the effective trigger position.
+                dash = 10
+                for x in range(0, fw, dash * 2):
+                    cv2.line(frame, (x, eff), (min(x + dash, fw), eff), (0, 0, 255), 1)
         if self.heights["Erect"]   is not None: cv2.line(frame, (0, int(self.heights["Erect"])),   (fw, int(self.heights["Erect"])),   (0, 255, 0), 2)
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, int(self.heights["Flaccid"])), (fw, int(self.heights["Flaccid"])), (255, 0, 0), 2)
 
     def _compute_volume_delta(self):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return 0.0
-        full_range = self.heights["Flaccid"] - self.heights["Edging"]
+        edging_y = self._edging_y()
+        full_range = self.heights["Flaccid"] - edging_y
         if abs(full_range) < 1:
             return 0.0
 
         history = self._head_y_history
         smoothed_y = sum(history) / len(history) if history else self.head_y
 
-        position   = (smoothed_y             - self.heights["Edging"]) / full_range
-        erect_norm = (self.heights["Erect"]   - self.heights["Edging"]) / full_range
+        position   = (smoothed_y             - edging_y) / full_range
+        erect_norm = (self.heights["Erect"]   - edging_y) / full_range
         aggr_level = self.aggr_var.get()
         aggr_mult  = AGGR_LEVELS.get(aggr_level, 1.0)
 
