@@ -3,7 +3,9 @@
 > **⚡ This is a companion app — it does not generate e-stim signals or audio on its own.**
 > You need an existing setup already producing stimulus: [Restim](https://restim.io), xToys, an `.mp3` file playing through a stereo box, or anything else you were already using. VisualStimEdger simply controls the **volume/intensity** of that existing signal based on what it sees on camera.
 
-Tracks your cock on a camera feed and uses its position — flaccid, erect, or edging — to automatically control your Restim volume or a Windows audio output device. The goal is to keep you in the erect-to-edging zone by easing off stimulus when you get too close to the edge, and ramping it back up when you start to drop.
+Tracks your cock on a camera feed and uses its position — flaccid, erect, or edging — to automatically control stimulus intensity. The goal is to keep you in the erect-to-edging zone by easing off stimulus when you get too close to the edge, and ramping it back up when you start to drop.
+
+Output modes: **Restim**, **xToys** (any Lovense/Kiiroo/etc. toy via the xToys browser app), **Windows Audio**, and a built-in **MP3 Player**.
 
 ---
 
@@ -40,9 +42,23 @@ python main.py
 In the **Output mode** section, select:
 
 - **Restim** — enter the WebSocket port (default `12346`). Make sure Restim's WebSocket server is enabled under its settings.
+- **xToys** — drives any toy connected in the [xToys browser app](https://xtoys.app). See xToys setup below.
 - **Windows Audio** — click **Refresh** to list your output devices, then pick the one you want from the dropdown.
+- **MP3 Player** — built-in player for stim audio files. Load a file and let the tracker drive the volume.
 
 Set your **Vol Floor** and **Vol Ceiling** sliders to define the range the program is allowed to operate within.
+
+#### xToys setup
+
+1. Open [xtoys.app](https://xtoys.app) in a browser and sign in
+2. Go to **Scripts** → search for **VisualStimEdger** → **Load Script**
+3. In the script's **Controls** view, open the **Connections** panel
+4. Under **LOCAL WEBHOOK**, add your toy (Lovense, etc.) — **not** Generic Output
+5. Click **Save**, then click the **⚡ satellite icon** on the Local Webhook card → **Connect**
+6. Copy the **Webhook ID** shown (short string, e.g. `8hR5acKTCx2s`)
+7. Paste it into the **Webhook ID** field in VSE — the status bar will show `xToys: OK`
+
+> **Note:** The Webhook ID changes every time you reconnect in xToys. If your toy stops responding, re-copy it and paste it into VSE again. Keep the xToys browser tab open while using VSE.
 
 ### 4. Draw a box around your video feed
 
