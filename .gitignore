@@ -5,3 +5,10 @@ __pycache__/
 .env
 build/
 dist/
+dist_nuitka/
+nuitka-crash-report.xml
+VisualStimEdger_source.zip
+_splash_hitzone_debug.png
+_splash_preview_blink.png
+_splash_preview_normal.png
+edging_preview.png

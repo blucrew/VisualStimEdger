@@ -27,12 +27,12 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: ── Install Nuitka + Zig backend (no VS BuildTools needed) ──────────────────
-echo [2/3] Installing Nuitka build tools...
-pip install nuitka zstandard --quiet
+:: ── Install PyInstaller ──────────────────────────────────────────────────────
+echo [2/3] Installing PyInstaller...
+pip install pyinstaller --quiet
 if %errorlevel% neq 0 (
     echo.
-    echo  Failed to install Nuitka. Try: pip install nuitka zstandard
+    echo  Failed to install PyInstaller. Try: pip install pyinstaller
     echo.
     pause
     exit /b 1
@@ -40,24 +40,8 @@ if %errorlevel% neq 0 (
 
 :: ── Build ───────────────────────────────────────────────────────────────────
 echo [3/3] Building VisualStimEdger.exe (this takes a few minutes)...
-echo        Using Zig compiler — no Visual Studio required.
 echo.
-python -m nuitka main.py ^
-    --onefile ^
-    --zig ^
-    --assume-yes-for-downloads ^
-    --enable-plugin=tk-inter ^
-    --windows-console-mode=disable ^
-    --windows-icon-from-ico=icon.ico ^
-    --output-filename=VisualStimEdger.exe ^
-    --output-dir=dist_nuitka ^
-    --include-data-files=icon.ico=icon.ico ^
-    --include-data-files=splash.png=splash.png ^
-    --include-data-files=models/yolo-fastest.cfg=models/yolo-fastest.cfg ^
-    --include-data-files=models/best.weights=models/best.weights ^
-    --include-data-files=overlay.html=overlay.html ^
-    --include-module=sounddevice ^
-    --include-module=miniaudio
+python -m PyInstaller VisualStimEdger.spec --noconfirm --distpath dist
 if %errorlevel% neq 0 (
     echo.
     echo  Build failed. Check the output above for errors.
@@ -67,6 +51,6 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo  Build complete: dist_nuitka\VisualStimEdger.exe
+echo  Build complete: dist\VisualStimEdger.exe
 echo.
 pause

@@ -1,18 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 datas = [
     ('models/yolo-fastest.cfg', 'models'),
     ('models/best.weights',     'models'),
     ('icon.ico',                '.'),
+    ('splash.png',              '.'),
+    ('overlay.html',            '.'),
 ]
 binaries = []
-hiddenimports = ['pycaw.pycaw', 'comtypes.stream', 'win32timezone', 'sounddevice', '_sounddevice_data']
-tmp_ret = collect_all('pycaw')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('sounddevice')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+hiddenimports = [
+    'pycaw.pycaw', 'comtypes.stream', 'win32timezone',
+    'sounddevice', '_sounddevice_data',
+    'websocket', 'websocket._abnf', 'websocket._core',
+    'websocket._exceptions', 'websocket._http', 'websocket._logging',
+    'websocket._socket', 'websocket._ssl_compat', 'websocket._utils',
+    'ssl',
+]
 
+for pkg in ('pycaw', 'sounddevice', 'customtkinter', 'miniaudio'):
+    tmp = collect_all(pkg)
+    datas    += tmp[0]
+    binaries += tmp[1]
+    hiddenimports += tmp[2]
 
 a = Analysis(
     ['main.py'],
@@ -41,7 +51,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=['opencv_world*.dll', 'cv2*.pyd', 'cv2*.so'],
+    upx_exclude=['opencv_world*.dll', 'cv2*.pyd'],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
