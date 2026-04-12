@@ -1252,6 +1252,7 @@ class App:
         self.tcode_axis_var    = tk.StringVar(value=TCODE_AXIS)
         self.xtoys_id_var      = tk.StringVar(value="")
         self.xtoys_token_var   = tk.StringVar(value="")
+        self.xtoys_token_var.trace_add("write", self._on_xtoys_token_change)
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1534,7 +1535,7 @@ class App:
 
         _mode_defs = [
             ("restim",  "\u26a1 restim",       self._C_ACCENT,  self._C_ACCENT_H),
-            ("xtoys",   "\U0001f9f8 xToys",    self._C_GREEN,   self._C_GREEN_H),
+            ("xtoys",   "xToys",               self._C_GREEN,   self._C_GREEN_H),
             ("windows", "\u229e\U0001f50a windows", self._C_BLUE, self._C_BLUE_H),
         ]
         if _MINIAUDIO_OK:
@@ -2440,6 +2441,42 @@ class App:
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
 
+        # ── xToys ─────────────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="xToys",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        xtoys_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        xtoys_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        tok_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
+        tok_row.pack(fill=tk.X, padx=12, pady=(8, 2))
+        ctk.CTkLabel(tok_row, text="Auth Token",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+        tok_entry = ctk.CTkEntry(
+            tok_row, textvariable=self.xtoys_token_var, width=260, show="*",
+            fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+            text_color=self._C_TEXT, placeholder_text="only needed for shared/protected webhooks",
+        )
+        tok_entry.pack(side=tk.RIGHT)
+
+        def _toggle_tok_vis():
+            tok_entry.configure(show="" if tok_entry.cget("show") == "*" else "*")
+        ctk.CTkButton(
+            xtoys_frame, text="Show / Hide token", command=_toggle_tok_vis,
+            height=24, font=ctk.CTkFont(size=9),
+            fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+            text_color=self._C_TEXT_DIM, border_width=1, border_color=self._C_BORDER,
+        ).pack(anchor="e", padx=12, pady=(0, 4))
+
+        ctk.CTkLabel(
+            xtoys_frame,
+            text="Leave blank for private webhooks (the default). Only needed "
+                 "if you're using a shared webhook that requires a Bearer token. "
+                 "Treat this like a password — don't share it.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(0, 10))
+
         # ── Cum Volume Override ───────────────────────────────────────────────
         ctk.CTkLabel(win, text="Cum Volume Behavior",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
@@ -2581,6 +2618,10 @@ class App:
                 self.restim.set_volume(self.restim.volume, instant=True)
             except Exception:
                 pass
+        self._save_config()
+
+    def _on_xtoys_token_change(self, *_):
+        self.xtoys.auth_token = self.xtoys_token_var.get()
         self._save_config()
 
     def _on_xtoys_id_change(self, *_):
