@@ -22,24 +22,53 @@
     width: 200px;
   }
 
-  /* ── EDGING flash ─────────────────────── */
-  .edging {
+  /* ── EDGING mega banner ───────────────── */
+  .edging-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
     text-align: center;
-    font-size: 24px;
+    font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
+    font-size: clamp(72px, 14vw, 220px);
     font-weight: 900;
-    letter-spacing: 3px;
+    letter-spacing: 0.08em;
     color: #ff1744;
-    text-shadow: 0 0 12px #ff1744, 0 0 30px #ff174466;
+    text-shadow:
+      0 0 20px  #ff1744,
+      0 0 45px  #ff1744,
+      0 0 90px  #ff174499,
+      0 0 160px #ff174466;
+    -webkit-text-stroke: 2px #ffffff33;
+    padding-top: 12px;
     opacity: 0;
-    transition: opacity 0.15s;
+    pointer-events: none;
+    transition: opacity 0.1s;
+    white-space: nowrap;
+    line-height: 1;
   }
-  .edging.on {
+  .edging-banner.on {
     opacity: 1;
-    animation: pulse 0.6s ease-in-out infinite alternate;
+    animation: edge-flash 0.28s steps(2) infinite;
   }
-  @keyframes pulse {
-    0%   { text-shadow: 0 0 10px #ff1744; }
-    100% { text-shadow: 0 0 20px #ff1744, 0 0 45px #ff174466; }
+  @keyframes edge-flash {
+    0%   {
+      color: #ff1744;
+      text-shadow:
+        0 0 20px  #ff1744,
+        0 0 45px  #ff1744,
+        0 0 90px  #ff174499,
+        0 0 160px #ff174466;
+      transform: scale(1);
+    }
+    50%  {
+      color: #ffffff;
+      text-shadow:
+        0 0 30px  #ff1744,
+        0 0 70px  #ff1744,
+        0 0 140px #ff1744cc;
+      transform: scale(1.04);
+    }
   }
 
   /* ── Event line ───────────────────────── */
@@ -196,8 +225,8 @@
 </style>
 </head>
 <body>
+<div class="edging-banner" id="edging">EDGING!!</div>
 <div class="overlay">
-  <div class="edging" id="edging">EDGING!</div>
   <div class="evt" id="evt"></div>
 
   <div class="vol-card">
@@ -289,7 +318,7 @@ function onMsg(e) {
   }
   volPct.textContent = v + '%';
 
-  edging.className = 'edging' + (d.state === 'Edging' ? ' on' : '');
+  edging.className = 'edging-banner' + (d.state === 'Edging' ? ' on' : '');
 
   edgesEl.textContent = d.edge_count || 0;
   sTime.textContent = fm(d.session_seconds || 0);
@@ -337,6 +366,9 @@ function onMsg(e) {
 
   dc.textContent = '';
 }
+
+// Preview hook: lets a harness drive the overlay without a real WebSocket.
+window.__feed = onMsg;
 
 function conn() {
   if (ws && ws.readyState <= 1) return;

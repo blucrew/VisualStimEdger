@@ -435,6 +435,11 @@ class RestimClient:
         self._connecting  = False
         self._backoff     = self._BACKOFF_INITIAL
         self._next_attempt = 0.0  # connect immediately on first call
+        # Last integer value we actually wrote to the wire, so we can dedupe
+        # repeat sends. Some Restim bindings interpret each send as a fresh
+        # pulse / re-trigger, which pulses at our tick rate when VSE is
+        # pegged at ceiling or floor. None means "nothing sent yet".
+        self._last_sent_int = None
 
     def maybe_reconnect(self):
         """Call from the main thread. Spawns a connect thread when backoff allows."""
@@ -447,32 +452,44 @@ class RestimClient:
         threading.Thread(target=self._connect_bg, daemon=True).start()
 
     def _connect_bg(self):
+        ws_url = f"ws://{self.host}:{self.port}/tcode"
+        log.info(f"Restim: connect attempt → {ws_url} (axis={self.axis})")
         try:
-            ws_url = f"ws://{self.host}:{self.port}/tcode"
             ws = websocket.create_connection(ws_url, timeout=2.0)
             with self._lock:
                 self.ws         = ws
                 self._backoff   = self._BACKOFF_INITIAL  # reset on success
                 self._connecting = False
-            log.info(f"Restim: connected at {ws_url}")
+            log.info(f"Restim: CONNECTED at {ws_url}")
             self.set_volume(self.volume, instant=True)
         except Exception as e:
             with self._lock:
                 self._backoff      = min(self._backoff * 2, self._BACKOFF_MAX)
                 self._next_attempt = time.time() + self._backoff
                 self._connecting   = False
-            log.debug(f"Restim: connect failed, retry in {self._backoff:.0f}s: {e}")
+            log.warning(f"Restim: connect FAILED ({type(e).__name__}: {e}) — retry in {self._backoff:.0f}s")
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
         with self._lock:
             self.volume = max(floor, min(ceiling, vol))
-            if self.ws:
-                try:
-                    val_int  = int(round(self.volume * 9999))
-                    interval = 0 if instant else int(VOLUME_UPDATE_INTERVAL * 1000)
-                    self.ws.send(f"{self.axis}{val_int:04d}I{interval}")
-                except Exception:
-                    self.ws = None
+            if not self.ws:
+                return
+            val_int  = int(round(self.volume * 9999))
+            # Dedupe — don't spam Restim with the same value when the math
+            # has pegged at a boundary. `instant` bypasses dedupe so manual
+            # resets (cum stop, reconnect priming) always land.
+            if not instant and val_int == self._last_sent_int:
+                return
+            interval = 0 if instant else int(VOLUME_UPDATE_INTERVAL * 1000)
+            cmd = f"{self.axis}{val_int:04d}I{interval}"
+            try:
+                self.ws.send(cmd)
+                self._last_sent_int = val_int
+                log.info(f"Restim: SEND {cmd!r}  (vol={self.volume:.3f})")
+            except Exception as e:
+                log.warning(f"Restim: SEND FAILED {cmd!r} ({type(e).__name__}: {e}) — dropping socket")
+                self.ws = None
+                self._last_sent_int = None
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
@@ -1138,6 +1155,12 @@ class App:
         # Erect) by N pixels, so the Edging state trips earlier than the raw
         # calibrated line. 0 = strict (the line you actually placed).
         self.edge_sens_var = tk.IntVar(value=0)
+        # T-code axis VSE sends volume updates on. Restim maps each axis to a
+        # parameter ("Volume", "Vibration 0", etc.) in its Websocket panel.
+        # Default V0 has historically been bound to Volume in most Restim
+        # session files — users who've changed that mapping can point VSE at
+        # whichever axis their session uses.
+        self.tcode_axis_var = tk.StringVar(value=TCODE_AXIS)
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1253,9 +1276,9 @@ class App:
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
         Tooltip(self._auto_btn, "Auto-calibrate heights by observing motion range")
 
-        _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_GREEN,  self._C_GREEN_H)
-        _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   self._C_BLUE,   self._C_BLUE_H)
-        _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), self._C_RED,    self._C_RED_HOV)
+        _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,    self._C_RED_HOV)
+        _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   self._C_GREEN,  self._C_GREEN_H)
+        _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), self._C_BLUE,   self._C_BLUE_H)
 
         # cum buttons anchored at bottom
         cum_row = ctk.CTkFrame(hbf, fg_color="transparent")
@@ -1277,36 +1300,6 @@ class App:
 
         def _divider():
             ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
-
-        _divider()
-
-        # ── Edging sensitivity ────────────────────────────────────────────────
-        sens_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
-        sens_card.pack(fill=tk.X, padx=P, pady=2)
-        sens_row = ctk.CTkFrame(sens_card, fg_color="transparent")
-        sens_row.pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkLabel(sens_row, text="Edging Sensitivity", font=lbl,
-                     text_color=self._C_TEXT, anchor="w").pack(side=tk.LEFT)
-        self._sens_lbl = ctk.CTkLabel(sens_row, text="0 px", font=lbl,
-                                      text_color=self._C_YELLOW, anchor="e")
-        self._sens_lbl.pack(side=tk.RIGHT)
-
-        def _on_sens(val):
-            self._sens_lbl.configure(text=f"{int(float(val))} px")
-            self._save_config()
-
-        self._sens_slider = ctk.CTkSlider(
-            sens_card, from_=0, to=200,
-            number_of_steps=200, variable=self.edge_sens_var,
-            command=_on_sens,
-            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
-            progress_color=self._C_ACCENT,
-        )
-        self._sens_slider.pack(fill=tk.X, padx=18, pady=(0, 8))
-        Tooltip(self._sens_slider,
-                "Pulls the Edging trigger toward Erect by N pixels.\n"
-                "0 = strict (line where you placed it).\n"
-                "Higher = trips earlier, more hair-trigger.")
 
         _divider()
 
@@ -1639,6 +1632,7 @@ class App:
                 "max_vol":     self.max_vol_var.get(),
                 "aggressiveness": self.aggr_var.get(),
                 "edge_sens":   int(self.edge_sens_var.get()),
+                "tcode_axis":  self.tcode_axis_var.get(),
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
@@ -1675,9 +1669,17 @@ class App:
                 self.aggr_var.set(val)
             if "edge_sens" in data:
                 try:
-                    self.edge_sens_var.set(max(0, min(200, int(data["edge_sens"]))))
+                    self.edge_sens_var.set(max(0, min(500, int(data["edge_sens"]))))
                     if hasattr(self, "_sens_lbl"):
                         self._sens_lbl.configure(text=f"{int(self.edge_sens_var.get())} px")
+                except Exception:
+                    pass
+            if "tcode_axis" in data:
+                try:
+                    ax = str(data["tcode_axis"]).strip().upper()
+                    if len(ax) >= 2 and ax[0].isalpha() and ax[1:].isdigit():
+                        self.tcode_axis_var.set(ax)
+                        self.restim.axis = ax
                 except Exception:
                     pass
             if "mode" in data:
@@ -2252,6 +2254,78 @@ class App:
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white").pack(padx=12, pady=(4, 10), anchor="e")
 
+        # ── Calibration ───────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Calibration",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        calib_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        calib_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        sens_hdr = ctk.CTkFrame(calib_frame, fg_color="transparent")
+        sens_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
+        ctk.CTkLabel(sens_hdr, text="Edging Sensitivity",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+        sens_val_lbl = ctk.CTkLabel(sens_hdr, text=f"{int(self.edge_sens_var.get())} px",
+                                    font=lbl, text_color=self._C_ACCENT, anchor="e")
+        sens_val_lbl.pack(side=tk.RIGHT)
+
+        def _on_sens(val):
+            sens_val_lbl.configure(text=f"{int(float(val))} px")
+            self._save_config()
+
+        ctk.CTkSlider(
+            calib_frame, from_=0, to=500, number_of_steps=500,
+            variable=self.edge_sens_var, command=_on_sens,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            progress_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(fill=tk.X, padx=12, pady=(0, 4))
+        ctk.CTkLabel(
+            calib_frame,
+            text="Pulls the Edging state-display toward Erect by N pixels so "
+                 "the OBS overlay lights up earlier. "
+                 "Affects only the State label / OBS broadcast — the volume / "
+                 "denial math always uses the strict calibrated line.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        # ── Restim ────────────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Restim",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        restim_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        restim_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        ax_row = ctk.CTkFrame(restim_frame, fg_color="transparent")
+        ax_row.pack(fill=tk.X, padx=12, pady=(8, 2))
+        ctk.CTkLabel(ax_row, text="T-code Axis",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+
+        AXIS_PRESETS = ["V0", "V1", "V2", "L0", "L1", "L2",
+                        "R0", "R1", "R2", "A0", "A1", "A2"]
+        current_axis = self.tcode_axis_var.get()
+        if current_axis not in AXIS_PRESETS:
+            AXIS_PRESETS.insert(0, current_axis)
+
+        axis_combo = ctk.CTkComboBox(
+            ax_row, values=AXIS_PRESETS, variable=self.tcode_axis_var,
+            width=90, command=lambda _=None: self._on_tcode_axis_change(),
+            fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
+        )
+        axis_combo.pack(side=tk.RIGHT)
+
+        ctk.CTkLabel(
+            restim_frame,
+            text="Which T-code axis VSE sends volume commands on. This must "
+                 "match the axis your Restim session has bound to the "
+                 "parameter you want to control (usually 'Volume'). Check "
+                 "Restim's Websocket / T-code panel if you're unsure.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(4, 10))
+
         # ── Cum Volume Override ───────────────────────────────────────────────
         ctk.CTkLabel(win, text="Cum Volume Behavior",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
@@ -2372,6 +2446,23 @@ class App:
         elif mode == "mp3" and _MINIAUDIO_OK:
             self._mp3_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
                                 after=self._mode_card)
+        self._save_config()
+
+    def _on_tcode_axis_change(self, *_):
+        """Swap the axis VSE sends volume on. No reconnect needed — the next
+        send will use the new prefix."""
+        val = (self.tcode_axis_var.get() or "").strip().upper()
+        if len(val) < 2 or not val[0].isalpha() or not val[1:].isdigit():
+            return
+        if val != self.restim.axis:
+            self.restim.axis = val
+            log.info(f"Restim: T-code axis switched to {val}")
+            # Push the current volume on the new axis so Restim can pick it up
+            # without waiting for the next tick.
+            try:
+                self.restim.set_volume(self.restim.volume, instant=True)
+            except Exception:
+                pass
         self._save_config()
 
     def _on_port_change(self, *_):
@@ -2750,7 +2841,11 @@ class App:
     def _compute_volume_delta(self):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return 0.0
-        edging_y = self._edging_y()
+        # Volume math uses the RAW calibrated Edging line, not the sensitivity-
+        # adjusted one. The sensitivity slider is purely an OBS / state-display
+        # knob so the overlay can light up earlier without also making the
+        # denial curve hair-trigger.
+        edging_y = self.heights["Edging"]
         full_range = self.heights["Flaccid"] - edging_y
         if abs(full_range) < 1:
             return 0.0
@@ -3141,19 +3236,72 @@ def show_splash() -> bool:
     return started
 
 
+_SINGLE_INSTANCE_MUTEX = None  # held for process lifetime
+
+
+def _acquire_single_instance() -> bool:
+    """Create a named Windows mutex so only one VSE can run at once.
+    Returns True if we got the lock, False if another instance owns it."""
+    global _SINGLE_INSTANCE_MUTEX
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ERROR_ALREADY_EXISTS = 183
+        CreateMutexW = ctypes.windll.kernel32.CreateMutexW
+        CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        CreateMutexW.restype = wintypes.HANDLE
+        handle = CreateMutexW(None, False, "Global\\VisualStimEdgerSingleton")
+        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            return False
+        _SINGLE_INSTANCE_MUTEX = handle  # keep alive for process lifetime
+        return True
+    except Exception as e:
+        log.warning(f"Single-instance check failed, allowing launch: {e}")
+        return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="VisualStimEdger")
     parser.add_argument("--debug", action="store_true",
                         help="Enable verbose debug logging to console")
     args = parser.parse_args()
 
+    # Always log to a file, because the windowed exe has no console.
+    log_path = CONFIG_PATH.parent / "vse.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    handlers = [logging.StreamHandler()]
+    try:
+        fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+        handlers.append(fh)
+    except Exception:
+        pass
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
+        handlers=handlers,
+        force=True,
     )
 
     log.info(f"VisualStimEdger v{VERSION} starting")
+    log.info(f"Log file: {log_path}")
+
+    if not _acquire_single_instance():
+        log.warning("Another VisualStimEdger instance is already running — exiting")
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "VisualStimEdger is already running.\n\nClose the existing window first.",
+                "VisualStimEdger",
+                0x40,  # MB_ICONINFORMATION
+            )
+        except Exception:
+            pass
+        return
 
     if not show_splash():
         log.info("Splash closed without starting — exiting")
