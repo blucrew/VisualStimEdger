@@ -29,6 +29,7 @@ import time
 import threading
 import webbrowser
 import requests
+import ssl
 import websocket
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -496,18 +497,19 @@ class RestimClient:
 
 
 class XToysClient:
-    """Sends intensity to xToys via their Webhook WebSocket API.
-    Endpoint : wss://webhook.xtoys.app/<webhook_id>
+    """Sends intensity to xToys via the Local Webhook WebSocket.
+    Endpoint : wss://localhost:<port>/<webhook_id>
+    The webhook_id and port are shown in xToys → Local Webhook card → satellite icon.
     Protocol : JSON  {"action": "setintensity", "intensity": 0-100}
-    Auth     : optional Bearer token in the WS handshake header.
     """
     _BACKOFF_INITIAL = 2.0
     _BACKOFF_MAX     = 60.0
     _ACTION          = "setintensity"
+    _DEFAULT_PORT    = 60065
 
-    def __init__(self, webhook_id="", auth_token=""):
+    def __init__(self, webhook_id="", port=_DEFAULT_PORT):
         self.webhook_id  = webhook_id
-        self.auth_token  = auth_token
+        self.port        = port
         self.volume      = 0.5
         self.ws          = None
         self._lock       = threading.Lock()
@@ -519,6 +521,10 @@ class XToysClient:
     @property
     def enabled(self):
         return bool(self.webhook_id.strip())
+
+    def _ws_url(self):
+        wid = self.webhook_id.strip()
+        return f"wss://localhost:{self.port}/{wid}"
 
     def maybe_reconnect(self):
         if not self.enabled:
@@ -532,12 +538,13 @@ class XToysClient:
         threading.Thread(target=self._connect_bg, daemon=True).start()
 
     def _connect_bg(self):
-        ws_url  = f"wss://webhook.xtoys.app/{self.webhook_id.strip()}"
-        headers = ([f"Authorization: Bearer {self.auth_token.strip()}"]
-                   if self.auth_token.strip() else [])
+        ws_url = self._ws_url()
         log.info(f"xToys: connect attempt → {ws_url}")
         try:
-            ws = websocket.create_connection(ws_url, timeout=5.0, header=headers)
+            ws = websocket.create_connection(
+                ws_url, timeout=5.0,
+                sslopt={"cert_reqs": ssl.CERT_NONE}
+            )
             with self._lock:
                 self.ws          = ws
                 self._backoff    = self._BACKOFF_INITIAL
@@ -1251,8 +1258,7 @@ class App:
         # whichever axis their session uses.
         self.tcode_axis_var    = tk.StringVar(value=TCODE_AXIS)
         self.xtoys_id_var      = tk.StringVar(value="")
-        self.xtoys_token_var   = tk.StringVar(value="")
-        self.xtoys_token_var.trace_add("write", self._on_xtoys_token_change)
+        self.xtoys_port_var    = tk.StringVar(value="60065")
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1599,14 +1605,24 @@ class App:
         # xToys options panel
         self._xtoys_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
         xo = ctk.CTkFrame(self._xtoys_opts, fg_color="transparent")
-        xo.pack(fill=tk.X, padx=12, pady=7)
+        xo.pack(fill=tk.X, padx=12, pady=(7, 2))
         ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=220,
+        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=180,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT,
-                     placeholder_text="paste your webhook ID here").pack(side=tk.LEFT)
+                     placeholder_text="e.g. 8hR5acKTCx2s").pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(xo, text="Port:", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 4))
+        ctk.CTkEntry(xo, textvariable=self.xtoys_port_var, width=56,
+                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        ctk.CTkLabel(self._xtoys_opts,
+                     text="In xToys: load the VisualStimEdger script → click \u26a1 on the Local Webhook card → copy the Webhook ID",
+                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+                     wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
+        self.xtoys_port_var.trace_add("write", self._on_xtoys_id_change)
 
         # Windows Audio options panel
         self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1739,7 +1755,7 @@ class App:
                 "edge_sens":   int(self.edge_sens_var.get()),
                 "tcode_axis":  self.tcode_axis_var.get(),
                 "xtoys_id":    self.xtoys_id_var.get(),
-                "xtoys_token": self.xtoys_token_var.get(),
+                "xtoys_port":  self.xtoys_port_var.get(),
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
@@ -1784,9 +1800,12 @@ class App:
             if "xtoys_id" in data:
                 self.xtoys_id_var.set(str(data.get("xtoys_id", "")))
                 self.xtoys.webhook_id = self.xtoys_id_var.get()
-            if "xtoys_token" in data:
-                self.xtoys_token_var.set(str(data.get("xtoys_token", "")))
-                self.xtoys.auth_token = self.xtoys_token_var.get()
+            if "xtoys_port" in data:
+                self.xtoys_port_var.set(str(data.get("xtoys_port", "60065")))
+                try:
+                    self.xtoys.port = int(self.xtoys_port_var.get())
+                except ValueError:
+                    pass
             if "tcode_axis" in data:
                 try:
                     ax = str(data["tcode_axis"]).strip().upper()
@@ -2447,35 +2466,26 @@ class App:
         xtoys_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
         xtoys_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
-        tok_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
-        tok_row.pack(fill=tk.X, padx=12, pady=(8, 2))
-        ctk.CTkLabel(tok_row, text="Auth Token",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
-        tok_entry = ctk.CTkEntry(
-            tok_row, textvariable=self.xtoys_token_var, width=260, show="*",
-            fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
-            text_color=self._C_TEXT, placeholder_text="only needed for shared/protected webhooks",
-        )
-        tok_entry.pack(side=tk.RIGHT)
-
-        def _toggle_tok_vis():
-            tok_entry.configure(show="" if tok_entry.cget("show") == "*" else "*")
-        ctk.CTkButton(
-            xtoys_frame, text="Show / Hide token", command=_toggle_tok_vis,
-            height=24, font=ctk.CTkFont(size=9),
-            fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
-            text_color=self._C_TEXT_DIM, border_width=1, border_color=self._C_BORDER,
-        ).pack(anchor="e", padx=12, pady=(0, 4))
-
         ctk.CTkLabel(
             xtoys_frame,
-            text="Leave blank for private webhooks (the default). Only needed "
-                 "if you're using a shared webhook that requires a Bearer token. "
-                 "Treat this like a password — don't share it.",
+            text="Setup steps:\n"
+                 "1. Open xtoys.app in a browser and sign in\n"
+                 "2. Go to Scripts \u2192 search for \u201cVisualStimEdger\u201d \u2192 Load Script\n"
+                 "3. On the Local Webhook card, click the \u26a1 satellite icon\n"
+                 "4. Click Connect \u2192 copy the Webhook ID shown (e.g. 8hR5acKTCx2s)\n"
+                 "5. Paste it into the Webhook ID field above\n"
+                 "6. Keep the xToys browser tab open while using VSE",
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
-        ).pack(fill=tk.X, padx=12, pady=(0, 10))
+        ).pack(fill=tk.X, padx=12, pady=(8, 4))
+
+        port_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
+        port_row.pack(fill=tk.X, padx=12, pady=(0, 10))
+        ctk.CTkLabel(port_row, text="Port (default 60065 — only change if xToys uses a different port):",
+                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkEntry(port_row, textvariable=self.xtoys_port_var, width=70,
+                     fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         # ── Cum Volume Override ───────────────────────────────────────────────
         ctk.CTkLabel(win, text="Cum Volume Behavior",
@@ -2620,18 +2630,19 @@ class App:
                 pass
         self._save_config()
 
-    def _on_xtoys_token_change(self, *_):
-        self.xtoys.auth_token = self.xtoys_token_var.get()
-        self._save_config()
-
     def _on_xtoys_id_change(self, *_):
         new_id = self.xtoys_id_var.get().strip()
-        if new_id != self.xtoys.webhook_id:
+        try:
+            new_port = int(self.xtoys_port_var.get().strip())
+        except ValueError:
+            new_port = XToysClient._DEFAULT_PORT
+        if new_id != self.xtoys.webhook_id or new_port != self.xtoys.port:
             self.xtoys.disconnect()
-            self.xtoys.webhook_id   = new_id
-            self.xtoys._backoff     = XToysClient._BACKOFF_INITIAL
+            self.xtoys.webhook_id    = new_id
+            self.xtoys.port          = new_port
+            self.xtoys._backoff      = XToysClient._BACKOFF_INITIAL
             self.xtoys._next_attempt = 0.0
-            log.info(f"xToys: webhook ID changed to {new_id!r}")
+            log.info(f"xToys: webhook ID={new_id!r} port={new_port}")
         self._save_config()
 
     def _on_port_change(self, *_):
