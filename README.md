@@ -53,12 +53,13 @@ Set your **Vol Floor** and **Vol Ceiling** sliders to define the range the progr
 1. Open [xtoys.app](https://xtoys.app) in a browser and sign in
 2. Go to **Scripts** → search for **VisualStimEdger** → **Load Script**
 3. In the script's **Controls** view, open the **Connections** panel
-4. Under **LOCAL WEBHOOK**, add your toy (Lovense, etc.) — **not** Generic Output
-5. Click **Save**, then click the **⚡ satellite icon** on the Local Webhook card → **Connect**
-6. Copy the **Webhook ID** shown (short string, e.g. `8hR5acKTCx2s`)
-7. Paste it into the **Webhook ID** field in VSE — the status bar will show `xToys: OK`
+4. Under **GENERIC OUTPUT**, add your toy (DG-Lab Both Channels, Lovense, etc.)
+5. Under **LOCAL WEBHOOK**, make sure **Local Webhook** is enabled → **Save**
+6. Click the **⚡ satellite icon** on the Local Webhook card → **Connect**
+7. Copy the **Webhook ID** shown (short string, e.g. `8hR5acKTCx2s`)
+8. Paste it into the **Webhook ID** field in VSE — the status bar will show `xToys: OK`
 
-> **Note:** The Webhook ID changes every time you reconnect in xToys. If your toy stops responding, re-copy it and paste it into VSE again. Keep the xToys browser tab open while using VSE.
+> **Note:** The Webhook ID changes every time you reconnect in xToys. Re-copy it if you refresh the tab. Keep the xToys browser tab open while using VSE.
 
 ### 4. Draw a box around your video feed
 

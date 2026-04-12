@@ -1618,7 +1618,7 @@ class App:
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script → click \u26a1 on the Local Webhook card → copy the Webhook ID",
+                     text="In xToys: load the VisualStimEdger script → Connections → add your toy under Generic Output → enable Local Webhook → click \u26a1 → copy the Webhook ID",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
@@ -2471,10 +2471,11 @@ class App:
             text="Setup steps:\n"
                  "1. Open xtoys.app in a browser and sign in\n"
                  "2. Go to Scripts \u2192 search for \u201cVisualStimEdger\u201d \u2192 Load Script\n"
-                 "3. On the Local Webhook card, click the \u26a1 satellite icon\n"
-                 "4. Click Connect \u2192 copy the Webhook ID shown (e.g. 8hR5acKTCx2s)\n"
-                 "5. Paste it into the Webhook ID field above\n"
-                 "6. Keep the xToys browser tab open while using VSE",
+                 "3. Open Connections \u2192 add your toy under Generic Output\n"
+                 "4. Also in Connections \u2192 enable Local Webhook under Local Webhook \u2192 Save\n"
+                 "5. Click the \u26a1 satellite icon on the Local Webhook card \u2192 Connect\n"
+                 "6. Copy the Webhook ID (e.g. 8hR5acKTCx2s) \u2192 paste it into the field above\n"
+                 "7. Keep the xToys browser tab open while using VSE",
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(8, 4))
