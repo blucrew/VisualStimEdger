@@ -495,6 +495,94 @@ class RestimClient:
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
 
 
+class XToysClient:
+    """Sends intensity to xToys via their Webhook WebSocket API.
+    Endpoint : wss://webhook.xtoys.app/<webhook_id>
+    Protocol : JSON  {"action": "setintensity", "intensity": 0-100}
+    Auth     : optional Bearer token in the WS handshake header.
+    """
+    _BACKOFF_INITIAL = 2.0
+    _BACKOFF_MAX     = 60.0
+    _ACTION          = "setintensity"
+
+    def __init__(self, webhook_id="", auth_token=""):
+        self.webhook_id  = webhook_id
+        self.auth_token  = auth_token
+        self.volume      = 0.5
+        self.ws          = None
+        self._lock       = threading.Lock()
+        self._connecting = False
+        self._backoff    = self._BACKOFF_INITIAL
+        self._next_attempt = 0.0
+        self._last_sent_int = None  # dedup on 0-100 integer
+
+    @property
+    def enabled(self):
+        return bool(self.webhook_id.strip())
+
+    def maybe_reconnect(self):
+        if not self.enabled:
+            return
+        with self._lock:
+            if self.ws is not None or self._connecting:
+                return
+            if time.time() < self._next_attempt:
+                return
+            self._connecting = True
+        threading.Thread(target=self._connect_bg, daemon=True).start()
+
+    def _connect_bg(self):
+        ws_url  = f"wss://webhook.xtoys.app/{self.webhook_id.strip()}"
+        headers = ([f"Authorization: Bearer {self.auth_token.strip()}"]
+                   if self.auth_token.strip() else [])
+        log.info(f"xToys: connect attempt → {ws_url}")
+        try:
+            ws = websocket.create_connection(ws_url, timeout=5.0, header=headers)
+            with self._lock:
+                self.ws          = ws
+                self._backoff    = self._BACKOFF_INITIAL
+                self._connecting = False
+            log.info(f"xToys: CONNECTED at {ws_url}")
+            self.set_volume(self.volume, instant=True)
+        except Exception as e:
+            with self._lock:
+                self._backoff      = min(self._backoff * 2, self._BACKOFF_MAX)
+                self._next_attempt = time.time() + self._backoff
+                self._connecting   = False
+            log.warning(f"xToys: connect FAILED ({type(e).__name__}: {e}) — retry in {self._backoff:.0f}s")
+
+    def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
+        with self._lock:
+            self.volume = max(floor, min(ceiling, vol))
+            if not self.ws:
+                return
+            val_int = int(round(self.volume * 100))
+            if not instant and val_int == self._last_sent_int:
+                return
+            payload = json.dumps({"action": self._ACTION, "intensity": val_int})
+            try:
+                self.ws.send(payload)
+                self._last_sent_int = val_int
+                log.info(f"xToys: SEND {payload}  (vol={self.volume:.3f})")
+            except Exception as e:
+                log.warning(f"xToys: SEND FAILED ({type(e).__name__}: {e}) — dropping socket")
+                self.ws = None
+                self._last_sent_int = None
+
+    def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
+        self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
+
+    def disconnect(self):
+        with self._lock:
+            if self.ws:
+                try:
+                    self.ws.close()
+                except Exception:
+                    pass
+                self.ws = None
+            self._last_sent_int = None
+
+
 class _DefaultAudioDevice:
     """Minimal stand-in returned when full device enumeration fails."""
     FriendlyName = "Default Output Device"
@@ -1133,6 +1221,7 @@ class App:
 
         # Output clients
         self.restim           = RestimClient(RESTIM_HOST, RESTIM_PORT, TCODE_AXIS)
+        self.xtoys            = XToysClient()
         self.win_audio        = None
         self.win_devices      = []
         self._orig_win_volume = None  # restored on exit
@@ -1160,7 +1249,9 @@ class App:
         # Default V0 has historically been bound to Volume in most Restim
         # session files — users who've changed that mapping can point VSE at
         # whichever axis their session uses.
-        self.tcode_axis_var = tk.StringVar(value=TCODE_AXIS)
+        self.tcode_axis_var    = tk.StringVar(value=TCODE_AXIS)
+        self.xtoys_id_var      = tk.StringVar(value="")
+        self.xtoys_token_var   = tk.StringVar(value="")
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1442,11 +1533,12 @@ class App:
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         _mode_defs = [
-            ("restim",  "\u26a1 restim",       self._C_ACCENT, self._C_ACCENT_H),
+            ("restim",  "\u26a1 restim",       self._C_ACCENT,  self._C_ACCENT_H),
+            ("xtoys",   "\U0001f9f8 xToys",    self._C_GREEN,   self._C_GREEN_H),
             ("windows", "\u229e\U0001f50a windows", self._C_BLUE, self._C_BLUE_H),
         ]
         if _MINIAUDIO_OK:
-            _mode_defs.append(("mp3", "\u266b mp3", self._C_GREEN, self._C_GREEN_H))
+            _mode_defs.append(("mp3", "\u266b mp3", "#9c27b0", "#7b1fa2"))
 
         self._mode_btns = {}
         mbf = ctk.CTkFrame(mode_row, fg_color="transparent")
@@ -1502,6 +1594,18 @@ class App:
                                   text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                                   font=ctk.CTkFont(size=10))
         _copy_btn.pack(side=tk.LEFT)
+
+        # xToys options panel
+        self._xtoys_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        xo = ctk.CTkFrame(self._xtoys_opts, fg_color="transparent")
+        xo.pack(fill=tk.X, padx=12, pady=7)
+        ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=220,
+                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT,
+                     placeholder_text="paste your webhook ID here").pack(side=tk.LEFT)
+        self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
 
         # Windows Audio options panel
         self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1633,6 +1737,8 @@ class App:
                 "aggressiveness": self.aggr_var.get(),
                 "edge_sens":   int(self.edge_sens_var.get()),
                 "tcode_axis":  self.tcode_axis_var.get(),
+                "xtoys_id":    self.xtoys_id_var.get(),
+                "xtoys_token": self.xtoys_token_var.get(),
                 "mode":        self.mode_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
@@ -1674,6 +1780,12 @@ class App:
                         self._sens_lbl.configure(text=f"{int(self.edge_sens_var.get())} px")
                 except Exception:
                     pass
+            if "xtoys_id" in data:
+                self.xtoys_id_var.set(str(data.get("xtoys_id", "")))
+                self.xtoys.webhook_id = self.xtoys_id_var.get()
+            if "xtoys_token" in data:
+                self.xtoys_token_var.set(str(data.get("xtoys_token", "")))
+                self.xtoys.auth_token = self.xtoys_token_var.get()
             if "tcode_axis" in data:
                 try:
                     ax = str(data["tcode_axis"]).strip().upper()
@@ -2066,6 +2178,8 @@ class App:
             mode = self.mode_var.get()
             if mode == "restim":
                 self.restim.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
+            elif mode == "xtoys":
+                self.xtoys.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
             elif mode == "windows" and self.win_audio and self.win_audio.connected:
                 self.win_audio.set_volume(target_vol, 0.0, 1.0)
             elif mode == "mp3" and self.music_player:
@@ -2430,6 +2544,7 @@ class App:
         P    = 12
         # Hide all panels first
         self._restim_opts.pack_forget()
+        self._xtoys_opts.pack_forget()
         self._windows_opts.pack_forget()
         self._mp3_opts.pack_forget()
         # Stop music if leaving mp3 mode
@@ -2438,6 +2553,9 @@ class App:
         if mode == "restim":
             self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
                                    after=self._mode_card)
+        elif mode == "xtoys":
+            self._xtoys_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
+                                  after=self._mode_card)
         elif mode == "windows":
             self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
                                     after=self._mode_card)
@@ -2463,6 +2581,16 @@ class App:
                 self.restim.set_volume(self.restim.volume, instant=True)
             except Exception:
                 pass
+        self._save_config()
+
+    def _on_xtoys_id_change(self, *_):
+        new_id = self.xtoys_id_var.get().strip()
+        if new_id != self.xtoys.webhook_id:
+            self.xtoys.disconnect()
+            self.xtoys.webhook_id   = new_id
+            self.xtoys._backoff     = XToysClient._BACKOFF_INITIAL
+            self.xtoys._next_attempt = 0.0
+            log.info(f"xToys: webhook ID changed to {new_id!r}")
         self._save_config()
 
     def _on_port_change(self, *_):
@@ -2915,6 +3043,8 @@ class App:
             mode = self.mode_var.get()
             if mode == "restim":
                 self.restim.set_volume(0.0, floor=0.0, ceiling=ceil_val)
+            elif mode == "xtoys":
+                self.xtoys.set_volume(0.0, floor=0.0, ceiling=ceil_val)
             elif mode == "windows" and self.win_audio and self.win_audio.connected:
                 self.win_audio.set_volume(0.0, 0.0, 1.0)
             elif mode == "mp3" and self.music_player:
@@ -2937,6 +3067,10 @@ class App:
             if delta != 0.0:
                 self.restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
             self.restim.maybe_reconnect()
+        elif mode == "xtoys":
+            if delta != 0.0:
+                self.xtoys.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
+            self.xtoys.maybe_reconnect()
         elif mode == "windows" and self.win_audio and self.win_audio.connected and delta != 0.0:
             self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
         elif mode == "mp3" and self.music_player and delta != 0.0:
@@ -2949,6 +3083,10 @@ class App:
             conn_color = "#00ff00" if self.restim.ws else "#ff0000"
             vol_str    = f"{self.restim.volume * 100:.0f}%"
             src_str    = f"WS: {'Connected' if self.restim.ws else 'Disconnected'}"
+        elif mode == "xtoys":
+            conn_color = "#00ff00" if self.xtoys.ws else ("#ffaa00" if not self.xtoys.enabled else "#ff0000")
+            vol_str    = f"{self.xtoys.volume * 100:.0f}%"
+            src_str    = f"xToys: {'Connected' if self.xtoys.ws else ('No ID' if not self.xtoys.enabled else 'Connecting...')}"
         elif mode == "windows" and self.win_audio and self.win_audio.connected:
             conn_color = "#00ff00"
             vol_str    = f"{(self.win_audio.get_volume() or 0) * 100:.0f}%"
@@ -2978,6 +3116,8 @@ class App:
         mode = self.mode_var.get()
         if mode == "restim":
             vol = self.restim.volume
+        elif mode == "xtoys":
+            vol = self.xtoys.volume
         elif mode == "windows" and self.win_audio and self.win_audio.connected:
             vol = self.win_audio.get_volume() or 0
         elif mode == "mp3" and self.music_player:
