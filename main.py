@@ -146,7 +146,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.5"
+VERSION = "1.7.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -430,7 +430,7 @@ class RestimClient:
         self.host   = host
         self.port   = port
         self.axis   = axis
-        self.volume = 0.5
+        self.volume = 0.0
         self.ws     = None
         self._lock        = threading.Lock()
         self._connecting  = False
@@ -844,16 +844,23 @@ class OverlayServer:
 
     def broadcast(self, payload: str):
         """Send a text WebSocket frame to all connected clients."""
+        if not self._loop:
+            return
         frame = self._ws_text_frame(payload)
-        with self._lock:
-            dead = []
-            for w in self._clients:
-                try:
-                    w.write(frame)
-                except Exception:
-                    dead.append(w)
-            for w in dead:
-                self._clients.remove(w)
+
+        async def _send():
+            with self._lock:
+                dead = []
+                for w in self._clients:
+                    try:
+                        w.write(frame)
+                        await w.drain()
+                    except Exception:
+                        dead.append(w)
+                for w in dead:
+                    self._clients.remove(w)
+
+        asyncio.run_coroutine_threadsafe(_send(), self._loop)
 
     @staticmethod
     def _ws_text_frame(text: str) -> bytes:
@@ -1245,7 +1252,10 @@ class App:
         self.min_vol_var = tk.DoubleVar(value=0.0)
         self.max_vol_var = tk.DoubleVar(value=100.0)
         self.aggr_var    = tk.StringVar(value="Middle")
-        self.mode_var    = tk.StringVar(value="restim")
+        self.restim_on   = tk.BooleanVar(value=True)
+        self.xtoys_on    = tk.BooleanVar(value=False)
+        self.audio_on    = tk.BooleanVar(value=False)
+        self.mp3_on      = tk.BooleanVar(value=False)
         self.port_var    = tk.StringVar(value="12346")
         # Edging sensitivity: pushes the effective Edging line DOWN (toward
         # Erect) by N pixels, so the Edging state trips earlier than the raw
@@ -1540,37 +1550,47 @@ class App:
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         _mode_defs = [
-            ("restim",  "\u26a1 restim",       self._C_ACCENT,  self._C_ACCENT_H),
-            ("xtoys",   "xToys",               self._C_GREEN,   self._C_GREEN_H),
-            ("windows", "\u229e\U0001f50a windows", self._C_BLUE, self._C_BLUE_H),
+            ("restim",  "\u26a1 restim",            self.restim_on, self._C_ACCENT,  self._C_ACCENT_H),
+            ("xtoys",   "xToys",                    self.xtoys_on,  self._C_GREEN,   self._C_GREEN_H),
+            ("windows", "\u229e\U0001f50a windows",  self.audio_on,  self._C_BLUE,    self._C_BLUE_H),
         ]
         if _MINIAUDIO_OK:
-            _mode_defs.append(("mp3", "\u266b mp3", "#9c27b0", "#7b1fa2"))
+            _mode_defs.append(("mp3", "\u266b mp3", self.mp3_on, "#9c27b0", "#7b1fa2"))
 
         self._mode_btns = {}
         mbf = ctk.CTkFrame(mode_row, fg_color="transparent")
         mbf.pack(side=tk.RIGHT)
-        for mode_key, mode_label, color, hover in _mode_defs:
-            def _sel(m=mode_key):
-                self.mode_var.set(m)
-                self._on_mode_change()
-                self._update_mode_btns()
-            b = ctk.CTkButton(mbf, text=mode_label, command=_sel,
+        for mode_key, mode_label, boolvar, color, hover in _mode_defs:
+            def _toggle(m=mode_key, bv=boolvar):
+                new_val = not bv.get()
+                bv.set(new_val)
+                if new_val:
+                    # Audio / MP3 are mutually exclusive
+                    if m == "windows":
+                        self.mp3_on.set(False)
+                        if self.music_player: self.music_player.stop()
+                    elif m == "mp3":
+                        self.audio_on.set(False)
+                else:
+                    if m == "mp3" and self.music_player:
+                        self.music_player.stop()
+                self._on_output_change()
+                self._update_output_btns()
+            b = ctk.CTkButton(mbf, text=mode_label, command=_toggle,
                               font=ctk.CTkFont(size=11), height=28, corner_radius=4,
                               fg_color=color, hover_color=hover,
                               text_color="white", width=10)
             b.pack(side=tk.LEFT, padx=1)
-            self._mode_btns[mode_key] = (b, color, hover)
+            self._mode_btns[mode_key] = (b, color, hover, boolvar)
 
-        def _update_mode_btns():
-            cur = self.mode_var.get()
-            for mk, (bt, col, hov) in self._mode_btns.items():
-                if mk == cur:
+        def _update_output_btns():
+            for mk, (bt, col, hov, bv) in self._mode_btns.items():
+                if bv.get():
                     bt.configure(fg_color=col, hover_color=hov)
                 else:
                     bt.configure(fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
-        self._update_mode_btns = _update_mode_btns
-        _update_mode_btns()
+        self._update_output_btns = _update_output_btns
+        _update_output_btns()
 
         # Restim options panel
         self._restim_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1641,7 +1661,7 @@ class App:
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
 
-        self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))
+        self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))  # default; _on_output_change re-packs after load
 
         # ── MP3 player options panel ───────────────────────────────────────────
         self._mp3_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1756,7 +1776,12 @@ class App:
                 "tcode_axis":  self.tcode_axis_var.get(),
                 "xtoys_id":    self.xtoys_id_var.get(),
                 "xtoys_port":  self.xtoys_port_var.get(),
-                "mode":        self.mode_var.get(),
+                "outputs": {
+                    "restim":  self.restim_on.get(),
+                    "xtoys":   self.xtoys_on.get(),
+                    "windows": self.audio_on.get(),
+                    "mp3":     self.mp3_on.get(),
+                },
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
                 "mp3_path":    getattr(self, '_mp3_last_path', ""),
@@ -1814,9 +1839,23 @@ class App:
                         self.restim.axis = ax
                 except Exception:
                     pass
-            if "mode" in data:
-                self.mode_var.set(data["mode"])
-                self._on_mode_change()
+            if "outputs" in data:
+                outs = data["outputs"]
+                self.restim_on.set(bool(outs.get("restim", True)))
+                self.xtoys_on.set(bool(outs.get("xtoys", False)))
+                self.audio_on.set(bool(outs.get("windows", False)))
+                self.mp3_on.set(bool(outs.get("mp3", False)) and _MINIAUDIO_OK)
+                self._on_output_change()
+                self._update_output_btns()
+            elif "mode" in data:
+                # Migrate old single-mode config
+                mode = data["mode"]
+                self.restim_on.set(mode == "restim")
+                self.xtoys_on.set(mode == "xtoys")
+                self.audio_on.set(mode == "windows")
+                self.mp3_on.set(mode == "mp3" and _MINIAUDIO_OK)
+                self._on_output_change()
+                self._update_output_btns()
             if "port"        in data: self.port_var.set(data["port"])
             if "device_name" in data: self._device_combo.set(data["device_name"])
             if _MINIAUDIO_OK and self.music_player:
@@ -2195,14 +2234,13 @@ class App:
                 target_vol = 1.0
             else:
                 target_vol = self.max_vol_var.get() / 100.0
-            mode = self.mode_var.get()
-            if mode == "restim":
+            if self.restim_on.get():
                 self.restim.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
-            elif mode == "xtoys":
+            if self.xtoys_on.get():
                 self.xtoys.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
-            elif mode == "windows" and self.win_audio and self.win_audio.connected:
+            if self.audio_on.get() and self.win_audio and self.win_audio.connected:
                 self.win_audio.set_volume(target_vol, 0.0, 1.0)
-            elif mode == "mp3" and self.music_player:
+            if self.mp3_on.get() and self.music_player:
                 self.music_player.volume = target_vol
             self.root.after(1000, self._tick_cum_grant)
             log.info(f"Cum GRANTED (1/{denominator} on {aggr}) — {mins} min window")
@@ -2279,12 +2317,13 @@ class App:
                                 hover_color=self._C_GREEN_H,
                                 text_color="white")
         ceil_val = self.max_vol_var.get() / 100.0
-        mode = self.mode_var.get()
-        if mode == "restim":
+        if self.restim_on.get():
             self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
-        elif mode == "windows" and self.win_audio and self.win_audio.connected:
+        if self.xtoys_on.get():
+            self.xtoys.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
+        if self.audio_on.get() and self.win_audio and self.win_audio.connected:
             self.win_audio.set_volume(0.0, 0.0, 1.0)
-        elif mode == "mp3" and self.music_player:
+        if self.mp3_on.get() and self.music_player:
             self.music_player.volume = 0.0
         log.info("Cum triggered — session stopped, awaiting Resume")
 
@@ -2587,31 +2626,28 @@ class App:
             self._range_draw()
         self._save_config()
 
-    def _on_mode_change(self):
-        mode = self.mode_var.get()
-        P    = 12
-        # Hide all panels first
+    def _on_output_change(self):
+        P = 12
+        # Hide all option panels then re-pack in order for active outputs
         self._restim_opts.pack_forget()
         self._xtoys_opts.pack_forget()
         self._windows_opts.pack_forget()
         self._mp3_opts.pack_forget()
-        # Stop music if leaving mp3 mode
-        if mode != "mp3" and self.music_player:
-            self.music_player.stop()
-        if mode == "restim":
-            self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
-                                   after=self._mode_card)
-        elif mode == "xtoys":
-            self._xtoys_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
-                                  after=self._mode_card)
-        elif mode == "windows":
-            self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
-                                    after=self._mode_card)
+
+        after = self._mode_card
+        if self.restim_on.get():
+            self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
+            after = self._restim_opts
+        if self.xtoys_on.get():
+            self._xtoys_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
+            after = self._xtoys_opts
+        if self.audio_on.get():
+            self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
+            after = self._windows_opts
             if not self.win_devices:
                 self._refresh_devices()
-        elif mode == "mp3" and _MINIAUDIO_OK:
-            self._mp3_opts.pack(fill=tk.X, padx=P, pady=(0, 4),
-                                after=self._mode_card)
+        if self.mp3_on.get() and _MINIAUDIO_OK:
+            self._mp3_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
         self._save_config()
 
     def _on_tcode_axis_change(self, *_):
@@ -3012,10 +3048,12 @@ class App:
             eff = self._edging_y()
             if eff is not None and eff != base:
                 eff = int(eff)
-                # Dashed red line at the effective trigger position.
-                dash = 10
+                # Dashed orange line at the effective (sensitivity-offset) trigger position.
+                dash = 14
                 for x in range(0, fw, dash * 2):
-                    cv2.line(frame, (x, eff), (min(x + dash, fw), eff), (0, 0, 255), 1)
+                    cv2.line(frame, (x, eff), (min(x + dash, fw), eff), (0, 165, 255), 2)
+                cv2.putText(frame, "SENS", (4, eff - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1, cv2.LINE_AA)
         if self.heights["Erect"]   is not None: cv2.line(frame, (0, int(self.heights["Erect"])),   (fw, int(self.heights["Erect"])),   (0, 255, 0), 2)
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, int(self.heights["Flaccid"])), (fw, int(self.heights["Flaccid"])), (255, 0, 0), 2)
 
@@ -3093,14 +3131,13 @@ class App:
         # in case something else nudged it.)
         if self._cum_stopped:
             ceil_val = self.max_vol_var.get() / 100.0
-            mode = self.mode_var.get()
-            if mode == "restim":
+            if self.restim_on.get():
                 self.restim.set_volume(0.0, floor=0.0, ceiling=ceil_val)
-            elif mode == "xtoys":
+            if self.xtoys_on.get():
                 self.xtoys.set_volume(0.0, floor=0.0, ceiling=ceil_val)
-            elif mode == "windows" and self.win_audio and self.win_audio.connected:
+            if self.audio_on.get() and self.win_audio and self.win_audio.connected:
                 self.win_audio.set_volume(0.0, 0.0, 1.0)
-            elif mode == "mp3" and self.music_player:
+            if self.mp3_on.get() and self.music_player:
                 self.music_player.volume = 0.0
             return
 
@@ -3114,45 +3151,58 @@ class App:
         floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
         ceil_val  = self.max_vol_var.get() / 100.0
         delta     = self._compute_volume_delta()
-        mode      = self.mode_var.get()
 
-        if mode == "restim":
+        if self.restim_on.get():
             if delta != 0.0:
                 self.restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
             self.restim.maybe_reconnect()
-        elif mode == "xtoys":
+        if self.xtoys_on.get():
             if delta != 0.0:
                 self.xtoys.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
             self.xtoys.maybe_reconnect()
-        elif mode == "windows" and self.win_audio and self.win_audio.connected and delta != 0.0:
+        if self.audio_on.get() and self.win_audio and self.win_audio.connected and delta != 0.0:
             self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
-        elif mode == "mp3" and self.music_player and delta != 0.0:
+        if self.mp3_on.get() and self.music_player and delta != 0.0:
             self.music_player.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
 
     def _update_status_label(self, state):
         quality_str = "Track: OK" if self.tracking_ok else "Track: LOST"
-        mode = self.mode_var.get()
-        if mode == "restim":
-            conn_color = "#00ff00" if self.restim.ws else "#ff0000"
-            vol_str    = f"{self.restim.volume * 100:.0f}%"
-            src_str    = f"WS: {'Connected' if self.restim.ws else 'Disconnected'}"
-        elif mode == "xtoys":
-            conn_color = "#00ff00" if self.xtoys.ws else ("#ffaa00" if not self.xtoys.enabled else "#ff0000")
-            vol_str    = f"{self.xtoys.volume * 100:.0f}%"
-            src_str    = f"xToys: {'Connected' if self.xtoys.ws else ('No ID' if not self.xtoys.enabled else 'Connecting...')}"
-        elif mode == "windows" and self.win_audio and self.win_audio.connected:
-            conn_color = "#00ff00"
-            vol_str    = f"{(self.win_audio.get_volume() or 0) * 100:.0f}%"
-            src_str    = "Win Audio: OK"
-        elif mode == "mp3" and self.music_player:
+        parts = []
+        conn_color = "#ffaa00"
+
+        if self.restim_on.get():
+            ok = bool(self.restim.ws)
+            if ok: conn_color = "#00ff00"
+            elif conn_color != "#00ff00": conn_color = "#ff0000"
+            parts.append(f"WS: {'OK' if ok else 'Disconnected'}")
+        if self.xtoys_on.get():
+            ok = bool(self.xtoys.ws)
+            if ok: conn_color = "#00ff00"
+            elif conn_color != "#00ff00":
+                conn_color = "#ffaa00" if not self.xtoys.enabled else "#ff0000"
+            parts.append(f"xToys: {'OK' if ok else ('No ID' if not self.xtoys.enabled else 'Connecting...')}")
+        if self.audio_on.get():
+            if self.win_audio and self.win_audio.connected:
+                conn_color = "#00ff00"
+                parts.append("Audio: OK")
+            else:
+                parts.append("Audio: No Device")
+        if self.mp3_on.get() and self.music_player:
             self._mp3_update_track_label()
-            conn_color = "#00ff00" if self.music_player._state == "playing" else "#ffaa00"
-            vol_str    = f"{self.music_player.volume * 100:.0f}%"
-            src_str    = f"MP3: {self.music_player.track_name or '—'}"
-        else:
-            conn_color = "#ffaa00"
-            vol_str    = "--"
-            src_str    = "Win Audio: No Device"
+            if self.music_player._state == "playing": conn_color = "#00ff00"
+            parts.append(f"MP3: {self.music_player.track_name or '—'}")
+
+        src_str = " | ".join(parts) if parts else "No output"
+
+        # Volume — highest active output
+        _vols = []
+        if self.restim_on.get():  _vols.append(self.restim.volume)
+        if self.xtoys_on.get():   _vols.append(self.xtoys.volume)
+        if self.audio_on.get() and self.win_audio and self.win_audio.connected:
+            _vols.append(self.win_audio.get_volume() or 0)
+        if self.mp3_on.get() and self.music_player:
+            _vols.append(self.music_player.volume)
+        vol_str = f"{max(_vols) * 100:.0f}%" if _vols else "--"
 
         ft = self._frame_times
         fps = (len(ft) - 1) / max(ft[-1] - ft[0], 1e-9) if len(ft) >= 2 else 0.0
@@ -3166,17 +3216,15 @@ class App:
         )
 
     def _broadcast_overlay(self, state):
-        mode = self.mode_var.get()
-        if mode == "restim":
-            vol = self.restim.volume
-        elif mode == "xtoys":
-            vol = self.xtoys.volume
-        elif mode == "windows" and self.win_audio and self.win_audio.connected:
-            vol = self.win_audio.get_volume() or 0
-        elif mode == "mp3" and self.music_player:
-            vol = self.music_player.volume
-        else:
-            vol = 0
+        # Use highest active volume so OBS reflects what's actually happening
+        vols = []
+        if self.restim_on.get():  vols.append(self.restim.volume)
+        if self.xtoys_on.get():   vols.append(self.xtoys.volume)
+        if self.audio_on.get() and self.win_audio and self.win_audio.connected:
+            vols.append(self.win_audio.get_volume() or 0)
+        if self.mp3_on.get() and self.music_player:
+            vols.append(self.music_player.volume)
+        vol = max(vols) if vols else 0
 
         # "Let me cum?" tattle-tale
         letmecum = None
@@ -3195,8 +3243,9 @@ class App:
                 elif elapsed_lmc < 5:
                     letmecum = {"result": "denied", "retry_in": 0}
 
+        obs_state = "-" if "Calibration" in state else state
         self._overlay.broadcast(json.dumps({
-            "state": state,
+            "state": obs_state,
             "volume": round(vol, 3),
             "edge_count": self.edge_count,
             "session_seconds": round(time.time() - self.session_start),
