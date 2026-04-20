@@ -69,6 +69,59 @@
     }
   }
 
+  /* ── TATTLE banner — letmecum result ──── */
+  .tattle-banner {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 0 4px;
+    background: rgba(0,0,0,0.6);
+    border-radius: 6px;
+    font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .tattle-lbl {
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    opacity: 0.65;
+    font-weight: 700;
+  }
+  .tattle-result {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+  .tattle-banner.denied {
+    display: flex;
+    color: #ff1744;
+    border: 1px solid rgba(255,23,68,0.4);
+    animation: tattle-deny 0.45s steps(2) infinite;
+  }
+  .tattle-banner.granted {
+    display: flex;
+    color: #00e676;
+    border: 1px solid rgba(0,230,118,0.35);
+    animation: tattle-grant 1.2s ease-in-out infinite alternate;
+  }
+  .tattle-banner.expired {
+    display: flex;
+    color: #ff9800;
+    border: 1px solid rgba(255,152,0,0.35);
+  }
+  @keyframes tattle-deny {
+    0%   { text-shadow: 0 0 12px #ff1744, 0 0 30px #ff174488; opacity: 1; }
+    50%  { text-shadow: 0 0 4px #ff174466; opacity: 0.55; }
+  }
+  @keyframes tattle-grant {
+    0%   { text-shadow: 0 0 6px #00e67666; }
+    100% { text-shadow: 0 0 16px #00e676, 0 0 35px #00e67888; }
+  }
+
   /* ── Event line ───────────────────────── */
   .evt {
     text-align: center;
@@ -228,6 +281,10 @@
 <body>
 <div class="overlay">
   <div class="edging-banner" id="edging">EDGING!!</div>
+  <div class="tattle-banner" id="tattle">
+    <div class="tattle-lbl" id="tattleLbl">they asked to cum</div>
+    <div class="tattle-result" id="tattleResult">DENIED!</div>
+  </div>
   <div class="evt" id="evt"></div>
 
   <div class="vol-card">
@@ -292,6 +349,9 @@ const loadsVal = document.getElementById('loadsVal');
 const denialsVal = document.getElementById('denialsVal');
 const stateValEl = document.getElementById('stateVal');
 const stateLblEl = document.getElementById('stateLbl');
+const tattleEl    = document.getElementById('tattle');
+const tattleLbl   = document.getElementById('tattleLbl');
+const tattleResult= document.getElementById('tattleResult');
 const STATE_COLOR = { Flaccid: '#4fc3f7', Erect: '#4caf50', Edging: '#ff1744' };
 
 let ws = null, rt = null;
@@ -327,6 +387,26 @@ function onMsg(e) {
   volPct.textContent = v + '%';
 
   edging.className = 'edging-banner' + (d.state === 'Edging' ? ' on' : '');
+
+  // Tattle banner
+  if (d.letmecum) {
+    const l = d.letmecum;
+    if (l.result === 'granted') {
+      tattleLbl.textContent = 'they asked to cum';
+      tattleResult.textContent = 'GRANTED  ' + fm(l.time_left || 0);
+      tattleEl.className = 'tattle-banner granted';
+    } else if (l.result === 'expired') {
+      tattleLbl.textContent = 'they asked to cum';
+      tattleResult.textContent = "TIME'S UP!";
+      tattleEl.className = 'tattle-banner expired';
+    } else {
+      tattleLbl.textContent = 'they asked to cum';
+      tattleResult.textContent = 'DENIED!' + (l.retry_in > 0 ? '  ' + l.retry_in + 's' : '');
+      tattleEl.className = 'tattle-banner denied';
+    }
+  } else {
+    tattleEl.className = 'tattle-banner';
+  }
 
   edgesEl.textContent = d.edge_count || 0;
   sTime.textContent = fm(d.session_seconds || 0);

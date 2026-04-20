@@ -150,7 +150,7 @@ VERSION = "1.7.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
-TCODE_AXIS = 'V0'
+TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
@@ -497,97 +497,74 @@ class RestimClient:
 
 
 class XToysClient:
-    """Sends intensity to xToys via the Local Webhook WebSocket.
-    Endpoint : wss://localhost:<port>/<webhook_id>
-    The webhook_id and port are shown in xToys → Local Webhook card → satellite icon.
-    Protocol : JSON  {"action": "setintensity", "intensity": 0-100}
+    """Sends intensity to xToys via the Private Webhook HTTP endpoint.
+    Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=set-intensity&intensity=<0-100>
+    The webhook_id is shown in xToys → https://xtoys.app/me → Private Webhook.
+    Stateless HTTP GET — no persistent connection needed.
     """
-    _BACKOFF_INITIAL = 2.0
-    _BACKOFF_MAX     = 60.0
-    _ACTION          = "setintensity"
-    _DEFAULT_PORT    = 60065
+    _WEBHOOK_URL = "https://xtoys.app/webhook"
 
-    def __init__(self, webhook_id="", port=_DEFAULT_PORT):
-        self.webhook_id  = webhook_id
-        self.port        = port
-        self.volume      = 0.5
-        self.ws          = None
-        self._lock       = threading.Lock()
-        self._connecting = False
-        self._backoff    = self._BACKOFF_INITIAL
-        self._next_attempt = 0.0
-        self._last_sent_int = None  # dedup on 0-100 integer
+    def __init__(self, webhook_id="", port=None):
+        self.webhook_id      = webhook_id
+        self.volume          = 0.0
+        self._lock           = threading.Lock()
+        self._last_sent_int  = None
+        self._last_error     = None
+        self._last_success_t = 0.0
+        self._session        = requests.Session()
 
     @property
     def enabled(self):
         return bool(self.webhook_id.strip())
 
-    def _ws_url(self):
-        wid = self.webhook_id.strip()
-        return f"wss://localhost:{self.port}/{wid}"
+    @property
+    def connected(self):
+        """True if a successful send happened in the last 30 s."""
+        with self._lock:
+            return (time.time() - self._last_success_t) < 30.0
 
     def maybe_reconnect(self):
-        if not self.enabled:
-            return
-        with self._lock:
-            if self.ws is not None or self._connecting:
-                return
-            if time.time() < self._next_attempt:
-                return
-            self._connecting = True
-        threading.Thread(target=self._connect_bg, daemon=True).start()
-
-    def _connect_bg(self):
-        ws_url = self._ws_url()
-        log.info(f"xToys: connect attempt → {ws_url}")
-        try:
-            ws = websocket.create_connection(
-                ws_url, timeout=5.0,
-                sslopt={"cert_reqs": ssl.CERT_NONE}
-            )
-            with self._lock:
-                self.ws          = ws
-                self._backoff    = self._BACKOFF_INITIAL
-                self._connecting = False
-            log.info(f"xToys: CONNECTED at {ws_url}")
-            self.set_volume(self.volume, instant=True)
-        except Exception as e:
-            with self._lock:
-                self._backoff      = min(self._backoff * 2, self._BACKOFF_MAX)
-                self._next_attempt = time.time() + self._backoff
-                self._connecting   = False
-            log.warning(f"xToys: connect FAILED ({type(e).__name__}: {e}) — retry in {self._backoff:.0f}s")
+        pass  # HTTP is stateless — nothing to reconnect
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
         with self._lock:
             self.volume = max(floor, min(ceiling, vol))
-            if not self.ws:
+            if not self.enabled:
                 return
             val_int = int(round(self.volume * 100))
             if not instant and val_int == self._last_sent_int:
                 return
-            payload = json.dumps({"action": self._ACTION, "intensity": val_int})
+            params = {
+                "id":        self.webhook_id.strip(),
+                "action":    "set-intensity",
+                "intensity": val_int,
+            }
             try:
-                self.ws.send(payload)
-                self._last_sent_int = val_int
-                log.info(f"xToys: SEND {payload}  (vol={self.volume:.3f})")
+                r = self._session.get(self._WEBHOOK_URL, params=params, timeout=5.0)
+                if r.status_code == 200:
+                    self._last_sent_int  = val_int
+                    self._last_error     = None
+                    self._last_success_t = time.time()
+                    log.info(f"xToys: SEND intensity={val_int}  (vol={self.volume:.3f})")
+                else:
+                    self._last_error = f"HTTP {r.status_code}"
+                    log.warning(f"xToys: SEND failed — {self._last_error}")
             except Exception as e:
-                log.warning(f"xToys: SEND FAILED ({type(e).__name__}: {e}) — dropping socket")
-                self.ws = None
-                self._last_sent_int = None
+                self._last_error = str(e)
+                log.warning(f"xToys: SEND failed — {e}")
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
 
     def disconnect(self):
         with self._lock:
-            if self.ws:
-                try:
-                    self.ws.close()
-                except Exception:
-                    pass
-                self.ws = None
-            self._last_sent_int = None
+            self._last_sent_int  = None
+            self._last_success_t = 0.0
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = requests.Session()
 
 
 class _DefaultAudioDevice:
@@ -1268,7 +1245,6 @@ class App:
         # whichever axis their session uses.
         self.tcode_axis_var    = tk.StringVar(value=TCODE_AXIS)
         self.xtoys_id_var      = tk.StringVar(value="")
-        self.xtoys_port_var    = tk.StringVar(value="60065")
 
         # Pre-load font size, theme, cum override before UI build
         try:
@@ -1628,21 +1604,15 @@ class App:
         xo.pack(fill=tk.X, padx=12, pady=(7, 2))
         ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=180,
+        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=240,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT,
                      placeholder_text="e.g. 8hR5acKTCx2s").pack(side=tk.LEFT, padx=(0, 8))
-        ctk.CTkLabel(xo, text="Port:", font=lbl,
-                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 4))
-        ctk.CTkEntry(xo, textvariable=self.xtoys_port_var, width=56,
-                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
-                     text_color=self._C_TEXT).pack(side=tk.LEFT)
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script → Connections → add your toy under Generic Output → enable Local Webhook → click \u26a1 → copy the Webhook ID",
+                     text="Get your Webhook ID at xtoys.app/me \u2192 Private Webhook. In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy \u2192 enable Private Webhook.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
-        self.xtoys_port_var.trace_add("write", self._on_xtoys_id_change)
 
         # Windows Audio options panel
         self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1775,7 +1745,6 @@ class App:
                 "edge_sens":   int(self.edge_sens_var.get()),
                 "tcode_axis":  self.tcode_axis_var.get(),
                 "xtoys_id":    self.xtoys_id_var.get(),
-                "xtoys_port":  self.xtoys_port_var.get(),
                 "outputs": {
                     "restim":  self.restim_on.get(),
                     "xtoys":   self.xtoys_on.get(),
@@ -1825,12 +1794,6 @@ class App:
             if "xtoys_id" in data:
                 self.xtoys_id_var.set(str(data.get("xtoys_id", "")))
                 self.xtoys.webhook_id = self.xtoys_id_var.get()
-            if "xtoys_port" in data:
-                self.xtoys_port_var.set(str(data.get("xtoys_port", "60065")))
-                try:
-                    self.xtoys.port = int(self.xtoys_port_var.get())
-                except ValueError:
-                    pass
             if "tcode_axis" in data:
                 try:
                     ax = str(data["tcode_axis"]).strip().upper()
@@ -2505,27 +2468,39 @@ class App:
         xtoys_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
         xtoys_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
-        ctk.CTkLabel(
-            xtoys_frame,
-            text="Setup steps:\n"
-                 "1. Open xtoys.app in a browser and sign in\n"
-                 "2. Go to Scripts \u2192 search for \u201cVisualStimEdger\u201d \u2192 Load Script\n"
-                 "3. Open Connections \u2192 add your toy under Generic Output\n"
-                 "4. Also in Connections \u2192 enable Local Webhook under Local Webhook \u2192 Save\n"
-                 "5. Click the \u26a1 satellite icon on the Local Webhook card \u2192 Connect\n"
-                 "6. Copy the Webhook ID (e.g. 8hR5acKTCx2s) \u2192 paste it into the field above\n"
-                 "7. Keep the xToys browser tab open while using VSE",
-            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
-            wraplength=420, justify="left", anchor="w",
-        ).pack(fill=tk.X, padx=12, pady=(8, 4))
+        xtoys_help_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
+        xtoys_help_row.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ctk.CTkLabel(xtoys_help_row, text="First time setup?",
+                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
 
-        port_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
-        port_row.pack(fill=tk.X, padx=12, pady=(0, 10))
-        ctk.CTkLabel(port_row, text="Port (default 60065 — only change if xToys uses a different port):",
-                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkEntry(port_row, textvariable=self.xtoys_port_var, width=70,
-                     fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
-                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        def _show_xtoys_help():
+            hw = ctk.CTkToplevel(win)
+            hw.title("xToys Setup")
+            hw.geometry("420x280")
+            hw.resizable(False, False)
+            hw.grab_set()
+            ctk.CTkLabel(hw,
+                text="Setup steps:\n\n"
+                     "1. Open xtoys.app in a browser and sign in\n"
+                     "2. Scripts \u2192 search \u201cVisualStimEdger\u201d \u2192 Load Script\n"
+                     "3. Connections \u2192 add your toy under Generic Output\n"
+                     "4. Go to xtoys.app/me \u2192 Private Webhook\n"
+                     "5. Copy the Webhook ID \u2192 paste it into VSE\n"
+                     "6. In xToys Connections \u2192 enable Private Webhook \u2192 Save\n"
+                     "7. Keep the xToys tab open while using VSE",
+                font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+                justify="left", anchor="w", wraplength=380,
+            ).pack(padx=20, pady=20, anchor="w")
+            ctk.CTkButton(hw, text="Close", command=hw.destroy, width=80,
+                          fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                          text_color=self._C_TEXT).pack(pady=(0, 16))
+
+        ctk.CTkButton(xtoys_help_row, text="? Setup Guide", command=_show_xtoys_help,
+                      width=100, height=22, font=ctk.CTkFont(size=9),
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT_DIM, border_width=1,
+                      border_color=self._C_BORDER).pack(side=tk.LEFT, padx=(8, 0))
+
 
         # ── Cum Volume Override ───────────────────────────────────────────────
         ctk.CTkLabel(win, text="Cum Volume Behavior",
@@ -2669,17 +2644,10 @@ class App:
 
     def _on_xtoys_id_change(self, *_):
         new_id = self.xtoys_id_var.get().strip()
-        try:
-            new_port = int(self.xtoys_port_var.get().strip())
-        except ValueError:
-            new_port = XToysClient._DEFAULT_PORT
-        if new_id != self.xtoys.webhook_id or new_port != self.xtoys.port:
+        if new_id != self.xtoys.webhook_id:
             self.xtoys.disconnect()
-            self.xtoys.webhook_id    = new_id
-            self.xtoys.port          = new_port
-            self.xtoys._backoff      = XToysClient._BACKOFF_INITIAL
-            self.xtoys._next_attempt = 0.0
-            log.info(f"xToys: webhook ID={new_id!r} port={new_port}")
+            self.xtoys.webhook_id = new_id
+            log.info(f"xToys: webhook ID={new_id!r}")
         self._save_config()
 
     def _on_port_change(self, *_):
@@ -3176,7 +3144,7 @@ class App:
             elif conn_color != "#00ff00": conn_color = "#ff0000"
             parts.append(f"WS: {'OK' if ok else 'Disconnected'}")
         if self.xtoys_on.get():
-            ok = bool(self.xtoys.ws)
+            ok = self.xtoys.connected
             if ok: conn_color = "#00ff00"
             elif conn_color != "#00ff00":
                 conn_color = "#ffaa00" if not self.xtoys.enabled else "#ff0000"
