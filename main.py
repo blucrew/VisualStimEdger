@@ -146,7 +146,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.6"
+VERSION = "1.7.7"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -565,6 +565,151 @@ class XToysClient:
             except Exception:
                 pass
             self._session = requests.Session()
+
+
+class HRClient:
+    """
+    Receives live heart-rate data from Pulsoid via WebSocket.
+    Token: https://pulsoid.net/ui/keys  (free tier works with most HR monitors)
+    WS endpoint: wss://dev.pulsoid.net/api/v1/data/real_time?access_token=<token>
+    Message format: {"measured_at":..., "data":{"heart_rate": 75}}
+
+    modifier() returns a multiplier applied to denial deltas in _tick_volume:
+      1.0 — at/below resting BPM (no effect)
+      2.0 — at/above peak BPM (denial doubled, rewards halved)
+    Linear between the two thresholds, creating natural tightening as arousal builds.
+    """
+    _WS_URL  = "wss://dev.pulsoid.net/api/v1/data/real_time?access_token={token}"
+    _STALE_S = 12.0   # readings older than this are considered disconnected
+
+    def __init__(self, token="", resting_bpm=70, peak_bpm=100):
+        self.token       = token.strip()
+        self.resting_bpm = resting_bpm
+        self.peak_bpm    = peak_bpm
+        self._bpm        = None
+        self._bpm_hist   = deque(maxlen=6)
+        self._last_rx    = 0.0
+        self._lock       = threading.Lock()
+        self._ws         = None
+        self._thread     = None
+        self._stop       = threading.Event()
+
+    # ── properties ────────────────────────────────────────────────────────────
+
+    @property
+    def enabled(self):
+        return bool(self.token)
+
+    @property
+    def connected(self):
+        with self._lock:
+            return self._bpm is not None and (time.time() - self._last_rx) < self._STALE_S
+
+    @property
+    def bpm(self):
+        with self._lock:
+            return self._bpm
+
+    def smooth_bpm(self):
+        """Rolling average of recent BPM readings, or None if no data."""
+        with self._lock:
+            if not self._bpm_hist:
+                return None
+            return sum(self._bpm_hist) / len(self._bpm_hist)
+
+    def modifier(self):
+        """
+        Denial multiplier in [1.0, 2.0].
+        Returns 1.0 if not connected or peak <= resting.
+        """
+        if not self.connected:
+            return 1.0
+        sbpm = self.smooth_bpm()
+        if sbpm is None:
+            return 1.0
+        resting = float(self.resting_bpm)
+        peak    = float(self.peak_bpm)
+        if peak <= resting:
+            return 1.0
+        t = max(0.0, min(1.0, (sbpm - resting) / (peak - resting)))
+        return 1.0 + t
+
+    # ── lifecycle ──────────────────────────────────────────────────────────────
+
+    def start(self):
+        if not self.enabled:
+            return
+        self._stop.clear()
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True, name="HRClient")
+        self._thread.start()
+        log.info(f"HRClient: connecting (token={self.token[:8]}…)")
+
+    def stop(self):
+        self._stop.set()
+        ws = self._ws
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+    def restart(self, token=None, resting_bpm=None, peak_bpm=None):
+        """Update config and reconnect."""
+        self.stop()
+        if token       is not None: self.token       = token.strip()
+        if resting_bpm is not None: self.resting_bpm = resting_bpm
+        if peak_bpm    is not None: self.peak_bpm    = peak_bpm
+        with self._lock:
+            self._bpm = None
+            self._bpm_hist.clear()
+            self._last_rx = 0.0
+        if self.enabled:
+            self.start()
+
+    # ── WebSocket loop ─────────────────────────────────────────────────────────
+
+    def _run(self):
+        while not self._stop.is_set():
+            if not self.token:
+                time.sleep(2.0)
+                continue
+            url = self._WS_URL.format(token=self.token)
+            try:
+                ws = websocket.WebSocketApp(
+                    url,
+                    on_message=self._on_message,
+                    on_error=lambda ws, e: log.warning(f"HRClient WS error: {e}"),
+                    on_close=lambda ws, c, m: log.info("HRClient WS closed"),
+                )
+                self._ws = ws
+                ws.run_forever(
+                    sslopt={"cert_reqs": ssl.CERT_NONE},
+                    ping_interval=20,
+                    ping_timeout=10,
+                )
+            except Exception as e:
+                log.warning(f"HRClient: connect error: {e}")
+            finally:
+                self._ws = None
+            if not self._stop.is_set():
+                log.debug("HRClient: reconnecting in 8 s…")
+                time.sleep(8.0)
+
+    def _on_message(self, ws, raw):
+        try:
+            data = json.loads(raw)
+            bpm  = data.get("data", {}).get("heart_rate")
+            if bpm is not None:
+                bpm = int(bpm)
+                with self._lock:
+                    self._bpm = bpm
+                    self._bpm_hist.append(bpm)
+                    self._last_rx = time.time()
+                log.debug(f"HRClient: {bpm} bpm")
+        except Exception:
+            pass
 
 
 class _DefaultAudioDevice:
@@ -1217,6 +1362,7 @@ class App:
         self.win_devices      = []
         self._orig_win_volume = None  # restored on exit
         self.music_player     = MusicPlayer() if _MINIAUDIO_OK else None
+        self.hr_client        = HRClient()
 
         # Root window
         self.root = ctk.CTk()
@@ -1233,6 +1379,10 @@ class App:
         self.xtoys_on    = tk.BooleanVar(value=False)
         self.audio_on    = tk.BooleanVar(value=False)
         self.mp3_on      = tk.BooleanVar(value=False)
+        self.hr_on           = tk.BooleanVar(value=False)
+        self.hr_token_var    = tk.StringVar(value="")
+        self.hr_resting_var  = tk.IntVar(value=70)
+        self.hr_peak_var     = tk.IntVar(value=100)
         self.port_var    = tk.StringVar(value="12346")
         # Edging sensitivity: pushes the effective Edging line DOWN (toward
         # Erect) by N pixels, so the Edging state trips earlier than the raw
@@ -1529,6 +1679,7 @@ class App:
             ("restim",  "\u26a1 restim",            self.restim_on, self._C_ACCENT,  self._C_ACCENT_H),
             ("xtoys",   "xToys",                    self.xtoys_on,  self._C_GREEN,   self._C_GREEN_H),
             ("windows", "\u229e\U0001f50a windows",  self.audio_on,  self._C_BLUE,    self._C_BLUE_H),
+            ("hr",      "\u2665 HR",                self.hr_on,     "#e91e63",       "#c2185b"),
         ]
         if _MINIAUDIO_OK:
             _mode_defs.append(("mp3", "\u266b mp3", self.mp3_on, "#9c27b0", "#7b1fa2"))
@@ -1613,6 +1764,53 @@ class App:
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
+
+        # ── Heart Rate (Pulsoid) options panel ────────────────────────────────
+        self._hr_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+
+        hr_row1 = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
+        hr_row1.pack(fill=tk.X, padx=12, pady=(7, 2))
+        ctk.CTkLabel(hr_row1, text="Pulsoid Token:", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkEntry(hr_row1, textvariable=self.hr_token_var, width=210,
+                     fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT, show="\u2022",
+                     placeholder_text="paste from pulsoid.net/ui/keys").pack(side=tk.LEFT, padx=(0, 8))
+        self._hr_bpm_label = ctk.CTkLabel(hr_row1, text="\u2665 -- bpm",
+                                          font=ctk.CTkFont(size=fs + 1, weight="bold"),
+                                          text_color="#e91e63")
+        self._hr_bpm_label.pack(side=tk.LEFT)
+
+        hr_row2 = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
+        hr_row2.pack(fill=tk.X, padx=12, pady=(0, 2))
+
+        def _hr_slider_group(parent, label, var, lo, hi):
+            ctk.CTkLabel(parent, text=label, font=lbl,
+                         text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 4))
+            lbl_val = ctk.CTkLabel(parent, text=f"{var.get()} bpm",
+                                   font=lbl, text_color=self._C_TEXT_DIM, width=60)
+            lbl_val.pack(side=tk.LEFT, padx=(0, 6))
+            def _upd(v, lv=lbl_val, sv=var):
+                sv.set(int(float(v)))
+                lv.configure(text=f"{int(float(v))} bpm")
+                self.hr_client.resting_bpm = self.hr_resting_var.get()
+                self.hr_client.peak_bpm    = self.hr_peak_var.get()
+            ctk.CTkSlider(parent, from_=lo, to=hi, variable=var,
+                          command=_upd, width=110,
+                          button_color="#e91e63", button_hover_color="#c2185b",
+                          progress_color="#e91e63").pack(side=tk.LEFT)
+
+        _hr_slider_group(hr_row2, "Resting:", self.hr_resting_var, 40, 90)
+        ctk.CTkLabel(hr_row2, text="   ", text_color="transparent").pack(side=tk.LEFT)  # spacer
+        _hr_slider_group(hr_row2, "Peak:", self.hr_peak_var, 80, 170)
+
+        ctk.CTkLabel(self._hr_opts,
+                     text=("Higher HR \u2192 stronger denial, slower rewards.  "
+                           "Get a free token at pulsoid.net/ui/keys \u2014 works with Polar, Garmin, "
+                           "Apple Watch, most BLE chest straps via the Pulsoid app."),
+                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+                     wraplength=390, justify="left").pack(anchor="w", padx=12, pady=(2, 6))
+        self.hr_token_var.trace_add("write", self._on_hr_token_change)
 
         # Windows Audio options panel
         self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
@@ -1750,7 +1948,11 @@ class App:
                     "xtoys":   self.xtoys_on.get(),
                     "windows": self.audio_on.get(),
                     "mp3":     self.mp3_on.get(),
+                    "hr":      self.hr_on.get(),
                 },
+                "hr_token":   self.hr_token_var.get(),
+                "hr_resting": self.hr_resting_var.get(),
+                "hr_peak":    self.hr_peak_var.get(),
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
                 "mp3_path":    getattr(self, '_mp3_last_path', ""),
@@ -1808,6 +2010,7 @@ class App:
                 self.xtoys_on.set(bool(outs.get("xtoys", False)))
                 self.audio_on.set(bool(outs.get("windows", False)))
                 self.mp3_on.set(bool(outs.get("mp3", False)) and _MINIAUDIO_OK)
+                self.hr_on.set(bool(outs.get("hr", False)))
                 self._on_output_change()
                 self._update_output_btns()
             elif "mode" in data:
@@ -1819,6 +2022,25 @@ class App:
                 self.mp3_on.set(mode == "mp3" and _MINIAUDIO_OK)
                 self._on_output_change()
                 self._update_output_btns()
+            # Heart rate config
+            if "hr_token" in data:
+                tok = str(data["hr_token"])
+                self.hr_token_var.set(tok)
+                self.hr_client.token = tok.strip()
+            if "hr_resting" in data:
+                try:
+                    v = max(40, min(90, int(data["hr_resting"])))
+                    self.hr_resting_var.set(v)
+                    self.hr_client.resting_bpm = v
+                except Exception:
+                    pass
+            if "hr_peak" in data:
+                try:
+                    v = max(80, min(170, int(data["hr_peak"])))
+                    self.hr_peak_var.set(v)
+                    self.hr_client.peak_bpm = v
+                except Exception:
+                    pass
             if "port"        in data: self.port_var.set(data["port"])
             if "device_name" in data: self._device_combo.set(data["device_name"])
             if _MINIAUDIO_OK and self.music_player:
@@ -1898,6 +2120,12 @@ class App:
                 self.music_player.cleanup()
             except Exception:
                 pass
+
+        # Stop HR client
+        try:
+            self.hr_client.stop()
+        except Exception:
+            pass
 
         # Stop overlay server
         if hasattr(self, '_overlay'):
@@ -2606,6 +2834,7 @@ class App:
         # Hide all option panels then re-pack in order for active outputs
         self._restim_opts.pack_forget()
         self._xtoys_opts.pack_forget()
+        self._hr_opts.pack_forget()
         self._windows_opts.pack_forget()
         self._mp3_opts.pack_forget()
 
@@ -2616,6 +2845,15 @@ class App:
         if self.xtoys_on.get():
             self._xtoys_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
             after = self._xtoys_opts
+        if self.hr_on.get():
+            self._hr_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
+            after = self._hr_opts
+            self.hr_client.resting_bpm = self.hr_resting_var.get()
+            self.hr_client.peak_bpm    = self.hr_peak_var.get()
+            self.hr_client.token       = self.hr_token_var.get().strip()
+            self.hr_client.start()
+        else:
+            self.hr_client.stop()
         if self.audio_on.get():
             self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
             after = self._windows_opts
@@ -2648,6 +2886,14 @@ class App:
             self.xtoys.disconnect()
             self.xtoys.webhook_id = new_id
             log.info(f"xToys: webhook ID={new_id!r}")
+        self._save_config()
+
+    def _on_hr_token_change(self, *_):
+        new_token = self.hr_token_var.get().strip()
+        if new_token != self.hr_client.token and self.hr_on.get():
+            self.hr_client.restart(token=new_token)
+        elif new_token != self.hr_client.token:
+            self.hr_client.token = new_token
         self._save_config()
 
     def _on_port_change(self, *_):
@@ -3120,6 +3366,14 @@ class App:
         ceil_val  = self.max_vol_var.get() / 100.0
         delta     = self._compute_volume_delta()
 
+        # ── HR modifier: tighten denial / slow rewards when heart rate is high ─
+        if self.hr_on.get() and self.hr_client.connected:
+            hr_mod = self.hr_client.modifier()   # 1.0 (resting) → 2.0 (peak)
+            if delta < 0.0:
+                delta *= hr_mod                  # harder denial
+            elif delta > 0.0:
+                delta *= max(0.4, 2.0 - hr_mod)  # stingier reward (halved at peak)
+
         if self.restim_on.get():
             if delta != 0.0:
                 self.restim.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
@@ -3159,6 +3413,20 @@ class App:
             self._mp3_update_track_label()
             if self.music_player._state == "playing": conn_color = "#00ff00"
             parts.append(f"MP3: {self.music_player.track_name or '—'}")
+        if self.hr_on.get():
+            sbpm = self.hr_client.smooth_bpm()
+            if self.hr_client.connected and sbpm is not None:
+                parts.append(f"\u2665 {sbpm:.0f} bpm")
+                if hasattr(self, '_hr_bpm_label'):
+                    self._hr_bpm_label.configure(
+                        text=f"\u2665 {sbpm:.0f} bpm",
+                        text_color="#e91e63")
+            else:
+                parts.append("\u2665 No HR")
+                if hasattr(self, '_hr_bpm_label'):
+                    self._hr_bpm_label.configure(
+                        text="\u2665 -- bpm",
+                        text_color=self._C_TEXT_DIM)
 
         src_str = " | ".join(parts) if parts else "No output"
 
@@ -3211,6 +3479,16 @@ class App:
                 elif elapsed_lmc < 5:
                     letmecum = {"result": "denied", "retry_in": 0}
 
+        # Heart rate data for overlay
+        hr_data = None
+        if self.hr_on.get():
+            sbpm = self.hr_client.smooth_bpm()
+            hr_data = {
+                "bpm": round(sbpm) if sbpm is not None else None,
+                "connected": self.hr_client.connected,
+                "modifier": round(self.hr_client.modifier(), 2),
+            }
+
         obs_state = "-" if "Calibration" in state else state
         self._overlay.broadcast(json.dumps({
             "state": obs_state,
@@ -3222,6 +3500,7 @@ class App:
             "letmecum": letmecum,
             "cum_count": self._cum_count,
             "denial_count": self._denial_count,
+            "hr": hr_data,
         }))
 
     def _display_frame(self, frame):
