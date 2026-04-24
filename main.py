@@ -1344,7 +1344,7 @@ class App:
         self._ruin_odds      = dict(self._RUIN_ODDS_DEFAULT)
         self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
         self._ruin_count     = 0
-        self._devil_cv       = None
+        self._devil_label    = None
 
         # AUTO calibration
         self._auto_mode       = True
@@ -3134,21 +3134,27 @@ class App:
             devil_path = _base_dir / "devil.png"
             if devil_path.exists():
                 try:
-                    img = cv2.imread(str(devil_path))
-                    if img is not None:
-                        dh, dw = img.shape[:2]
-                        max_dim = 300
-                        scale = min(max_dim / dw, max_dim / dh)
-                        nd_w, nd_h = int(dw * scale), int(dh * scale)
-                        self._devil_cv = cv2.resize(img, (nd_w, nd_h))
-                        log.info(f"Evil Mode: loaded devil.png ({nd_w}x{nd_h})")
-                    else:
-                        self._devil_cv = None
+                    from PIL import ImageTk as _ITk
+                    pil_img = Image.open(str(devil_path)).convert("RGBA")
+                    # Scale to fit controls panel (portrait ~160×220)
+                    pw, ph = 160, 220
+                    pil_img = pil_img.resize((pw, ph), Image.LANCZOS)
+                    # Apply 38% global alpha so it reads as a watermark
+                    r, g, b, a = pil_img.split()
+                    a = a.point(lambda x: int(x * 0.38))
+                    pil_img.putalpha(a)
+                    ctk_img = ctk.CTkImage(light_image=pil_img,
+                                           dark_image=pil_img, size=(pw, ph))
+                    self._devil_label = ctk.CTkLabel(
+                        self.root, image=ctk_img, text="", fg_color="transparent")
+                    # Float over lower-right of UI (away from video, over the cards)
+                    self._devil_label.place(relx=0.88, rely=0.72, anchor="center")
+                    log.info(f"Evil Mode: devil.png placed on UI ({pw}×{ph})")
                 except Exception as e:
-                    log.warning(f"Evil Mode: failed to load devil.png: {e}")
-                    self._devil_cv = None
+                    log.warning(f"Evil Mode: failed to place devil.png: {e}")
+                    self._devil_label = None
             else:
-                self._devil_cv = None
+                self._devil_label = None
         else:
             self._apply_theme(self._pre_evil_theme)
             self.root.title("VisualStimEdger")
@@ -3157,7 +3163,10 @@ class App:
                                      border_color=self._C_BORDER)
             # Restore letmecum button
             self._letmecum_btn.configure(fg_color="#3EC941", hover_color="#32a435")
-            self._devil_cv = None
+            if self._devil_label is not None:
+                self._devil_label.place_forget()
+                self._devil_label.destroy()
+                self._devil_label = None
         self._save_config()
 
     # ------------------------------------------------------------------ MP3 transport callbacks
@@ -3715,23 +3724,6 @@ class App:
         }))
 
     def _display_frame(self, frame):
-        # Evil Mode: composite devil.png semi-transparently onto the frame
-        if self._evil_mode and self._devil_cv is not None:
-            try:
-                dh, dw = self._devil_cv.shape[:2]
-                fh, fw = frame.shape[:2]
-                # Scale devil to fit frame height at 60%
-                scale = (fh * 0.6) / dh
-                nd_h, nd_w = int(dh * scale), int(dw * scale)
-                devil_r = cv2.resize(self._devil_cv, (nd_w, nd_h))
-                x = (fw - nd_w) // 2
-                y = (fh - nd_h) // 2
-                if x >= 0 and y >= 0 and x + nd_w <= fw and y + nd_h <= fh:
-                    roi = frame[y:y + nd_h, x:x + nd_w]
-                    frame[y:y + nd_h, x:x + nd_w] = cv2.addWeighted(roi, 0.80, devil_r, 0.20, 0)
-            except Exception as e:
-                log.debug(f"Evil Mode: devil composite error: {e}")
-
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # Fit image to container, preserving aspect ratio
         iw, ih = img.size
