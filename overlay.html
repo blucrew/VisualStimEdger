@@ -122,6 +122,55 @@
     100% { text-shadow: 0 0 16px #00e676, 0 0 35px #00e67888; }
   }
 
+  /* ── RUIN banner ─────────────────────── */
+  .ruin-banner {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 5px 0 4px;
+    background: rgba(10,0,20,0.75);
+    border-radius: 6px;
+    border: 1px solid rgba(153,0,204,0.5);
+    font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .ruin-lbl {
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    opacity: 0.65;
+    font-weight: 700;
+    color: #cc88ff;
+  }
+  .ruin-result {
+    font-size: 22px;
+    line-height: 1.15;
+    color: #9c27b0;
+  }
+  .ruin-banner.on {
+    display: flex;
+    animation: ruin-pulse 1.4s ease-in-out infinite alternate;
+  }
+  @keyframes ruin-pulse {
+    0%   {
+      color: #9c27b0;
+      text-shadow: 0 0 8px #6600cc, 0 0 20px #6600cc88;
+      border-color: rgba(153,0,204,0.5);
+      opacity: 0.85;
+    }
+    100% {
+      color: #cc44ff;
+      text-shadow: 0 0 14px #9c27b0, 0 0 35px #6600ccaa, 0 0 60px #6600cc44;
+      border-color: rgba(204,68,255,0.7);
+      opacity: 1;
+    }
+  }
+
   /* ── Event line ───────────────────────── */
   .evt {
     text-align: center;
@@ -315,6 +364,10 @@
     <div class="tattle-lbl" id="tattleLbl">they asked to cum</div>
     <div class="tattle-result" id="tattleResult">DENIED!</div>
   </div>
+  <div class="ruin-banner" id="ruinBanner">
+    <div class="ruin-lbl">they were ruined</div>
+    <div class="ruin-result">RUINED 😈</div>
+  </div>
   <div class="hr-pill" id="hrPill">
     <span class="hr-heart" id="hrHeart">♥</span>
     <span id="hrBpm">-- bpm</span>
@@ -386,12 +439,13 @@ const stateLblEl = document.getElementById('stateLbl');
 const tattleEl    = document.getElementById('tattle');
 const tattleLbl   = document.getElementById('tattleLbl');
 const tattleResult= document.getElementById('tattleResult');
+const ruinBanner  = document.getElementById('ruinBanner');
 const hrPill      = document.getElementById('hrPill');
 const hrBpm       = document.getElementById('hrBpm');
 const hrHeart     = document.getElementById('hrHeart');
 const STATE_COLOR = { Flaccid: '#4fc3f7', Erect: '#4caf50', Edging: '#ff1744' };
 
-let ws = null, rt = null;
+let ws = null, rt = null, ruinTimer = null;
 
 function vc(p) {
   if (p < 40) return '#4caf50';
@@ -436,6 +490,8 @@ function onMsg(e) {
       tattleLbl.textContent = 'they asked to cum';
       tattleResult.textContent = "TIME'S UP!";
       tattleEl.className = 'tattle-banner expired';
+    } else if (l.result === 'ruined') {
+      tattleEl.className = 'tattle-banner';
     } else {
       tattleLbl.textContent = 'they asked to cum';
       tattleResult.textContent = 'DENIED!' + (l.retry_in > 0 ? '  ' + l.retry_in + 's' : '');
@@ -443,6 +499,18 @@ function onMsg(e) {
     }
   } else {
     tattleEl.className = 'tattle-banner';
+  }
+
+  // Ruin banner — show for 8 seconds after a ruined result
+  if (d.letmecum && d.letmecum.result === 'ruined') {
+    if (!ruinBanner.classList.contains('on')) {
+      ruinBanner.classList.add('on');
+      if (ruinTimer) clearTimeout(ruinTimer);
+      ruinTimer = setTimeout(() => {
+        ruinBanner.classList.remove('on');
+        ruinTimer = null;
+      }, 8000);
+    }
   }
 
   edgesEl.textContent = d.edge_count || 0;

@@ -1201,6 +1201,15 @@ class Tooltip:
 
 
 THEMES = {
+    "Evil": {
+        "BG": "#0d0000", "SURFACE": "#1a0000", "SURFACE2": "#250500",
+        "ACCENT": "#cc0000", "ACCENT_H": "#990000",
+        "RED": "#ff2200", "RED_HOV": "#cc1800",
+        "GREEN": "#3a8a1a", "GREEN_H": "#2a6a10",
+        "BLUE": "#440000", "BLUE_H": "#330000",
+        "YELLOW": "#cc3300", "YELLOW_H": "#993300",
+        "TEXT": "#ffcccc", "TEXT_DIM": "#7a3a3a", "BORDER": "#660000",
+    },
     "ReThorn": {
         "BG": "#2d2d2d", "SURFACE": "#383838", "SURFACE2": "#404040",
         "ACCENT": "#F5A623", "ACCENT_H": "#d48e1a",
@@ -1328,6 +1337,14 @@ class App:
         self._cum_allowed = False
         self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
         self._denial_phrases = list(self._DENIAL_PHRASES_DEFAULT)
+
+        # Evil Mode state
+        self._evil_mode      = False
+        self._pre_evil_theme = DEFAULT_THEME
+        self._ruin_odds      = dict(self._RUIN_ODDS_DEFAULT)
+        self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
+        self._ruin_count     = 0
+        self._devil_cv       = None
 
         # AUTO calibration
         self._auto_mode       = True
@@ -1909,6 +1926,9 @@ class App:
         Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._evil_btn = _ghost_btn(ctrl, "😈", self._toggle_evil_mode, width=34)
+        self._evil_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(self._evil_btn, "Evil Mode — adds ruin outcome, crimson theme, and devil.png overlay")
 
         _divider()
 
@@ -1963,6 +1983,9 @@ class App:
                 "cum_override_range": self._cum_override_range,
                 "ui_font_size": self._ui_font_size,
                 "theme": self._theme_name,
+                "evil_mode": self._evil_mode,
+                "ruin_odds": self._ruin_odds,
+                "ruin_phrases": self._ruin_phrases,
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -2082,6 +2105,14 @@ class App:
                 self._ui_font_size = int(data["ui_font_size"])
             if "theme" in data and data["theme"] in THEMES:
                 self._theme_name = data["theme"]
+            if "ruin_odds" in data and isinstance(data["ruin_odds"], dict):
+                self._ruin_odds.update(data["ruin_odds"])
+            if "ruin_phrases" in data and isinstance(data["ruin_phrases"], list):
+                self._ruin_phrases = data["ruin_phrases"]
+            if "evil_mode" in data:
+                self._evil_mode = bool(data["evil_mode"])
+                if self._evil_mode:
+                    self.root.after(100, lambda: self._apply_evil_mode(True))
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -2382,6 +2413,22 @@ class App:
         self._aggr_seg.configure(selected_color=col, selected_hover_color=hov)
         self._save_config()
 
+    # Evil Mode ruin constants
+    _RUIN_ODDS_DEFAULT    = {"Easy": 0, "Middle": 5, "Hard": 20, "Expert": 40}
+    _RUIN_COOLDOWN        = {"Easy": 60, "Middle": 90, "Hard": 120, "Expert": 180}
+    _RUIN_PHRASES_DEFAULT = [
+        "You thought that was it? Cute.",
+        "Ruined. Just like you deserve.",
+        "Close enough. No.",
+        "That's not cumming, that's suffering.",
+        "Congratulations on nothing.",
+        "Ruin accepted. Permission denied.",
+        "That didn't count.",
+        "Oh you were close. Too bad.",
+        "Felt good for a second, didn't it.",
+        "Gone. All of it. Gone.",
+    ]
+
     # Odds of "Let me cum?" being granted per aggressiveness level
     _CUM_ODDS_DEFAULT = {"Easy": 2, "Middle": 4, "Hard": 6, "Expert": 30}
     _CUM_DENY_COOLDOWN = {"Easy": 30, "Middle": 30, "Hard": 60, "Expert": 120}
@@ -2438,6 +2485,14 @@ class App:
         else:
             self._cum_allowed = False
             self._denial_count += 1
+
+            # Evil Mode: roll for ruin before normal denial cooldown
+            if self._evil_mode:
+                ruin_pct = self._ruin_odds.get(aggr, 0)
+                if ruin_pct > 0 and random.randint(1, 100) <= ruin_pct:
+                    self._do_ruin(aggr)
+                    return
+
             cooldown = self._CUM_DENY_COOLDOWN.get(aggr, 30)
             self._letmecum_cooldown_until = time.time() + cooldown
             self._letmecum_btn.configure(text="DENIED!", fg_color="#FF4444",
@@ -2455,8 +2510,12 @@ class App:
                                          fg_color="#FF4444", hover_color="#cc3636")
             self.root.after(1000, self._tick_letmecum_cooldown)
         else:
-            self._letmecum_btn.configure(text="Let me cum?",
-                                         fg_color="#3EC941", hover_color="#32a435")
+            if self._evil_mode:
+                self._letmecum_btn.configure(text="Let me cum?",
+                                             fg_color="#8a1a1a", hover_color="#6a0a0a")
+            else:
+                self._letmecum_btn.configure(text="Let me cum?",
+                                             fg_color="#3EC941", hover_color="#32a435")
             self._snark_label.configure(text="")
 
     def _tick_cum_grant(self):
@@ -2485,6 +2544,61 @@ class App:
                                              fg_color="#3EC941", hover_color="#32a435"),
                 self._snark_label.configure(text="")))
             log.info("Cum grant expired — permission revoked")
+
+    def _ruin_set_volume(self, vol: float):
+        """Set all active outputs instantly (used by the ruin pulse sequence)."""
+        if self.restim_on.get():
+            self.restim.set_volume(vol, instant=True)
+        if self.xtoys_on.get():
+            self.xtoys.set_volume(vol, instant=True)
+        if self.audio_on.get() and self.win_audio and self.win_audio.connected:
+            self.win_audio.set_volume(vol, 0.0, 1.0)
+        if self.mp3_on.get() and self.music_player:
+            self.music_player.volume = vol
+
+    def _do_ruin(self, aggr: str):
+        """Execute the ruin pulse sequence using root.after() — no blocking."""
+        import random
+        self._last_letmecum_result = "ruin"
+        self._last_letmecum_time = time.time()
+        self._ruin_count += 1
+        log.info(f"RUIN triggered on {aggr}")
+
+        self._letmecum_btn.configure(text="RUINED 😈", fg_color="#6600cc",
+                                     hover_color="#440088")
+
+        # t=0: 88%
+        self._ruin_set_volume(0.88)
+
+        def _step2():
+            # t=600ms: cut to 0%
+            self._ruin_set_volume(0.0)
+        def _step3():
+            # t=1000ms: 94%
+            self._ruin_set_volume(0.94)
+        def _step4():
+            # t=1600ms: cut to 0%
+            self._ruin_set_volume(0.0)
+        def _step5():
+            # t=2100ms: 100%
+            self._ruin_set_volume(1.0)
+        def _step6():
+            # t=2700ms: HARD CUT to 0, lock, show ruin phrase, start cooldown
+            self._ruin_set_volume(0.0)
+            cooldown = self._RUIN_COOLDOWN.get(aggr, 90)
+            self._letmecum_cooldown_until = time.time() + cooldown
+            phrase = random.choice(self._ruin_phrases) if self._ruin_phrases else "Ruined."
+            self._snark_label.configure(text=phrase)
+            self._last_letmecum_result = "ruined"
+            self._last_letmecum_time = time.time()
+            # Transition button into cooldown state
+            self.root.after(1000, lambda: self._tick_letmecum_cooldown())
+
+        self.root.after(600,  _step2)
+        self.root.after(1000, _step3)
+        self.root.after(1600, _step4)
+        self.root.after(2100, _step5)
+        self.root.after(2700, _step6)
 
     def _on_cum(self):
         """Hard stop — volume to 0 and pinned there until user presses Resume."""
@@ -2749,6 +2863,36 @@ class App:
                            border_color=self._C_BORDER
                            ).pack(padx=16, pady=(2, 8), anchor="w")
 
+        # ── Ruin Odds ─────────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="😈 Ruin Odds (% chance when denied, Evil Mode only)",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        ruin_odds_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        ruin_odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        ruin_odds_vars = {}
+        for level in ("Easy", "Middle", "Hard", "Expert"):
+            row = ctk.CTkFrame(ruin_odds_frame, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=4)
+            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+                         width=70, anchor="w").pack(side=tk.LEFT)
+            ctk.CTkLabel(row, text="%", font=ctk.CTkFont(size=10),
+                         text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
+            var = tk.IntVar(value=self._ruin_odds.get(level, 0))
+            ruin_odds_vars[level] = var
+            ctk.CTkEntry(row, textvariable=var, width=60,
+                         fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                         text_color=self._C_TEXT).pack(side=tk.LEFT)
+
+        # ── Ruin Phrases ──────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Ruin Phrases (one per line)",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        ruin_phrases_box = ctk.CTkTextbox(win, height=150,
+                                          fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                                          text_color=self._C_TEXT, border_width=1,
+                                          font=ctk.CTkFont(size=11))
+        ruin_phrases_box.pack(fill=tk.BOTH, padx=16, pady=(0, 8))
+        ruin_phrases_box.insert("1.0", "\n".join(self._ruin_phrases))
+
         # ── Cum Odds ──────────────────────────────────────────────────────────
         ctk.CTkLabel(win, text="\"Let me cum?\" Odds  (1 in N chance)",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
@@ -2788,8 +2932,14 @@ class App:
                 val = var.get()
                 if val >= 1:
                     self._cum_odds[level] = val
+            for level, var in ruin_odds_vars.items():
+                val = var.get()
+                if 0 <= val <= 100:
+                    self._ruin_odds[level] = val
             text = phrases_box.get("1.0", "end").strip()
             self._denial_phrases = [l.strip() for l in text.split("\n") if l.strip()]
+            ruin_text = ruin_phrases_box.get("1.0", "end").strip()
+            self._ruin_phrases = [l.strip() for l in ruin_text.split("\n") if l.strip()]
             self._cum_override_range = override_var.get()
             self._ui_font_size = int(font_var.get())
             self._theme_name = theme_var.get()
@@ -2799,10 +2949,16 @@ class App:
         def _reset():
             self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
             self._denial_phrases = list(self._DENIAL_PHRASES_DEFAULT)
+            self._ruin_odds = dict(self._RUIN_ODDS_DEFAULT)
+            self._ruin_phrases = list(self._RUIN_PHRASES_DEFAULT)
             for level, var in odds_vars.items():
                 var.set(self._CUM_ODDS_DEFAULT.get(level, 4))
+            for level, var in ruin_odds_vars.items():
+                var.set(self._RUIN_ODDS_DEFAULT.get(level, 0))
             phrases_box.delete("1.0", "end")
             phrases_box.insert("1.0", "\n".join(self._denial_phrases))
+            ruin_phrases_box.delete("1.0", "end")
+            ruin_phrases_box.insert("1.0", "\n".join(self._ruin_phrases))
 
         ctk.CTkButton(btn_row, text="Reset Defaults", command=_reset, width=120,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
@@ -2954,6 +3110,51 @@ class App:
             self._hold_btn.configure(text="Hold Volume",
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                      border_color=self._C_BORDER)
+
+    def _toggle_evil_mode(self):
+        self._evil_mode = not self._evil_mode
+        self._apply_evil_mode(self._evil_mode)
+
+    def _apply_evil_mode(self, on: bool):
+        if on:
+            self._pre_evil_theme = self._theme_name
+            self._apply_theme("Evil")
+            self.root.title("VisualStimEdger 😈")
+            # Style evil button active
+            self._evil_btn.configure(fg_color="#cc0000", hover_color="#990000",
+                                     border_color="#ff2200")
+            # Style letmecum button with reddish tint when not granted
+            if not self._cum_allowed:
+                self._letmecum_btn.configure(fg_color="#8a1a1a", hover_color="#6a0a0a")
+            # Load devil.png
+            devil_path = pathlib.Path(os.path.dirname(os.path.abspath(__file__))) / "devil.png"
+            if devil_path.exists():
+                try:
+                    img = cv2.imread(str(devil_path))
+                    if img is not None:
+                        dh, dw = img.shape[:2]
+                        max_dim = 300
+                        scale = min(max_dim / dw, max_dim / dh)
+                        nd_w, nd_h = int(dw * scale), int(dh * scale)
+                        self._devil_cv = cv2.resize(img, (nd_w, nd_h))
+                        log.info(f"Evil Mode: loaded devil.png ({nd_w}x{nd_h})")
+                    else:
+                        self._devil_cv = None
+                except Exception as e:
+                    log.warning(f"Evil Mode: failed to load devil.png: {e}")
+                    self._devil_cv = None
+            else:
+                self._devil_cv = None
+        else:
+            self._apply_theme(self._pre_evil_theme)
+            self.root.title("VisualStimEdger")
+            # Restore evil button to ghost style
+            self._evil_btn.configure(fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                                     border_color=self._C_BORDER)
+            # Restore letmecum button
+            self._letmecum_btn.configure(fg_color="#3EC941", hover_color="#32a435")
+            self._devil_cv = None
+        self._save_config()
 
     # ------------------------------------------------------------------ MP3 transport callbacks
 
@@ -3445,9 +3646,13 @@ class App:
         yolo_str = (f"YOLO: {self.detector.last_conf:.0%}"
                     if self.detector.available and self.detector.last_conf > 0 else "YOLO: --")
 
+        status_text = (f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
+                       f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}")
+        if self._evil_mode:
+            status_text += "  |  😈 EVIL"
+            conn_color = "#cc0000"
         self.info_label.configure(
-            text=(f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
-                  f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}"),
+            text=status_text,
             text_color=conn_color,
         )
 
@@ -3472,6 +3677,8 @@ class App:
                 letmecum = {"result": "granted", "time_left": round(max(grant_left, 0))}
             elif result == "expired" and elapsed_lmc < 5:
                 letmecum = {"result": "expired"}
+            elif result == "ruined" and elapsed_lmc < 8:
+                letmecum = {"result": "ruined"}
             elif result == "denied":
                 cooldown_left = getattr(self, '_letmecum_cooldown_until', 0) - time.time()
                 if cooldown_left > 0:
@@ -3504,6 +3711,23 @@ class App:
         }))
 
     def _display_frame(self, frame):
+        # Evil Mode: composite devil.png semi-transparently onto the frame
+        if self._evil_mode and self._devil_cv is not None:
+            try:
+                dh, dw = self._devil_cv.shape[:2]
+                fh, fw = frame.shape[:2]
+                # Scale devil to fit frame height at 60%
+                scale = (fh * 0.6) / dh
+                nd_h, nd_w = int(dh * scale), int(dw * scale)
+                devil_r = cv2.resize(self._devil_cv, (nd_w, nd_h))
+                x = (fw - nd_w) // 2
+                y = (fh - nd_h) // 2
+                if x >= 0 and y >= 0 and x + nd_w <= fw and y + nd_h <= fh:
+                    roi = frame[y:y + nd_h, x:x + nd_w]
+                    frame[y:y + nd_h, x:x + nd_w] = cv2.addWeighted(roi, 0.80, devil_r, 0.20, 0)
+            except Exception as e:
+                log.debug(f"Evil Mode: devil composite error: {e}")
+
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # Fit image to container, preserving aspect ratio
         iw, ih = img.size
