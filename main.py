@@ -3126,8 +3126,12 @@ class App:
             # Style letmecum button with reddish tint when not granted
             if not self._cum_allowed:
                 self._letmecum_btn.configure(fg_color="#8a1a1a", hover_color="#6a0a0a")
-            # Load devil.png
-            devil_path = pathlib.Path(os.path.dirname(os.path.abspath(__file__))) / "devil.png"
+            # Load devil.png — check next to EXE (frozen) or next to script (source)
+            if getattr(sys, "frozen", False):
+                _base_dir = pathlib.Path(sys.executable).parent
+            else:
+                _base_dir = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
+            devil_path = _base_dir / "devil.png"
             if devil_path.exists():
                 try:
                     img = cv2.imread(str(devil_path))
