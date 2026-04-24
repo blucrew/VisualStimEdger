@@ -1801,7 +1801,7 @@ class App:
                           progress_color="#e91e63").pack(side=tk.LEFT)
 
         _hr_slider_group(hr_row2, "Resting:", self.hr_resting_var, 40, 90)
-        ctk.CTkLabel(hr_row2, text="   ", text_color="transparent").pack(side=tk.LEFT)  # spacer
+        ctk.CTkFrame(hr_row2, width=16, fg_color="transparent").pack(side=tk.LEFT)
         _hr_slider_group(hr_row2, "Peak:", self.hr_peak_var, 80, 170)
 
         ctk.CTkLabel(self._hr_opts,
