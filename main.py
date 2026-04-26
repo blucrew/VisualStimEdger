@@ -786,6 +786,145 @@ class HRClient:
             pass
 
 
+class BLEHRClient:
+    """
+    Direct BLE heart rate client — reads from any BLE device advertising
+    the standard Heart Rate Service (UUID 0x180D). Free, no subscription.
+    Requires bleak: pip install bleak
+    """
+    HR_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
+    HR_CHAR    = "00002a37-0000-1000-8000-00805f9b34fb"
+    _STALE_S   = 8.0
+
+    def __init__(self, resting_bpm: int = 70, peak_bpm: int = 100):
+        self.resting_bpm    = resting_bpm
+        self.peak_bpm       = peak_bpm
+        self.device_address: str | None = None
+        self.device_name:    str | None = None
+        self._bpm:    int | None = None
+        self._bpm_hist       = deque(maxlen=6)
+        self._last_rx        = 0.0
+        self._lock           = threading.Lock()
+        self._stop           = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._loop            = None
+
+    # ── interface (matches HRClient) ─────────────────────────────────────────
+
+    @property
+    def connected(self) -> bool:
+        with self._lock:
+            return self._bpm is not None and (time.time() - self._last_rx) < self._STALE_S
+
+    @property
+    def bpm(self) -> int | None:
+        with self._lock:
+            return self._bpm
+
+    def smooth_bpm(self) -> float | None:
+        with self._lock:
+            if not self._bpm_hist:
+                return None
+            return sum(self._bpm_hist) / len(self._bpm_hist)
+
+    def modifier(self) -> float:
+        if not self.connected:
+            return 1.0
+        sbpm = self.smooth_bpm()
+        if sbpm is None:
+            return 1.0
+        resting = float(self.resting_bpm)
+        peak    = float(self.peak_bpm)
+        if peak <= resting:
+            return 1.0
+        return 1.0 + max(0.0, min(1.0, (sbpm - resting) / (peak - resting)))
+
+    # ── lifecycle ─────────────────────────────────────────────────────────────
+
+    def start(self, address: str, name: str = ""):
+        self.device_address = address
+        self.device_name    = name or address
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="BLEHRClient")
+        self._thread.start()
+        log.info(f"BLE HR: connecting to {self.device_name} ({address})")
+
+    def stop(self):
+        self._stop.set()
+        with self._lock:
+            self._bpm = None
+        lp = self._loop
+        if lp and lp.is_running():
+            lp.call_soon_threadsafe(lp.stop)
+
+    # ── internals ─────────────────────────────────────────────────────────────
+
+    def _on_notify(self, _sender, data: bytearray):
+        flags = data[0]
+        bpm   = int.from_bytes(data[1:3], "little") if (flags & 0x01) else data[1]
+        with self._lock:
+            self._bpm = bpm
+            self._bpm_hist.append(bpm)
+            self._last_rx = time.time()
+
+    def _run(self):
+        import asyncio
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._connect_loop())
+        finally:
+            self._loop.close()
+            self._loop = None
+
+    async def _connect_loop(self):
+        try:
+            from bleak import BleakClient
+        except ImportError:
+            log.error("BLE HR: bleak not installed — run: pip install bleak")
+            return
+        import asyncio
+        while not self._stop.is_set():
+            try:
+                async with BleakClient(self.device_address, timeout=10.0) as client:
+                    log.info(f"BLE HR: connected to {self.device_name}")
+                    await client.start_notify(self.HR_CHAR, self._on_notify)
+                    while not self._stop.is_set() and client.is_connected:
+                        await asyncio.sleep(1.0)
+                    if client.is_connected:
+                        await client.stop_notify(self.HR_CHAR)
+            except Exception as e:
+                log.warning(f"BLE HR: {e} — retry in 5 s")
+                with self._lock:
+                    self._bpm = None
+                if self._stop.is_set():
+                    break
+                await asyncio.sleep(5.0)
+
+    @staticmethod
+    def scan_sync(timeout: float = 6.0) -> list[tuple[str, str]]:
+        """Synchronous BLE scan. Blocks for `timeout` seconds. Returns [(address, name), ...]."""
+        import asyncio
+        async def _scan():
+            try:
+                from bleak import BleakScanner
+            except ImportError:
+                return []
+            devices = await BleakScanner.discover(
+                timeout=timeout,
+                service_uuids=[BLEHRClient.HR_SERVICE],
+            )
+            return [(d.address, d.name or d.address) for d in devices]
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_scan())
+        except Exception as e:
+            log.warning(f"BLE scan failed: {e}")
+            return []
+        finally:
+            loop.close()
+
+
 class _DefaultAudioDevice:
     """Minimal stand-in returned when full device enumeration fails."""
     FriendlyName = "Default Output Device"
@@ -1454,6 +1593,10 @@ class App:
         self._orig_win_volume = None  # restored on exit
         self.music_player     = MusicPlayer() if _MINIAUDIO_OK else None
         self.hr_client        = HRClient()
+        self.ble_hr_client  = BLEHRClient()
+        self._hr_source     = "pulsoid"   # "pulsoid" | "ble"
+        self._ble_addr      = ""
+        self._ble_name      = ""
 
         # Root window
         self.root = ctk.CTk()
@@ -1868,6 +2011,21 @@ class App:
         # ── Heart Rate (Pulsoid) options panel ────────────────────────────────
         self._hr_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
 
+        # HR source selector
+        hr_src_row = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
+        hr_src_row.pack(fill=tk.X, padx=12, pady=(7, 2))
+        ctk.CTkLabel(hr_src_row, text="HR Source:", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 8))
+        self._hr_src_seg = ctk.CTkSegmentedButton(
+            hr_src_row, values=["Pulsoid", "BLE Direct"],
+            command=self._on_hr_source_change,
+            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
+            unselected_color=self._C_SURFACE, unselected_hover_color="#4a4a4a",
+            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+        )
+        self._hr_src_seg.set("Pulsoid")
+        self._hr_src_seg.pack(side=tk.LEFT)
+
         hr_row1 = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
         hr_row1.pack(fill=tk.X, padx=12, pady=(7, 2))
         ctk.CTkLabel(hr_row1, text="Pulsoid Token:", font=lbl,
@@ -1903,6 +2061,19 @@ class App:
         _hr_slider_group(hr_row2, "Resting:", self.hr_resting_var, 40, 90)
         ctk.CTkFrame(hr_row2, width=16, fg_color="transparent").pack(side=tk.LEFT)
         _hr_slider_group(hr_row2, "Peak:", self.hr_peak_var, 80, 170)
+
+        # BLE Direct row — shown when BLE source selected
+        self._ble_row = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
+        # (packed/unpacked by _on_hr_source_change)
+        ble_inner = ctk.CTkFrame(self._ble_row, fg_color="transparent")
+        ble_inner.pack(fill=tk.X, padx=12, pady=(2, 7))
+        self._ble_name_lbl = ctk.CTkLabel(ble_inner, text="No device selected",
+                                           font=lbl, text_color=self._C_TEXT_DIM)
+        self._ble_name_lbl.pack(side=tk.LEFT, expand=True, anchor="w")
+        ctk.CTkButton(ble_inner, text="Scan…", width=70, height=26,
+                      fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                      text_color="white", font=ctk.CTkFont(size=11),
+                      command=self._ble_scan_dialog).pack(side=tk.RIGHT)
 
         ctk.CTkLabel(self._hr_opts,
                      text=("Higher HR \u2192 stronger denial, slower rewards.  "
@@ -2056,6 +2227,9 @@ class App:
                 "hr_token":   self.hr_token_var.get(),
                 "hr_resting": self.hr_resting_var.get(),
                 "hr_peak":    self.hr_peak_var.get(),
+                "hr_source":   self._hr_source,
+                "ble_addr":    self._ble_addr,
+                "ble_name":    self._ble_name,
                 "port":        self.port_var.get(),
                 "device_name": self._device_combo.get(),
                 "mp3_path":    getattr(self, '_mp3_last_path', ""),
@@ -2147,6 +2321,9 @@ class App:
                     self.hr_client.peak_bpm = v
                 except Exception:
                     pass
+            self._hr_source = data.get("hr_source", "pulsoid")
+            self._ble_addr  = data.get("ble_addr", "")
+            self._ble_name  = data.get("ble_name", "")
             if "port"        in data: self.port_var.set(data["port"])
             if "device_name" in data: self._device_combo.set(data["device_name"])
             if _MINIAUDIO_OK and self.music_player:
@@ -2200,6 +2377,11 @@ class App:
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
 
+    @property
+    def _active_hr(self):
+        """Returns whichever HR client is currently selected."""
+        return self.ble_hr_client if self._hr_source == "ble" else self.hr_client
+
     def _cleanup(self):
         """Non-UI cleanup — safe to call from atexit or _on_close."""
         if getattr(self, '_cleaned_up', False):
@@ -2249,6 +2431,10 @@ class App:
         # Stop HR client
         try:
             self.hr_client.stop()
+        except Exception:
+            pass
+        try:
+            self.ble_hr_client.stop()
         except Exception:
             pass
 
@@ -2747,10 +2933,10 @@ class App:
 
     def _hr_log_poll(self):
         """Log heart rate reading every 30 seconds when HR is active."""
-        if self.hr_on.get() and self.hr_client.connected:
-            bpm = self.hr_client.smooth_bpm()
+        if self.hr_on.get() and self._active_hr.connected:
+            bpm = self._active_hr.smooth_bpm()
             if bpm is not None:
-                self.session_logger.log_heart_rate(round(bpm), self.hr_client.modifier())
+                self.session_logger.log_heart_rate(round(bpm), self._active_hr.modifier())
         self.root.after(30_000, self._hr_log_poll)
 
     def _open_settings(self):
@@ -3109,12 +3295,21 @@ class App:
         if self.hr_on.get():
             self._hr_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
             after = self._hr_opts
-            self.hr_client.resting_bpm = self.hr_resting_var.get()
-            self.hr_client.peak_bpm    = self.hr_peak_var.get()
-            self.hr_client.token       = self.hr_token_var.get().strip()
-            self.hr_client.start()
+            if self._hr_source == "pulsoid":
+                tok = self.hr_token_var.get().strip()
+                if tok:
+                    self.hr_client.resting_bpm = self.hr_resting_var.get()
+                    self.hr_client.peak_bpm    = self.hr_peak_var.get()
+                    self.hr_client.token       = tok
+                    self.hr_client.start()
+            else:
+                if self._ble_addr:
+                    self.ble_hr_client.resting_bpm = int(self.hr_resting_var.get())
+                    self.ble_hr_client.peak_bpm    = int(self.hr_peak_var.get())
+                    self.ble_hr_client.start(self._ble_addr, self._ble_name)
         else:
             self.hr_client.stop()
+            self.ble_hr_client.stop()
         if self.audio_on.get():
             self._windows_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
             after = self._windows_opts
@@ -3149,6 +3344,27 @@ class App:
             log.info(f"xToys: webhook ID={new_id!r}")
         self._save_config()
 
+    def _on_hr_source_change(self, value: str):
+        self._hr_source = "ble" if value == "BLE Direct" else "pulsoid"
+        # Stop whichever was running
+        self.hr_client.stop()
+        self.ble_hr_client.stop()
+        if self._hr_source == "ble":
+            # Show BLE row, hide pulsoid token rows
+            self._ble_row.pack(fill=tk.X)
+            if self._ble_addr:
+                self.ble_hr_client.resting_bpm = int(self.hr_resting_var.get())
+                self.ble_hr_client.peak_bpm    = int(self.hr_peak_var.get())
+                self.ble_hr_client.start(self._ble_addr, self._ble_name)
+        else:
+            self._ble_row.pack_forget()
+            tok = self.hr_token_var.get().strip()
+            if tok:
+                self.hr_client.start(tok,
+                                     int(self.hr_resting_var.get()),
+                                     int(self.hr_peak_var.get()))
+        self._save_config()
+
     def _on_hr_token_change(self, *_):
         new_token = self.hr_token_var.get().strip()
         if new_token != self.hr_client.token and self.hr_on.get():
@@ -3156,6 +3372,84 @@ class App:
         elif new_token != self.hr_client.token:
             self.hr_client.token = new_token
         self._save_config()
+
+    def _ble_scan_dialog(self):
+        """Open a scan dialog, show found BLE HR devices, let user pick one."""
+        dlg = ctk.CTkToplevel(self.root)
+        dlg.title("BLE HR — Scan")
+        dlg.geometry("340x280")
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        ctk.CTkLabel(dlg, text="Scanning for BLE HR monitors…",
+                     font=ctk.CTkFont(size=12)).pack(pady=(18, 4))
+        status_lbl = ctk.CTkLabel(dlg, text="(up to 6 seconds)",
+                                   font=ctk.CTkFont(size=10),
+                                   text_color=self._C_TEXT_DIM)
+        status_lbl.pack()
+
+        listbox_frame = ctk.CTkScrollableFrame(dlg, height=120)
+        listbox_frame.pack(fill=tk.X, padx=16, pady=8)
+
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(fill=tk.X, padx=16, pady=(0, 12))
+        connect_btn = ctk.CTkButton(btn_row, text="Connect", width=100,
+                                     fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                                     text_color="white", state="disabled",
+                                     command=lambda: None)
+        connect_btn.pack(side=tk.RIGHT, padx=(4, 0))
+        ctk.CTkButton(btn_row, text="Cancel", width=80,
+                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                       text_color=self._C_TEXT,
+                       command=dlg.destroy).pack(side=tk.RIGHT)
+
+        selected = {"addr": None, "name": None}
+        row_btns = []
+
+        def _pick(addr, name, btn):
+            selected["addr"] = addr
+            selected["name"] = name
+            for b in row_btns:
+                b.configure(fg_color=self._C_SURFACE2)
+            btn.configure(fg_color=self._C_ACCENT)
+            connect_btn.configure(state="normal")
+
+        def _connect():
+            addr = selected["addr"]
+            name = selected["name"]
+            if not addr:
+                return
+            self._ble_addr = addr
+            self._ble_name = name
+            self._ble_name_lbl.configure(text=name, text_color=self._C_TEXT)
+            self.ble_hr_client.stop()
+            self.ble_hr_client.resting_bpm = int(self.hr_resting_var.get())
+            self.ble_hr_client.peak_bpm    = int(self.hr_peak_var.get())
+            self.ble_hr_client.start(addr, name)
+            self._save_config()
+            dlg.destroy()
+
+        connect_btn.configure(command=_connect)
+
+        def _do_scan():
+            devices = BLEHRClient.scan_sync(timeout=6.0)
+            def _update():
+                if not dlg.winfo_exists():
+                    return
+                status_lbl.configure(text=f"Found {len(devices)} device(s)" if devices else "No devices found")
+                for addr, name in devices:
+                    btn = ctk.CTkButton(
+                        listbox_frame, text=f"{name}  ({addr})",
+                        fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                        text_color=self._C_TEXT, font=ctk.CTkFont(size=11),
+                        anchor="w", height=28,
+                    )
+                    btn.configure(command=lambda a=addr, n=name, b=btn: _pick(a, n, b))
+                    btn.pack(fill=tk.X, pady=1)
+                    row_btns.append(btn)
+            self.root.after(0, _update)
+
+        threading.Thread(target=_do_scan, daemon=True).start()
 
     def _on_port_change(self, *_):
         val = self.port_var.get().strip()
@@ -3690,8 +3984,8 @@ class App:
         delta     = self._compute_volume_delta()
 
         # ── HR modifier: tighten denial / slow rewards when heart rate is high ─
-        if self.hr_on.get() and self.hr_client.connected:
-            hr_mod = self.hr_client.modifier()   # 1.0 (resting) → 2.0 (peak)
+        if self.hr_on.get() and self._active_hr.connected:
+            hr_mod = self._active_hr.modifier()   # 1.0 (resting) → 2.0 (peak)
             if delta < 0.0:
                 delta *= hr_mod                  # harder denial
             elif delta > 0.0:
@@ -3737,8 +4031,8 @@ class App:
             if self.music_player._state == "playing": conn_color = "#00ff00"
             parts.append(f"MP3: {self.music_player.track_name or '—'}")
         if self.hr_on.get():
-            sbpm = self.hr_client.smooth_bpm()
-            if self.hr_client.connected and sbpm is not None:
+            sbpm = self._active_hr.smooth_bpm()
+            if self._active_hr.connected and sbpm is not None:
                 parts.append(f"\u2665 {sbpm:.0f} bpm")
                 if hasattr(self, '_hr_bpm_label'):
                     self._hr_bpm_label.configure(
@@ -3811,11 +4105,11 @@ class App:
         # Heart rate data for overlay
         hr_data = None
         if self.hr_on.get():
-            sbpm = self.hr_client.smooth_bpm()
+            sbpm = self._active_hr.smooth_bpm()
             hr_data = {
                 "bpm": round(sbpm) if sbpm is not None else None,
-                "connected": self.hr_client.connected,
-                "modifier": round(self.hr_client.modifier(), 2),
+                "connected": self._active_hr.connected,
+                "modifier": round(self._active_hr.modifier(), 2),
             }
 
         obs_state = "-" if "Calibration" in state else state
