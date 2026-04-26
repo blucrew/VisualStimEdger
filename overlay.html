@@ -5,11 +5,25 @@
 <title>VisualStimEdger OBS Overlay</title>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
 <style>
+  /* ── Theme variables — overridden by JS on load ── */
+  :root {
+    --t-edging:  #ffffff;
+    --t-deny:    #ff9999;
+    --t-grant:   #99ffbb;
+    --t-ruin:    #cc99ff;
+    --t-hr:      #ffffff;
+    --t-accent:  #cccccc;
+    --t-label:   #aaaaaa;
+    --t-pill:    rgba(0,0,0,0.65);
+    --t-border:  rgba(255,255,255,0.15);
+    --t-text:    #ffffff;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: transparent;
     font-family: 'Rajdhani', 'Segoe UI', Arial, sans-serif;
-    color: #eee;
+    color: var(--t-text);
     overflow: hidden;
   }
   .overlay {
@@ -22,27 +36,22 @@
     width: 200px;
   }
 
-  /* ── EDGING banner — stacks above vol bar ── */
+  /* ── EDGING banner ── */
   .edging-banner {
     display: none;
     width: 100%;
     align-items: center;
     justify-content: center;
     padding: 7px 0;
-    background: rgba(0,0,0,0.5);
+    background: var(--t-pill);
     border-radius: 6px;
-    border: 1px solid rgba(255,23,68,0.3);
+    border: 1px solid rgba(255,255,255,0.12);
     font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
     font-size: 30px;
     font-weight: 900;
     letter-spacing: 0.12em;
     white-space: nowrap;
-    color: #ff1744;
-    text-shadow:
-      0 0 8px   #ff1744,
-      0 0 20px  #ff1744,
-      0 0 40px  #ff174499;
-    -webkit-text-stroke: 1px #ffffff33;
+    color: var(--t-edging);
     pointer-events: none;
   }
   .edging-banner.on {
@@ -51,25 +60,18 @@
   }
   @keyframes edge-flash {
     0%   {
-      color: #ff1744;
-      text-shadow:
-        0 0 20px  #ff1744,
-        0 0 45px  #ff1744,
-        0 0 90px  #ff174499,
-        0 0 160px #ff174466;
+      color: var(--t-edging);
+      text-shadow: 0 0 20px currentColor, 0 0 45px currentColor, 0 0 90px currentColor;
       transform: scale(1);
     }
     50%  {
       color: #ffffff;
-      text-shadow:
-        0 0 30px  #ff1744,
-        0 0 70px  #ff1744,
-        0 0 140px #ff1744cc;
+      text-shadow: 0 0 30px currentColor, 0 0 70px currentColor;
       transform: scale(1.04);
     }
   }
 
-  /* ── TATTLE banner — letmecum result ──── */
+  /* ── TATTLE banner ── */
   .tattle-banner {
     display: none;
     width: 100%;
@@ -77,7 +79,7 @@
     align-items: center;
     justify-content: center;
     padding: 5px 0 4px;
-    background: rgba(0,0,0,0.6);
+    background: var(--t-pill);
     border-radius: 6px;
     font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
     font-weight: 900;
@@ -98,14 +100,14 @@
   }
   .tattle-banner.denied {
     display: flex;
-    color: #ff1744;
-    border: 1px solid rgba(255,23,68,0.4);
+    color: var(--t-deny);
+    border: 1px solid rgba(255,255,255,0.12);
     animation: tattle-deny 0.45s steps(2) infinite;
   }
   .tattle-banner.granted {
     display: flex;
-    color: #00e676;
-    border: 1px solid rgba(0,230,118,0.35);
+    color: var(--t-grant);
+    border: 1px solid rgba(255,255,255,0.12);
     animation: tattle-grant 1.2s ease-in-out infinite alternate;
   }
   .tattle-banner.expired {
@@ -114,15 +116,15 @@
     border: 1px solid rgba(255,152,0,0.35);
   }
   @keyframes tattle-deny {
-    0%   { text-shadow: 0 0 12px #ff1744, 0 0 30px #ff174488; opacity: 1; }
-    50%  { text-shadow: 0 0 4px #ff174466; opacity: 0.55; }
+    0%   { text-shadow: 0 0 12px currentColor, 0 0 30px currentColor; opacity: 1; }
+    50%  { text-shadow: none; opacity: 0.55; }
   }
   @keyframes tattle-grant {
-    0%   { text-shadow: 0 0 6px #00e67666; }
-    100% { text-shadow: 0 0 16px #00e676, 0 0 35px #00e67888; }
+    0%   { text-shadow: 0 0 6px currentColor; }
+    100% { text-shadow: 0 0 16px currentColor, 0 0 35px currentColor; }
   }
 
-  /* ── RUIN banner ─────────────────────── */
+  /* ── RUIN banner ── */
   .ruin-banner {
     display: none;
     width: 100%;
@@ -130,14 +132,15 @@
     align-items: center;
     justify-content: center;
     padding: 5px 0 4px;
-    background: rgba(10,0,20,0.75);
+    background: var(--t-pill);
     border-radius: 6px;
-    border: 1px solid rgba(153,0,204,0.5);
+    border: 1px solid rgba(255,255,255,0.12);
     font-family: 'Rajdhani', 'Impact', 'Arial Black', sans-serif;
     font-weight: 900;
     letter-spacing: 0.08em;
     white-space: nowrap;
     pointer-events: none;
+    color: var(--t-ruin);
   }
   .ruin-lbl {
     font-size: 8px;
@@ -145,33 +148,21 @@
     text-transform: uppercase;
     opacity: 0.65;
     font-weight: 700;
-    color: #cc88ff;
   }
   .ruin-result {
     font-size: 22px;
     line-height: 1.15;
-    color: #9c27b0;
   }
   .ruin-banner.on {
     display: flex;
     animation: ruin-pulse 1.4s ease-in-out infinite alternate;
   }
   @keyframes ruin-pulse {
-    0%   {
-      color: #9c27b0;
-      text-shadow: 0 0 8px #6600cc, 0 0 20px #6600cc88;
-      border-color: rgba(153,0,204,0.5);
-      opacity: 0.85;
-    }
-    100% {
-      color: #cc44ff;
-      text-shadow: 0 0 14px #9c27b0, 0 0 35px #6600ccaa, 0 0 60px #6600cc44;
-      border-color: rgba(204,68,255,0.7);
-      opacity: 1;
-    }
+    0%   { text-shadow: 0 0 8px currentColor, 0 0 20px currentColor; opacity: 0.85; }
+    100% { text-shadow: 0 0 14px currentColor, 0 0 35px currentColor, 0 0 60px currentColor; opacity: 1; }
   }
 
-  /* ── Event line ───────────────────────── */
+  /* ── Event line ── */
   .evt {
     text-align: center;
     font-size: 11px;
@@ -180,19 +171,19 @@
     transition: opacity 0.2s;
   }
   .evt.on { opacity: 1; }
-  .evt.g { color: #00e676; text-shadow: 0 0 6px #00e67666; }
-  .evt.r { color: #ff1744; text-shadow: 0 0 6px #ff174466; font-size: 14px; }
-  .evt.p { color: #e040fb; text-shadow: 0 0 6px #e040fb66; }
+  .evt.g { color: var(--t-grant); text-shadow: 0 0 6px currentColor; }
+  .evt.r { color: var(--t-deny);  text-shadow: 0 0 6px currentColor; font-size: 14px; }
+  .evt.p { color: var(--t-ruin);  text-shadow: 0 0 6px currentColor; }
 
-  /* ── Volume bars ──────────────────────── */
+  /* ── Volume bars ── */
   .vol-card {
-    background: rgba(0,0,0,0.5);
+    background: var(--t-pill);
     border-radius: 6px;
     padding: 6px 8px;
     display: flex;
     align-items: flex-end;
     gap: 3px;
-    border: 1px solid rgba(224,64,251,0.15);
+    border: 1px solid var(--t-border);
   }
   .bars {
     display: flex;
@@ -222,35 +213,35 @@
     font-weight: 800;
     min-width: 32px;
     text-align: right;
-    color: #ccc;
+    color: var(--t-text);
     line-height: 1;
     padding-bottom: 1px;
   }
 
-  /* ── Stat cards ───────────────────────── */
+  /* ── Stat cards ── */
   .stats {
     display: flex;
     gap: 4px;
   }
   .stat {
     flex: 1;
-    background: rgba(0,0,0,0.5);
+    background: var(--t-pill);
     border-radius: 6px;
     padding: 5px 0;
     text-align: center;
-    border: 1px solid rgba(224,64,251,0.15);
+    border: 1px solid var(--t-border);
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
   }
 
-  /* ── Zap icon ─────────────────────────── */
+  /* ── Zap icon ── */
   .zap {
     font-size: 20px;
     line-height: 1;
     flex-shrink: 0;
+    color: var(--t-accent);
     animation: zap 2s ease-in-out infinite;
-    filter: drop-shadow(0 0 4px #e040fb);
   }
   @keyframes zap {
     0%, 90%, 100% { opacity: 0.3; }
@@ -261,37 +252,35 @@
   .stat-val {
     font-size: 16px;
     font-weight: 800;
-    color: #e040fb;
+    color: var(--t-accent);
     line-height: 1.1;
   }
   .stat-lbl {
     font-size: 8px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #00e5ff;
-    text-shadow: 0 0 4px #00e5ff88, 0 0 8px #00e5ff44;
+    color: var(--t-label);
     animation: neon-slow 2s ease-in-out infinite alternate;
   }
   .stat-lbl.erect {
     animation: neon-med 0.8s ease-in-out infinite alternate;
   }
   .stat-lbl.edging {
+    color: var(--t-edging);
     animation: neon-fast 0.2s steps(2) infinite;
-    color: #ff1744;
-    text-shadow: 0 0 6px #ff1744cc, 0 0 14px #ff174466;
   }
   @keyframes neon-slow {
-    0%   { text-shadow: 0 0 2px #00e5ff44; opacity: 0.5; }
-    100% { text-shadow: 0 0 6px #00e5ffaa, 0 0 12px #00e5ff44; opacity: 0.9; }
+    0%   { opacity: 0.5; }
+    100% { text-shadow: 0 0 6px currentColor; opacity: 0.9; }
   }
   @keyframes neon-med {
-    0%   { text-shadow: 0 0 4px #00e5ff88; opacity: 0.7; }
-    100% { text-shadow: 0 0 8px #00e5ffcc, 0 0 18px #00e5ff55; opacity: 1; }
+    0%   { opacity: 0.7; }
+    100% { text-shadow: 0 0 8px currentColor; opacity: 1; }
   }
   @keyframes neon-fast {
-    0%   { text-shadow: 0 0 6px #ff1744cc, 0 0 14px #ff174466; opacity: 1; }
-    50%  { text-shadow: 0 0 2px #ff174488; opacity: 0.5; }
-    100% { text-shadow: 0 0 10px #ff1744ff, 0 0 22px #ff174488; opacity: 1; }
+    0%   { text-shadow: 0 0 6px currentColor; opacity: 1; }
+    50%  { opacity: 0.5; }
+    100% { text-shadow: 0 0 10px currentColor; opacity: 1; }
   }
 
   .loads {
@@ -311,14 +300,14 @@
   .load-val {
     font-size: 13px;
     font-weight: 700;
-    color: #fff;
+    color: var(--t-text);
     line-height: 1.2;
   }
   .load-lbl {
     font-size: 7px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: #aaa;
+    color: var(--t-label);
   }
   .dc {
     text-align: center;
@@ -326,19 +315,19 @@
     color: #444;
   }
 
-  /* ── HR (heart rate) pill ─────────────────── */
+  /* ── HR pill ── */
   .hr-pill {
     display: none;
     align-items: center;
     justify-content: center;
     gap: 4px;
-    background: rgba(0,0,0,0.5);
+    background: var(--t-pill);
     border-radius: 6px;
-    border: 1px solid rgba(233,30,99,0.35);
+    border: 1px solid var(--t-border);
     padding: 5px 12px;
     font-size: 18px;
     font-weight: 800;
-    color: #e91e63;
+    color: var(--t-hr);
     letter-spacing: 0.05em;
     pointer-events: none;
   }
@@ -413,7 +402,62 @@
 </div>
 
 <script>
-// Build 10 bars with increasing heights
+// ── Themes ────────────────────────────────────────────────────────────────────
+const THEMES = {
+  ghost: {
+    vars: {
+      '--t-edging': '#ffffff', '--t-deny': '#ff9999', '--t-grant': '#99ffbb',
+      '--t-ruin': '#cc99ff',   '--t-hr': '#ffffff',   '--t-accent': '#cccccc',
+      '--t-label': '#aaaaaa',  '--t-pill': 'rgba(0,0,0,0.65)',
+      '--t-border': 'rgba(255,255,255,0.15)', '--t-text': '#ffffff',
+    },
+    stateColor: { Flaccid: '#aaddff', Erect: '#aaffcc', Edging: '#ffffff' },
+    hrBase: [255, 255, 255],
+  },
+  crimson: {
+    vars: {
+      '--t-edging': '#ff1744', '--t-deny': '#ff1744', '--t-grant': '#00e676',
+      '--t-ruin': '#9c27b0',   '--t-hr': '#e91e63',   '--t-accent': '#e040fb',
+      '--t-label': '#00e5ff',  '--t-pill': 'rgba(0,0,0,0.5)',
+      '--t-border': 'rgba(224,64,251,0.15)', '--t-text': '#cccccc',
+    },
+    stateColor: { Flaccid: '#4fc3f7', Erect: '#4caf50', Edging: '#ff1744' },
+    hrBase: [233, 30, 99],
+  },
+  neon: {
+    vars: {
+      '--t-edging': '#00ffff', '--t-deny': '#ff3300', '--t-grant': '#39ff14',
+      '--t-ruin': '#ff00ff',   '--t-hr': '#ff00ff',   '--t-accent': '#00ffff',
+      '--t-label': '#00ffff',  '--t-pill': 'rgba(0,0,10,0.82)',
+      '--t-border': 'rgba(0,255,255,0.25)', '--t-text': '#f0f0f0',
+    },
+    stateColor: { Flaccid: '#00bfff', Erect: '#39ff14', Edging: '#00ffff' },
+    hrBase: [255, 0, 255],
+  },
+  amber: {
+    vars: {
+      '--t-edging': '#ffb300', '--t-deny': '#ff6d00', '--t-grant': '#76ff03',
+      '--t-ruin': '#ff3d00',   '--t-hr': '#ffb300',   '--t-accent': '#ffd740',
+      '--t-label': '#ffd740',  '--t-pill': 'rgba(0,0,0,0.6)',
+      '--t-border': 'rgba(255,179,0,0.2)', '--t-text': '#fff3e0',
+    },
+    stateColor: { Flaccid: '#40c4ff', Erect: '#76ff03', Edging: '#ffb300' },
+    hrBase: [255, 179, 0],
+  },
+};
+
+// Read ?theme= from URL, default ghost
+const urlTheme = new URLSearchParams(location.search).get('theme') || 'ghost';
+const theme = THEMES[urlTheme] || THEMES.ghost;
+
+// Apply CSS vars
+const root = document.documentElement.style;
+Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
+
+let STATE_COLOR = theme.stateColor;
+let hrBase      = theme.hrBase;   // [r, g, b] at resting BPM
+
+// ── Build volume bars ─────────────────────────────────────────────────────────
 const barsEl = document.getElementById('bars');
 const barEls = [];
 for (let i = 0; i < 10; i++) {
@@ -424,18 +468,18 @@ for (let i = 0; i < 10; i++) {
   barEls.push(b);
 }
 
-const volPct = document.getElementById('volPct');
-const edging = document.getElementById('edging');
-const edgesEl = document.getElementById('edges');
-const sTime = document.getElementById('time');
-const modeEl = document.getElementById('mode');
-const evt = document.getElementById('evt');
-const dc = document.getElementById('dc');
-const loadsEl = document.getElementById('loads');
-const loadsVal = document.getElementById('loadsVal');
-const denialsVal = document.getElementById('denialsVal');
-const stateValEl = document.getElementById('stateVal');
-const stateLblEl = document.getElementById('stateLbl');
+const volPct      = document.getElementById('volPct');
+const edging      = document.getElementById('edging');
+const edgesEl     = document.getElementById('edges');
+const sTime       = document.getElementById('time');
+const modeEl      = document.getElementById('mode');
+const evt         = document.getElementById('evt');
+const dc          = document.getElementById('dc');
+const loadsEl     = document.getElementById('loads');
+const loadsVal    = document.getElementById('loadsVal');
+const denialsVal  = document.getElementById('denialsVal');
+const stateValEl  = document.getElementById('stateVal');
+const stateLblEl  = document.getElementById('stateLbl');
 const tattleEl    = document.getElementById('tattle');
 const tattleLbl   = document.getElementById('tattleLbl');
 const tattleResult= document.getElementById('tattleResult');
@@ -443,7 +487,6 @@ const ruinBanner  = document.getElementById('ruinBanner');
 const hrPill      = document.getElementById('hrPill');
 const hrBpm       = document.getElementById('hrBpm');
 const hrHeart     = document.getElementById('hrHeart');
-const STATE_COLOR = { Flaccid: '#4fc3f7', Erect: '#4caf50', Edging: '#ff1744' };
 
 let ws = null, rt = null, ruinTimer = null;
 
@@ -501,7 +544,7 @@ function onMsg(e) {
     tattleEl.className = 'tattle-banner';
   }
 
-  // Ruin banner — show for 8 seconds after a ruined result
+  // Ruin banner — 8 second auto-hide
   if (d.letmecum && d.letmecum.result === 'ruined') {
     if (!ruinBanner.classList.contains('on')) {
       ruinBanner.classList.add('on');
@@ -516,10 +559,10 @@ function onMsg(e) {
   edgesEl.textContent = d.edge_count || 0;
   sTime.textContent = fm(d.session_seconds || 0);
   const aggr = d.aggressiveness || '-';
-  const abbrMap = {'Easy':'E','Middle':'M','Hard':'H','Expert':'X'};
-  const colorMap = {'Easy':'#4caf50','Middle':'#ff9800','Hard':'#ff1744','Expert':'#ffd700'};
+  const abbrMap  = { Easy:'E', Middle:'M', Hard:'H', Expert:'X' };
+  const colorMap = { Easy:'#4caf50', Middle:'#ff9800', Hard:'#ff1744', Expert:'#ffd700' };
   modeEl.textContent = abbrMap[aggr] || aggr;
-  modeEl.style.color = colorMap[aggr] || '#e040fb';
+  modeEl.style.color = colorMap[aggr] || theme.vars['--t-accent'];
 
   let et = '', ec = '';
   if (d.cum_remaining > 0) {
@@ -528,7 +571,7 @@ function onMsg(e) {
   } else if (d.letmecum) {
     const l = d.letmecum;
     if (l.result === 'granted') {
-      et = '\u2714 CUM ' + fm(l.time_left||0);
+      et = '✔ CUM ' + fm(l.time_left||0);
       ec = 'g';
     } else if (l.result === 'expired') {
       et = 'TOO SLOW';
@@ -541,10 +584,10 @@ function onMsg(e) {
   evt.textContent = et;
   evt.className = 'evt' + (et ? ' on ' + ec : '');
 
-  const cc = d.cum_count || 0;
+  const cc  = d.cum_count || 0;
   const dc2 = d.denial_count || 0;
   if (cc > 0 || dc2 > 0) {
-    loadsVal.textContent = cc;
+    loadsVal.textContent  = cc;
     denialsVal.textContent = dc2;
     loadsEl.classList.add('on');
   } else {
@@ -552,23 +595,24 @@ function onMsg(e) {
   }
 
   stateValEl.textContent = d.state || '-';
-  stateValEl.style.color = STATE_COLOR[d.state] || '#e040fb';
+  stateValEl.style.color = STATE_COLOR[d.state] || theme.vars['--t-accent'];
 
-  // HR pill
+  // HR pill — tint hotter as modifier climbs
   if (d.hr && d.hr.connected && d.hr.bpm != null) {
     hrBpm.textContent = d.hr.bpm + ' bpm';
-    // Animate heartbeat at the actual BPM rate
     const beatMs = Math.round(60000 / Math.max(30, Math.min(220, d.hr.bpm)));
     hrHeart.style.animationDuration = beatMs + 'ms';
-    // Tint hotter (more red) as modifier climbs
     const mod = d.hr.modifier || 1.0;
-    const t = Math.min(1, (mod - 1.0));           // 0..1
-    const r = Math.round(233 + t * 22);
-    const g = Math.round(30  - t * 30);
-    hrPill.style.color = `rgb(${r},${g},99)`;
-    hrPill.style.borderColor = `rgba(${r},${g},99,0.45)`;
+    const t   = Math.min(1, mod - 1.0);  // 0..1
+    // Interpolate from hrBase toward red (#ff1010) as modifier climbs
+    const r = Math.round(hrBase[0] + t * (255 - hrBase[0]));
+    const g = Math.round(hrBase[1] + t * (16  - hrBase[1]));
+    const b = Math.round(hrBase[2] + t * (16  - hrBase[2]));
+    hrPill.style.color       = `rgb(${r},${g},${b})`;
+    hrPill.style.borderColor = `rgba(${r},${g},${b},0.45)`;
     hrPill.className = 'hr-pill on';
   } else {
+    hrPill.style.color = hrPill.style.borderColor = '';
     hrPill.className = 'hr-pill';
   }
 
@@ -581,14 +625,14 @@ function onMsg(e) {
   dc.textContent = '';
 }
 
-// Preview hook: lets a harness drive the overlay without a real WebSocket.
+// Preview hook
 window.__feed = onMsg;
 
 function conn() {
   if (ws && ws.readyState <= 1) return;
   ws = new WebSocket('ws://127.0.0.1:12347');
   ws.onmessage = onMsg;
-  ws.onopen = () => { dc.textContent = ''; };
+  ws.onopen  = () => { dc.textContent = ''; };
   ws.onclose = () => {
     dc.textContent = 'waiting...';
     if (!rt) rt = setTimeout(() => { rt = null; conn(); }, 2000);
