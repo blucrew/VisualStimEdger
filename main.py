@@ -46,6 +46,7 @@ import win32ui
 import win32con
 import win32api
 import json
+import datetime
 import pathlib
 import queue
 from collections import deque
@@ -565,6 +566,79 @@ class XToysClient:
             except Exception:
                 pass
             self._session = requests.Session()
+
+
+class SessionLogger:
+    """
+    Writes per-session event log to APPDATA/VisualStimEdger/sessions/.
+    File is flushed atomically after every event, so it survives crashes.
+    """
+
+    def __init__(self, sessions_dir: pathlib.Path, version: str):
+        today = datetime.date.today()
+        date_str = f"{today.month}-{today.day}-{str(today.year)[2:]}"
+        base = sessions_dir / f"VSE_SESSION_{date_str}"
+        path = base.with_suffix(".json")
+        n = 2
+        while path.exists():
+            path = sessions_dir / f"VSE_SESSION_{date_str}_{n}.json"
+            n += 1
+        self.path = path
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        self._events: list = []
+        self._log("session_start", {"version": version})
+
+    # ── public api ────────────────────────────────────────────────────────────
+
+    def log_state_change(self, new_state: str):
+        self._log("state_change", {"state": new_state})
+
+    def log_edge_counted(self, edge_count: int):
+        self._log("edge_counted", {"total_edges": edge_count})
+
+    def log_letmecum(self, result: str, aggressiveness: str, odds_denominator: int):
+        self._log("letmecum", {
+            "result": result,
+            "aggressiveness": aggressiveness,
+            "odds": f"1/{odds_denominator}" if result == "granted" else f"{odds_denominator-1}/{odds_denominator}",
+        })
+
+    def log_cum(self):
+        self._log("cum")
+
+    def log_heart_rate(self, bpm, modifier: float):
+        self._log("heart_rate", {"bpm": bpm, "modifier": round(modifier, 3)})
+
+    def log_session_end(self, edge_count: int, cum_count: int, denial_count: int, elapsed_s: float):
+        m, s = divmod(int(elapsed_s), 60)
+        self._log("session_end", {
+            "duration": f"{m:02d}:{s:02d}",
+            "edges": edge_count,
+            "orgasms": cum_count,
+            "denials": denial_count,
+        })
+
+    # ── internals ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.datetime.now().isoformat(timespec="seconds")
+
+    def _log(self, event_type: str, data: dict | None = None):
+        entry: dict = {"t": self._now(), "event": event_type}
+        if data:
+            entry.update(data)
+        self._events.append(entry)
+        self._flush()
+
+    def _flush(self):
+        tmp = self.path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"events": self._events}, f, indent=2, ensure_ascii=False)
+            tmp.replace(self.path)
+        except Exception:
+            pass  # best effort — don't crash the app over logging
 
 
 class HRClient:
@@ -1426,6 +1500,11 @@ class App:
         except Exception:
             pass
         self._apply_theme(self._theme_name)
+
+        # Session event log
+        self.session_logger = SessionLogger(CONFIG_PATH.parent / "sessions", VERSION)
+        self.root.after(30_000, self._hr_log_poll)
+
         self._build_ui()
         self._on_aggr_change()   # set initial aggressiveness colour
         self._load_config()
@@ -2128,6 +2207,17 @@ class App:
         self._cleaned_up = True
         self._running = False
 
+        if hasattr(self, 'session_logger'):
+            try:
+                self.session_logger.log_session_end(
+                    edge_count=self.edge_count,
+                    cum_count=self._cum_count,
+                    denial_count=self._denial_count,
+                    elapsed_s=time.time() - self.session_start,
+                )
+            except Exception:
+                pass
+
         # Wait for capture thread to finish (max 1.5 s)
         t = getattr(self, '_capture_thread', None)
         if t and t.is_alive():
@@ -2462,6 +2552,7 @@ class App:
         granted = random.randint(1, denominator) == 1
         self._last_letmecum_result = "granted" if granted else "denied"
         self._last_letmecum_time = time.time()
+        self.session_logger.log_letmecum(self._last_letmecum_result, aggr, denominator)
 
         if granted:
             self._cum_allowed = True
@@ -2494,6 +2585,7 @@ class App:
             if self._evil_mode:
                 ruin_pct = self._ruin_odds.get(aggr, 0)
                 if ruin_pct > 0 and random.randint(1, 100) <= ruin_pct:
+                    self.session_logger.log_letmecum("ruined", aggr, denominator)
                     self._do_ruin(aggr)
                     return
 
@@ -2607,6 +2699,7 @@ class App:
     def _on_cum(self):
         """Hard stop — volume to 0 and pinned there until user presses Resume."""
         self._cum_count += 1
+        self.session_logger.log_cum()
         self._cum_time = time.time()
         self._cum_stopped = True
         self._cum_allowed = False
@@ -2651,6 +2744,14 @@ class App:
         except Exception:
             pass
         log.info("Session resumed after I've CUM")
+
+    def _hr_log_poll(self):
+        """Log heart rate reading every 30 seconds when HR is active."""
+        if self.hr_on.get() and self.hr_client.connected:
+            bpm = self.hr_client.smooth_bpm()
+            if bpm is not None:
+                self.session_logger.log_heart_rate(round(bpm), self.hr_client.modifier())
+        self.root.after(30_000, self._hr_log_poll)
 
     def _open_settings(self):
         """Open the settings dialog."""
@@ -3437,13 +3538,17 @@ class App:
         if state == "Edging":
             if self._prev_state != "Edging":
                 self._edge_enter_time = now
+                self.session_logger.log_state_change("Edging")
             elif (now - getattr(self, '_edge_enter_time', now) >= 1.0
                   and not getattr(self, '_edge_counted', False)
                   and now - getattr(self, '_last_edge_time', 0.0) >= 10.0):
                 self.edge_count += 1
                 self._last_edge_time = now
                 self._edge_counted = True
+                self.session_logger.log_edge_counted(self.edge_count)
         else:
+            if self._prev_state == "Edging" and state != "Edging":
+                self.session_logger.log_state_change(state)
             self._edge_counted = False
 
         self._prev_state = state
