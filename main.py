@@ -1487,6 +1487,10 @@ class App:
         top_frame.pack(padx=P, pady=(P, 4), fill=tk.X)
         self._first_widget = top_frame
 
+        # ── Scrollable settings area ──────────────────────────────────────────
+        sf = ctk.CTkScrollableFrame(root, fg_color="transparent", corner_radius=0)
+        sf.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
         # video — plain tk.Label so ImageTk works without wrapping
         vid_shell = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE,
                                  corner_radius=8, border_width=1, border_color=self._C_BORDER,
@@ -1550,16 +1554,16 @@ class App:
         Tooltip(self._cum_btn, "Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.")
 
         def _divider():
-            ctk.CTkFrame(root, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
+            ctk.CTkFrame(sf, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
 
         _divider()
 
         # ── Volume floor / ceiling ────────────────────────────────────────────
-        vol_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        vol_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         vol_card.pack(fill=tk.X, padx=P, pady=2)
 
         vol_row = ctk.CTkFrame(vol_card, fg_color="transparent")
-        vol_row.pack(fill=tk.X, padx=12, pady=6)
+        vol_row.pack(fill=tk.X, padx=12, pady=4)
         ctk.CTkLabel(vol_row, text="Volume Range", font=lbl,
                      text_color=self._C_TEXT, anchor="w").pack(side=tk.LEFT)
         self._range_lbl = ctk.CTkLabel(vol_row, text="0% – 100%", font=lbl,
@@ -1659,7 +1663,7 @@ class App:
         _divider()
 
         # ── Aggressiveness ────────────────────────────────────────────────────
-        aggr_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        aggr_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         aggr_card.pack(fill=tk.X, padx=P, pady=2)
         Tooltip(aggr_card,
                "Controls how fast volume ramps and 'Let me cum?' odds.\n"
@@ -1668,7 +1672,7 @@ class App:
                "Hard: fast ramps, 1-in-6 odds, 3 min grant\n"
                "Expert: aggressive ramps, 1-in-30 odds, 1 min grant")
         aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
-        aggr_row.pack(fill=tk.X, padx=12, pady=10)
+        aggr_row.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self._aggr_seg = ctk.CTkSegmentedButton(
@@ -1684,11 +1688,11 @@ class App:
         _divider()
 
         # ── Output mode ───────────────────────────────────────────────────────
-        mode_card = ctk.CTkFrame(root, fg_color=self._C_SURFACE, corner_radius=8)
+        mode_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         self._mode_card = mode_card
         mode_card.pack(fill=tk.X, padx=P, pady=2)
         mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
-        mode_row.pack(fill=tk.X, padx=12, pady=10)
+        mode_row.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkLabel(mode_row, text="Output", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
 
@@ -1737,7 +1741,7 @@ class App:
         _update_output_btns()
 
         # Restim options panel
-        self._restim_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        self._restim_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         ro = ctk.CTkFrame(self._restim_opts, fg_color="transparent")
         ro.pack(padx=12, pady=7)
         ctk.CTkLabel(ro, text="Restim Port:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
@@ -1767,7 +1771,7 @@ class App:
         _copy_btn.pack(side=tk.LEFT)
 
         # xToys options panel
-        self._xtoys_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        self._xtoys_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         xo = ctk.CTkFrame(self._xtoys_opts, fg_color="transparent")
         xo.pack(fill=tk.X, padx=12, pady=(7, 2))
         ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
@@ -1783,7 +1787,7 @@ class App:
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
 
         # ── Heart Rate (Pulsoid) options panel ────────────────────────────────
-        self._hr_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        self._hr_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
 
         hr_row1 = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
         hr_row1.pack(fill=tk.X, padx=12, pady=(7, 2))
@@ -1830,7 +1834,7 @@ class App:
         self.hr_token_var.trace_add("write", self._on_hr_token_change)
 
         # Windows Audio options panel
-        self._windows_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        self._windows_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         wo = ctk.CTkFrame(self._windows_opts, fg_color="transparent")
         wo.pack(padx=12, pady=7, fill=tk.X)
         ctk.CTkLabel(wo, text="Device:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
@@ -1849,7 +1853,7 @@ class App:
         self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))  # default; _on_output_change re-packs after load
 
         # ── MP3 player options panel ───────────────────────────────────────────
-        self._mp3_opts = ctk.CTkFrame(root, fg_color=self._C_SURFACE2, corner_radius=6)
+        self._mp3_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         if _MINIAUDIO_OK:
             mo = ctk.CTkFrame(self._mp3_opts, fg_color="transparent")
             mo.pack(fill=tk.X, padx=12, pady=(8, 4))
@@ -1904,7 +1908,7 @@ class App:
         _divider()
 
         # ── Controls row ──────────────────────────────────────────────────────
-        ctrl = ctk.CTkFrame(root, fg_color="transparent")
+        ctrl = ctk.CTkFrame(sf, fg_color="transparent")
         ctrl.pack(fill=tk.X, padx=P, pady=3)
 
         def _ghost_btn(parent, text, cmd, **kw):
@@ -1934,13 +1938,13 @@ class App:
 
         # ── Status labels ─────────────────────────────────────────────────────
         self.info_label = ctk.CTkLabel(
-            root, text="State: --  |  Vol: --  |  WS: Disconnected",
+            sf, text="State: --  |  Vol: --  |  WS: Disconnected",
             font=ctk.CTkFont(size=15, weight="bold"), text_color=self._C_TEXT,
         )
         self.info_label.pack(pady=(4, 1))
 
         self.stats_label = ctk.CTkLabel(
-            root, text="Session: 00:00  |  Edges: 0",
+            sf, text="Session: 00:00  |  Edges: 0",
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
         )
         self.stats_label.pack(pady=(0, 4))
