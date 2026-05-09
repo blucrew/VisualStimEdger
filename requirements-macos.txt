@@ -1,5 +1,5 @@
-opencv-contrib-python>=4.8,<5
-numpy>=1.26,<3
+opencv-contrib-python>=4.10,<5
+numpy>=1.26,<2
 mss>=9.0,<12
 Pillow>=10.0,<13
 websocket-client>=1.6,<2

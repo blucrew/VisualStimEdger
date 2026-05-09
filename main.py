@@ -147,7 +147,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.7"
+VERSION = "1.7.9"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1110,7 +1110,11 @@ class OverlayServer:
         self._loop.run_until_complete(self._serve())
 
     async def _serve(self):
-        server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
+        try:
+            server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
+        except OSError as e:
+            log.error(f"Overlay: cannot bind port {self.PORT} ({e}) — OBS overlay disabled")
+            return
         log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
         async with server:
             await server.serve_forever()
@@ -1184,16 +1188,23 @@ class OverlayServer:
         frame = self._ws_text_frame(payload)
 
         async def _send():
+            # Snapshot the client list under the lock, then do all async I/O
+            # outside it — awaiting drain() while holding a threading.Lock can
+            # stall other threads trying to acquire the lock.
             with self._lock:
-                dead = []
-                for w in self._clients:
-                    try:
-                        w.write(frame)
-                        await w.drain()
-                    except Exception:
-                        dead.append(w)
-                for w in dead:
-                    self._clients.remove(w)
+                clients = list(self._clients)
+            dead = []
+            for w in clients:
+                try:
+                    w.write(frame)
+                    await w.drain()
+                except Exception:
+                    dead.append(w)
+            if dead:
+                with self._lock:
+                    for w in dead:
+                        if w in self._clients:
+                            self._clients.remove(w)
 
         asyncio.run_coroutine_threadsafe(_send(), self._loop)
 
@@ -1245,8 +1256,10 @@ class MusicPlayer:
     # ── Generator ─────────────────────────────────────────────────────────────
     def _gen(self):
         required_frames = yield b""   # prime
+        _consecutive_fails = 0
         while not self._stop_flag:
             if not self._playlist or self._state == "stopped":
+                _consecutive_fails = 0
                 required_frames = yield bytes(required_frames * 8)  # silence
                 continue
 
@@ -1263,8 +1276,16 @@ class MusicPlayer:
                 )
             except Exception as e:
                 log.error(f"MusicPlayer: cannot open {path.name}: {e}")
+                _consecutive_fails += 1
                 self._idx = (self._idx + 1) % len(self._playlist)
+                # If every file in the playlist has failed, yield silence to
+                # avoid a tight spin loop that pegs CPU at 100 %.
+                if _consecutive_fails >= len(self._playlist):
+                    log.warning("MusicPlayer: all files unreadable — yielding silence")
+                    required_frames = yield bytes(required_frames * 8)
+                    _consecutive_fails = 0
                 continue
+            _consecutive_fails = 0  # reset on successful open
 
             for chunk in src:
                 if self._stop_flag:
@@ -1712,6 +1733,7 @@ class App:
         # ── Scrollable settings area ──────────────────────────────────────────
         sf = ctk.CTkScrollableFrame(root, fg_color="transparent", corner_radius=0)
         sf.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self._sf = sf
 
         # video — plain tk.Label so ImageTk works without wrapping
         vid_shell = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE,
@@ -1897,6 +1919,13 @@ class App:
         aggr_row.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
+        self._evil_btn = ctk.CTkButton(
+            aggr_row, text="😈", command=self._toggle_evil_mode,
+            font=ctk.CTkFont(size=12), height=28, width=36, corner_radius=4,
+            fg_color="#cc0000", hover_color="#990000", text_color="white",
+        )
+        self._evil_btn.pack(side=tk.RIGHT, padx=(4, 0))
+        Tooltip(self._evil_btn, "Evil Mode — adds ruin outcome, crimson theme, and devil.png overlay")
         self._aggr_seg = ctk.CTkSegmentedButton(
             aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
             command=self._on_aggr_change,
@@ -2180,9 +2209,6 @@ class App:
         Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
-        self._evil_btn = _ghost_btn(ctrl, "😈", self._toggle_evil_mode, width=34)
-        self._evil_btn.pack(side=tk.LEFT, padx=(4, 0))
-        Tooltip(self._evil_btn, "Evil Mode — adds ruin outcome, crimson theme, and devil.png overlay")
 
         _divider()
 
@@ -2240,7 +2266,6 @@ class App:
                 "cum_override_range": self._cum_override_range,
                 "ui_font_size": self._ui_font_size,
                 "theme": self._theme_name,
-                "evil_mode": self._evil_mode,
                 "ruin_odds": self._ruin_odds,
                 "ruin_phrases": self._ruin_phrases,
             }
@@ -2369,10 +2394,6 @@ class App:
                 self._ruin_odds.update(data["ruin_odds"])
             if "ruin_phrases" in data and isinstance(data["ruin_phrases"], list):
                 self._ruin_phrases = data["ruin_phrases"]
-            if "evil_mode" in data:
-                self._evil_mode = bool(data["evil_mode"])
-                if self._evil_mode:
-                    self.root.after(100, lambda: self._apply_evil_mode(True))
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -2469,14 +2490,12 @@ class App:
                 continue
             frame = capture_window_region(self.hwnd, self.rel_box)
             if frame is not None:
-                # If the queue is full, discard the stale frame so we always
-                # feed the tracker the freshest capture available
-                if self._frame_queue.full():
-                    try:
-                        self._frame_queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                self._frame_queue.put(frame)
+                # Non-blocking put — if the queue is full the stale frame is
+                # simply dropped; the tracker always gets the freshest capture.
+                try:
+                    self._frame_queue.put(frame, block=False)
+                except queue.Full:
+                    pass
                 time.sleep(0.03)   # ~30 fps cap — no point capturing faster
             else:
                 time.sleep(0.25)
@@ -2786,6 +2805,8 @@ class App:
 
     def _tick_letmecum_cooldown(self):
         """Update the button text with remaining cooldown, then restore."""
+        if not self._running:
+            return
         remaining = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
         if remaining > 0:
             self._letmecum_btn.configure(text=f"Wait {int(remaining)}s...",
@@ -2802,6 +2823,8 @@ class App:
 
     def _tick_cum_grant(self):
         """Countdown the cum grant window. When expired, revoke permission."""
+        if not self._running:
+            return
         if not self._cum_allowed:
             return
         remaining = getattr(self, '_cum_grant_expires', 0) - time.time()
@@ -3016,7 +3039,11 @@ class App:
             win.destroy()
             self._on_close()
             import sys, os
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            # PyInstaller frozen: sys.argv[0] is already the EXE path — don't prepend again
+            if getattr(sys, "frozen", False):
+                os.execv(sys.executable, sys.argv)
+            else:
+                os.execv(sys.executable, [sys.executable] + sys.argv)
 
         ctk.CTkButton(appear_frame, text="Apply (restarts app)", command=_apply_appearance,
                       font=ctk.CTkFont(size=10, weight="bold"), height=28, corner_radius=4,
@@ -3518,10 +3545,17 @@ class App:
         if on:
             self._pre_evil_theme = self._theme_name
             self._apply_theme("Evil")
+            # Propagate colours to already-created widgets
+            self.root.configure(fg_color=self._C_BG)
+            self._sf.configure(fg_color=self._C_BG)
+            for _w in self._sf.winfo_children():
+                if isinstance(_w, ctk.CTkFrame):
+                    _w.configure(fg_color=self._C_SURFACE)
+            self.info_label.configure(text_color=self._C_TEXT)
+            self.stats_label.configure(text_color=self._C_TEXT_DIM)
             self.root.title("VisualStimEdger 😈")
-            # Style evil button active
-            self._evil_btn.configure(fg_color="#cc0000", hover_color="#990000",
-                                     border_color="#ff2200")
+            # Style evil button: brighter red = active
+            self._evil_btn.configure(fg_color="#ff2200", hover_color="#cc0000")
             # Style letmecum button with reddish tint when not granted
             if not self._cum_allowed:
                 self._letmecum_btn.configure(fg_color="#8a1a1a", hover_color="#6a0a0a")
@@ -3535,19 +3569,19 @@ class App:
                 try:
                     from PIL import ImageTk as _ITk
                     pil_img = Image.open(str(devil_path)).convert("RGBA")
-                    # Scale to fit controls panel (portrait ~160×220)
-                    pw, ph = 160, 220
+                    # Scale to a larger size so it fills the background
+                    pw, ph = 200, 280
                     pil_img = pil_img.resize((pw, ph), Image.LANCZOS)
-                    # Apply 38% global alpha so it reads as a watermark
+                    # 25% opacity — watermark float over settings panel
                     r, g, b, a = pil_img.split()
-                    a = a.point(lambda x: int(x * 0.38))
+                    a = a.point(lambda x: int(x * 0.25))
                     pil_img.putalpha(a)
                     ctk_img = ctk.CTkImage(light_image=pil_img,
                                            dark_image=pil_img, size=(pw, ph))
                     self._devil_label = ctk.CTkLabel(
                         self.root, image=ctk_img, text="", fg_color="transparent")
-                    # Float over lower-right of UI (away from video, over the cards)
-                    self._devil_label.place(relx=0.88, rely=0.72, anchor="center")
+                    # Float over the settings panel (below video feed area)
+                    self._devil_label.place(relx=0.5, rely=0.65, anchor="center")
                     log.info(f"Evil Mode: devil.png placed on UI ({pw}×{ph})")
                 except Exception as e:
                     log.warning(f"Evil Mode: failed to place devil.png: {e}")
@@ -3556,10 +3590,17 @@ class App:
                 self._devil_label = None
         else:
             self._apply_theme(self._pre_evil_theme)
+            # Propagate restored colours to widgets
+            self.root.configure(fg_color=self._C_BG)
+            self._sf.configure(fg_color=self._C_BG)
+            for _w in self._sf.winfo_children():
+                if isinstance(_w, ctk.CTkFrame):
+                    _w.configure(fg_color=self._C_SURFACE)
+            self.info_label.configure(text_color=self._C_TEXT)
+            self.stats_label.configure(text_color=self._C_TEXT_DIM)
             self.root.title("VisualStimEdger")
-            # Restore evil button to ghost style
-            self._evil_btn.configure(fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
-                                     border_color=self._C_BORDER)
+            # Restore evil button to normal red (not active)
+            self._evil_btn.configure(fg_color="#cc0000", hover_color="#990000")
             # Restore letmecum button
             self._letmecum_btn.configure(fg_color="#3EC941", hover_color="#32a435")
             if self._devil_label is not None:
@@ -3716,7 +3757,9 @@ class App:
         cur_cx, cur_cy = px + pw // 2, py + ph // 2
         yx, yy, yw, yh = yolo_bbox
         det_cx, det_cy = yx + yw // 2, yy + yh // 2
-        diag = np.sqrt(pw ** 2 + ph ** 2)
+        # Clamp to a minimum so a shrunken tracker bbox can't permanently reject
+        # valid YOLO detections that are "too far" from a tiny artifact.
+        diag = max(np.sqrt(pw ** 2 + ph ** 2), 100.0)
 
         if np.sqrt((det_cx - cur_cx) ** 2 + (det_cy - cur_cy) ** 2) > diag * self._YOLO_MAX_JUMP:
             self.yolo_candidate = None

@@ -1,27 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+# macOS build spec — produces a proper .app bundle
+from PyInstaller.utils.hooks import collect_all
 
 datas = [
     ('models/yolo-fastest.cfg', 'models'),
     ('models/best.weights',     'models'),
-    ('icon.ico',                '.'),
     ('splash.png',              '.'),
     ('overlay.html',            '.'),
 ]
 binaries = []
 hiddenimports = [
-    'pycaw.pycaw', 'comtypes.stream', 'win32timezone',
     'sounddevice', '_sounddevice_data',
     'websocket', 'websocket._abnf', 'websocket._core',
     'websocket._exceptions', 'websocket._http', 'websocket._logging',
     'websocket._socket', 'websocket._ssl_compat', 'websocket._utils',
     'ssl',
+    'bleak', 'bleak.backends', 'bleak.backends.corebluetooth',
+    'bleak.backends.corebluetooth.client',
+    'bleak.backends.corebluetooth.scanner',
 ]
 
-for pkg in ('pycaw', 'sounddevice', 'customtkinter', 'miniaudio', 'bleak'):
+for pkg in ('sounddevice', 'customtkinter', 'miniaudio', 'bleak'):
     tmp = collect_all(pkg)
-    datas    += tmp[0]
-    binaries += tmp[1]
+    datas         += tmp[0]
+    binaries      += tmp[1]
     hiddenimports += tmp[2]
 
 a = Analysis(
@@ -33,7 +35,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Exclude Windows-only packages so PyInstaller doesn't error on import
+    excludes=['pycaw', 'win32timezone', 'pywin32', 'comtypes'],
     noarchive=False,
     optimize=0,
 )
@@ -42,16 +45,12 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='VisualStimEdger',
-    icon='icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=['opencv_world*.dll', 'cv2*.pyd'],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
@@ -59,4 +58,18 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+app = BUNDLE(
+    exe,
+    a.binaries,
+    a.datas,
+    name='VisualStimEdger.app',
+    icon=None,
+    bundle_identifier='com.blucrew.visualstimedger',
+    info_plist={
+        'NSHighResolutionCapable': True,
+        'CFBundleShortVersionString': '1.7.9',
+        'NSCameraUsageDescription': 'VisualStimEdger needs camera/screen access to capture the video feed.',
+    },
 )

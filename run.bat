@@ -1,7 +1,7 @@
 @echo off
 title VisualStimEdger
 
-python --version >/dev/null 2>&1
+python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
     echo  Python not found.

@@ -1,0 +1,58 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install --only-binary :all: -r requirements.txt pyinstaller
+
+      - name: Build EXE
+        run: python -m PyInstaller VisualStimEdger.spec --noconfirm --distpath dist
+
+      - name: Rename artifact
+        run: mv dist/VisualStimEdger.exe dist/VisualStimEdger-windows.exe
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/VisualStimEdger-windows.exe
+          fail_on_unmatched_files: true
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements-macos.txt pyinstaller
+
+      - name: Build .app
+        run: python -m PyInstaller VisualStimEdger-macos.spec --noconfirm --distpath dist
+
+      - name: Zip .app bundle
+        run: cd dist && zip -r ../VisualStimEdger-macos.zip VisualStimEdger.app
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: VisualStimEdger-macos.zip
+          fail_on_unmatched_files: true
