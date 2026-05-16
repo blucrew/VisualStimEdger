@@ -147,7 +147,7 @@ class DickDetector:
         return tuple(boxes[best])
 
 # --- CONFIGURATION ---
-VERSION = "1.7.9"
+VERSION = "1.8.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -217,7 +217,7 @@ class RegionSelector:
 
         # Overlay label with place() so it doesn't steal space from the canvas.
         # The canvas must span the full virtual desktop for multi-monitor selection.
-        self.label = tk.Label(self.root, text="Step 1: Draw a box around the video feed on any monitor. Release to lock.", font=("Arial", 28), bg="white", fg="black")
+        self.label = tk.Label(self.root, text="Step 1 — Draw a box around your video feed, then release to lock.  [Esc to cancel]", font=("Arial", 18, "bold"), bg="#111111", fg="#F5A623")
         self.label.place(relx=0.5, y=50, anchor="n")
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
@@ -404,9 +404,9 @@ def select_head(frame_cv, parent=None):
     root.bind("<Escape>", lambda e: _cancel())
     root.protocol("WM_DELETE_WINDOW", _cancel)
 
-    btn_frame = tk.Frame(root)
+    btn_frame = tk.Frame(root, bg="#111111")
     btn_frame.pack(fill=tk.X)
-    tk.Button(btn_frame, text="Confirm Head Area ✅", command=root.destroy, font=("Arial", 12, "bold"), bg="#4CAF50", fg="white").pack(pady=5)
+    tk.Button(btn_frame, text="Confirm Head Area ✅", command=root.destroy, font=("Arial", 11, "bold"), bg="#3EC941", fg="#111111", activebackground="#32a435", activeforeground="#111111").pack(pady=5)
     
     if is_main:
         root.eval('tk::PlaceWindow . center')
@@ -1445,13 +1445,22 @@ THEMES = {
         "TEXT": "#ffcccc", "TEXT_DIM": "#7a3a3a", "BORDER": "#660000",
     },
     "ReThorn": {
-        "BG": "#2d2d2d", "SURFACE": "#383838", "SURFACE2": "#404040",
+        "BG": "#111111", "SURFACE": "#1a1a1a", "SURFACE2": "#222222",
         "ACCENT": "#F5A623", "ACCENT_H": "#d48e1a",
         "RED": "#FF4444", "RED_HOV": "#cc3636",
         "GREEN": "#3EC941", "GREEN_H": "#32a435",
         "BLUE": "#444CFC", "BLUE_H": "#363dca",
         "YELLOW": "#F5A623", "YELLOW_H": "#d48e1a",
-        "TEXT": "#e0e0e8", "TEXT_DIM": "#8a8a8a", "BORDER": "#9C9C9C",
+        "TEXT": "#e8e8f0", "TEXT_DIM": "#6a6a7a", "BORDER": "#333333",
+    },
+    "Void": {
+        "BG": "#0d0012", "SURFACE": "#160020", "SURFACE2": "#1e002c",
+        "ACCENT": "#9d4edd", "ACCENT_H": "#7b2fc9",
+        "RED": "#ff3366", "RED_HOV": "#cc2255",
+        "GREEN": "#39d987", "GREEN_H": "#2ab36d",
+        "BLUE": "#2d2b8a", "BLUE_H": "#232170",
+        "YELLOW": "#ffb300", "YELLOW_H": "#cc8f00",
+        "TEXT": "#e8e0ff", "TEXT_DIM": "#6a5a80", "BORDER": "#2d1a40",
     },
     "OG": {
         "BG": "#1a1a2e", "SURFACE": "#222238", "SURFACE2": "#2a2a42",
@@ -1477,9 +1486,9 @@ DEFAULT_THEME = "ReThorn"
 
 class App:
     # ── Colour palette (set from theme) ──────────────────────────────────────
-    _C_BG        = "#2d2d2d"
-    _C_SURFACE   = "#383838"
-    _C_SURFACE2  = "#404040"
+    _C_BG        = "#111111"
+    _C_SURFACE   = "#1a1a1a"
+    _C_SURFACE2  = "#222222"
     _C_ACCENT    = "#F5A623"
     _C_ACCENT_H  = "#d48e1a"
     _C_RED       = "#FF4444"
@@ -1490,9 +1499,9 @@ class App:
     _C_BLUE_H    = "#363dca"
     _C_YELLOW    = "#F5A623"
     _C_YELLOW_H  = "#d48e1a"
-    _C_TEXT      = "#e0e0e8"
-    _C_TEXT_DIM  = "#8a8a8a"
-    _C_BORDER    = "#9C9C9C"
+    _C_TEXT      = "#e8e8f0"
+    _C_TEXT_DIM  = "#6a6a7a"
+    _C_BORDER    = "#333333"
 
     # ── YOLO reanchoring
     _YOLO_INTERVAL = 15    # run detector every N frames
@@ -1565,6 +1574,8 @@ class App:
         self._denial_count = 0
         self._cum_override_range = True   # True = cum goes to 100%, False = respect ceiling
         self._cum_stopped = False         # True after "I've CUM" until "Resume"
+        self._refractory_mins = 5        # cooldown duration (0 = no timer, manual resume)
+        self._refractory_until: float = 0.0  # epoch time when refractory ends
         self._ui_font_size = 11           # base font size for UI
         self._theme_name = DEFAULT_THEME
         self._cum_time: float | None = None
@@ -1579,6 +1590,10 @@ class App:
         self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
         self._ruin_count     = 0
         self._devil_label    = None
+        self._exclusion_zones: list[tuple[int,int,int,int]] = []   # (x,y,w,h) in frame px
+        self._ez_drawing    = False   # True while user is dragging a new zone
+        self._ez_disp_start = None   # (x,y) display coords of drag start
+        self._ez_disp_end   = None   # (x,y) display coords of current drag end
 
         # AUTO calibration
         self._auto_mode       = True
@@ -1684,7 +1699,7 @@ class App:
     def _build_ui(self):
         root = self.root
         root.configure(fg_color=self._C_BG)
-        root.minsize(540, 500)
+        root.minsize(540, 200)
 
         P   = 12          # standard outer padding
         fs  = self._ui_font_size
@@ -1730,22 +1745,34 @@ class App:
         top_frame.pack(padx=P, pady=(P, 4), fill=tk.X)
         self._first_widget = top_frame
 
-        # ── Scrollable settings area ──────────────────────────────────────────
-        sf = ctk.CTkScrollableFrame(root, fg_color="transparent", corner_radius=0)
-        sf.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        # ── Settings area — no scrollbar; window auto-resizes to content ─────
+        sf = ctk.CTkFrame(root, fg_color="transparent", corner_radius=0)
+        sf.pack(fill=tk.X, padx=0, pady=0)
         self._sf = sf
 
         # video — plain tk.Label so ImageTk works without wrapping
-        vid_shell = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE,
+        vid_col = ctk.CTkFrame(top_frame, fg_color="transparent")
+        vid_col.pack(side=tk.LEFT)
+        vid_shell = ctk.CTkFrame(vid_col, fg_color=self._C_SURFACE,
                                  corner_radius=8, border_width=1, border_color=self._C_BORDER,
                                  width=330, height=260)
-        vid_shell.pack(side=tk.LEFT)
+        vid_shell.pack()
         vid_shell.pack_propagate(False)
         self.video_label = tk.Label(vid_shell, bg=self._C_SURFACE)
         self.video_label.pack(padx=3, pady=(3, 0), fill=tk.BOTH, expand=True)
         self._snark_label = ctk.CTkLabel(vid_shell, text="", font=ctk.CTkFont(size=11, slant="italic"),
                                           text_color="#ff4444", height=20)
         self._snark_label.pack(padx=3, pady=(0, 3))
+        # Re-select buttons live directly under the video preview
+        _vbr = ctk.CTkFrame(vid_col, fg_color="transparent")
+        _vbr.pack(fill=tk.X, pady=(4, 0))
+        _vbtn_kw = dict(font=ctk.CTkFont(size=10), height=28,
+                        fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                        text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER)
+        ctk.CTkButton(_vbr, text="Re-Select Feed", command=self._reselect_feed,
+                      **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ctk.CTkButton(_vbr, text="Re-Select Head", command=self._reselect_head,
+                      **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         # height buttons — stacked right of video
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent", width=180, height=260)
@@ -1774,6 +1801,27 @@ class App:
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
         Tooltip(self._auto_btn, "Auto-calibrate heights by observing motion range")
+
+        # Exclusion zone controls
+        ez_row = ctk.CTkFrame(hbf, fg_color="transparent")
+        ez_row.pack(fill=tk.X, pady=(0, 4))
+        self._ez_add_btn = ctk.CTkButton(
+            ez_row, text="＋ Exclusion Zone", command=self._add_exclusion_zone,
+            font=ctk.CTkFont(size=10), height=26, corner_radius=4,
+            fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="black")
+        self._ez_add_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+        Tooltip(self._ez_add_btn, "Draw a rectangle on the video feed — YOLO reanchor detections inside it will be ignored")
+        def _clear_zones():
+            self._exclusion_zones.clear()
+            self._save_config()
+            log.info("All exclusion zones cleared")
+        ctk.CTkButton(
+            ez_row, text="✕ Clear", command=_clear_zones,
+            font=ctk.CTkFont(size=10), height=26, corner_radius=4,
+            fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+            text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+            width=60).pack(side=tk.LEFT)
+        Tooltip(ez_row, "Remove all exclusion zones")
 
         _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,    self._C_RED_HOV)
         _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   self._C_GREEN,  self._C_GREEN_H)
@@ -2199,16 +2247,15 @@ class App:
                 **kw,
             )
 
-        _ghost_btn(ctrl, "Re-Select Feed", self._reselect_feed).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
-        _ghost_btn(ctrl, "Re-Select Head", self._reselect_head).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=4)
         self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
                                     font=ctk.CTkFont(size=10, weight="bold"), width=120)
         self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._play_btn = _ghost_btn(ctrl, "▶", self._toggle_play_mode, width=34)
+        self._play_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(self._play_btn, "Play Mode — minimal immersive view; hides settings")
 
         _divider()
 
@@ -2224,6 +2271,80 @@ class App:
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
         )
         self.stats_label.pack(pady=(0, 4))
+
+        self._build_play_panel(root)
+
+    def _build_play_panel(self, parent):
+        """Minimal immersive play-mode panel — replaces the scrollable settings."""
+        P = 12
+        pp = ctk.CTkFrame(parent, fg_color=self._C_BG, corner_radius=0)
+        # NOT packed here — _toggle_play_mode handles show/hide
+        self._play_panel = pp
+
+        # ── Big state label ───────────────────────────────────────────────────
+        self._play_state_lbl = ctk.CTkLabel(
+            pp, text="—",
+            font=ctk.CTkFont(size=52, weight="bold"),
+            text_color=self._C_TEXT)
+        self._play_state_lbl.pack(pady=(20, 2))
+
+        # ── Volume ────────────────────────────────────────────────────────────
+        self._play_vol_lbl = ctk.CTkLabel(
+            pp, text="Vol: —",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=self._C_TEXT_DIM)
+        self._play_vol_lbl.pack(pady=(0, 8))
+
+        # ── Stats card: edges | time | HR ────────────────────────────────────
+        stats_card = ctk.CTkFrame(pp, fg_color=self._C_SURFACE, corner_radius=8)
+        stats_card.pack(fill=tk.X, padx=P, pady=4)
+        self._play_edges_lbl = ctk.CTkLabel(
+            stats_card, text="0 edges",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=self._C_TEXT)
+        self._play_edges_lbl.pack(side=tk.LEFT, padx=16, pady=10)
+        self._play_time_lbl = ctk.CTkLabel(
+            stats_card, text="0:00",
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=self._C_TEXT)
+        self._play_time_lbl.pack(side=tk.LEFT, padx=16, pady=10)
+        self._play_hr_lbl = ctk.CTkLabel(
+            stats_card, text="",
+            font=ctk.CTkFont(size=13), text_color="#e91e63")
+        self._play_hr_lbl.pack(side=tk.RIGHT, padx=16, pady=10)
+
+        # ── Snark / status line ───────────────────────────────────────────────
+        self._play_snark_lbl = ctk.CTkLabel(
+            pp, text="",
+            font=ctk.CTkFont(size=11, slant="italic"),
+            text_color=self._C_TEXT_DIM)
+        self._play_snark_lbl.pack(pady=(2, 6))
+
+        # ── Action buttons ────────────────────────────────────────────────────
+        def _pbtn(parent, text, cmd, fg, hov):
+            return ctk.CTkButton(
+                parent, text=text, command=cmd,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                height=44, corner_radius=6,
+                fg_color=fg, hover_color=hov, text_color="white")
+
+        row1 = ctk.CTkFrame(pp, fg_color="transparent")
+        row1.pack(fill=tk.X, padx=P, pady=(0, 4))
+        self._play_hold_btn = _pbtn(row1, "Hold Volume", self._toggle_hold,
+                                    self._C_SURFACE2, "#4a4a4a")
+        self._play_hold_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+        self._play_letmecum_btn = _pbtn(row1, "Let me cum?", self._on_letmecum,
+                                        self._C_GREEN, self._C_GREEN_H)
+        self._play_letmecum_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
+
+        row2 = ctk.CTkFrame(pp, fg_color="transparent")
+        row2.pack(fill=tk.X, padx=P, pady=(0, 12))
+        self._play_cum_btn = _pbtn(row2, "I've CUM", self._on_cum, "#6a6a7a", "#555565")
+        self._play_cum_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+        _pbtn(row2, "⚙ Settings", self._toggle_play_mode,
+              self._C_SURFACE2, "#4a4a4a").pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
+
+        # Size window to content once everything is laid out
+        parent.after(100, self._fit_window)
 
     def _start_update_check(self):
         def callback(latest, url):
@@ -2264,10 +2385,12 @@ class App:
                 "cum_odds":    self._cum_odds,
                 "denial_phrases": self._denial_phrases,
                 "cum_override_range": self._cum_override_range,
+                "refractory_mins":   self._refractory_mins,
                 "ui_font_size": self._ui_font_size,
                 "theme": self._theme_name,
                 "ruin_odds": self._ruin_odds,
                 "ruin_phrases": self._ruin_phrases,
+                "exclusion_zones": self._exclusion_zones,
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -2385,6 +2508,8 @@ class App:
                 self._denial_phrases = data["denial_phrases"]
             if "cum_override_range" in data:
                 self._cum_override_range = bool(data["cum_override_range"])
+            if "refractory_mins" in data:
+                self._refractory_mins = max(0, int(data["refractory_mins"]))
             # Legacy keys cum_silence / cum_ramp are silently ignored.
             if "ui_font_size" in data:
                 self._ui_font_size = int(data["ui_font_size"])
@@ -2394,6 +2519,8 @@ class App:
                 self._ruin_odds.update(data["ruin_odds"])
             if "ruin_phrases" in data and isinstance(data["ruin_phrases"], list):
                 self._ruin_phrases = data["ruin_phrases"]
+            if "exclusion_zones" in data and isinstance(data["exclusion_zones"], list):
+                self._exclusion_zones = [tuple(z) for z in data["exclusion_zones"]]
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
@@ -2595,6 +2722,67 @@ class App:
             self._pick_height = None
             self.video_label.configure(cursor="")
             self.video_label.unbind("<Button-1>")
+
+    def _add_exclusion_zone(self):
+        """Let the user drag a rectangle on the video feed to mark an exclusion zone.
+
+        Binds directly on video_label so the live feed stays visible underneath.
+        The in-progress rectangle is drawn on each frame by _draw_tracking_overlay.
+        """
+        if getattr(self, '_ez_drawing', False):
+            return  # already in progress
+
+        self._ez_drawing    = True
+        self._ez_disp_start = None
+        self._ez_disp_end   = None
+
+        vl = self.video_label
+        vl.configure(cursor='crosshair')
+
+        def _press(e):
+            self._ez_disp_start = (e.x, e.y)
+            self._ez_disp_end   = (e.x, e.y)
+
+        def _drag(e):
+            if self._ez_disp_start is not None:
+                self._ez_disp_end = (e.x, e.y)
+
+        def _release(e):
+            self._ez_drawing    = False
+            start               = self._ez_disp_start
+            self._ez_disp_start = None
+            self._ez_disp_end   = None
+            vl.configure(cursor='')
+            vl.unbind('<ButtonPress-1>')
+            vl.unbind('<B1-Motion>')
+            vl.unbind('<ButtonRelease-1>')
+
+            if start is None:
+                return
+            x0, y0 = start
+            x1, y1 = e.x, e.y
+            if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
+                return  # too small — ignore
+
+            # Map display coords → source-frame coords
+            sc = getattr(self, '_disp_scale', 1.0) or 1.0
+            ox = getattr(self, '_disp_offset_x', 0)
+            oy = getattr(self, '_disp_offset_y', 0)
+            fw = getattr(self, '_disp_frame_w', 9999)
+            fh = getattr(self, '_disp_frame_h', 9999)
+            def _clamp(v, lo, hi): return max(lo, min(hi, v))
+            fx0 = _clamp(int((min(x0, x1) - ox) / sc), 0, fw)
+            fy0 = _clamp(int((min(y0, y1) - oy) / sc), 0, fh)
+            fx1 = _clamp(int((max(x0, x1) - ox) / sc), 0, fw)
+            fy1 = _clamp(int((max(y0, y1) - oy) / sc), 0, fh)
+            if fx1 > fx0 and fy1 > fy0:
+                self._exclusion_zones.append((fx0, fy0, fx1 - fx0, fy1 - fy0))
+                self._save_config()
+                log.info(f"Exclusion zone added: {self._exclusion_zones[-1]}, total={len(self._exclusion_zones)}")
+
+        vl.bind('<ButtonPress-1>',   _press)
+        vl.bind('<B1-Motion>',        _drag)
+        vl.bind('<ButtonRelease-1>', _release)
 
     def _set_edging(self):
         self._disable_auto()
@@ -2906,7 +3094,7 @@ class App:
         self.root.after(2700, _step6)
 
     def _on_cum(self):
-        """Hard stop — volume to 0 and pinned there until user presses Resume."""
+        """Hard stop — volume to 0; refractory countdown then auto-resume."""
         self._cum_count += 1
         self.session_logger.log_cum()
         self._cum_time = time.time()
@@ -2915,18 +3103,13 @@ class App:
         self._cum_grant_expires = 0
         self._letmecum_btn.configure(text="Let me cum?", fg_color="#3EC941",
                                      hover_color="#32a435")
-        # Disable "Let me cum?" while stopped — no point rolling the dice
-        # when the session has been marked finished.
         try:
             self._letmecum_btn.configure(state="disabled")
         except Exception:
             pass
         self._snark_label.configure(text="")
-        # Swap "I've CUM" → "Resume" — single button, same slot, no timer games
-        self._cum_btn.configure(text="Resume", command=self._on_resume,
-                                fg_color=self._C_GREEN,
-                                hover_color=self._C_GREEN_H,
-                                text_color="white")
+
+        # Zero all outputs
         ceil_val = self.max_vol_var.get() / 100.0
         if self.restim_on.get():
             self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
@@ -2936,23 +3119,77 @@ class App:
             self.win_audio.set_volume(0.0, 0.0, 1.0)
         if self.mp3_on.get() and self.music_player:
             self.music_player.volume = 0.0
-        log.info("Cum triggered — session stopped, awaiting Resume")
+
+        if self._refractory_mins > 0:
+            # Refractory countdown — clicking the button skips it early
+            self._refractory_until = time.time() + self._refractory_mins * 60
+            self._cum_btn.configure(
+                text=f"Refractory: {self._refractory_mins}:00  (click to skip)",
+                command=self._on_resume,
+                fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                text_color=self._C_TEXT_DIM)
+            try:
+                self._play_cum_btn.configure(
+                    text=f"Refractory: {self._refractory_mins}:00",
+                    command=self._on_resume,
+                    fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                    text_color=self._C_TEXT_DIM)
+            except Exception:
+                pass
+            self.root.after(1000, self._tick_refractory)
+            log.info(f"Refractory started — {self._refractory_mins} min")
+        else:
+            # No refractory — immediate manual resume
+            self._cum_btn.configure(text="Resume", command=self._on_resume,
+                                    fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
+                                    text_color="white")
+            try:
+                self._play_cum_btn.configure(text="Resume", command=self._on_resume,
+                                             fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
+                                             text_color="white")
+            except Exception:
+                pass
+            log.info("Cum triggered — session stopped, awaiting Resume")
+
+    def _tick_refractory(self):
+        """Tick the refractory countdown once per second; auto-resume at 0."""
+        if not self._running or not self._cum_stopped:
+            return
+        remaining = self._refractory_until - time.time()
+        if remaining <= 0:
+            self._on_resume()
+            return
+        m = int(remaining) // 60
+        s = int(remaining) % 60
+        label = f"Refractory: {m}:{s:02d}  (click to skip)"
+        short  = f"Refractory: {m}:{s:02d}"
+        try:
+            self._cum_btn.configure(text=label)
+        except Exception:
+            pass
+        try:
+            self._play_cum_btn.configure(text=short)
+        except Exception:
+            pass
+        self.root.after(1000, self._tick_refractory)
 
     def _on_resume(self):
-        """Restart the edging loop after an 'I've CUM' press."""
+        """Restart the edging loop — called by refractory auto-expire or manual skip."""
         self._cum_stopped = False
         self._cum_time = None
-        # Swap "Resume" → "I've CUM"
-        self._cum_btn.configure(text="I've CUM", command=self._on_cum,
-                                fg_color="#e0e0e8",
-                                hover_color="#c8c8d0",
-                                text_color=self._C_BG)
-        # Re-enable "Let me cum?"
+        self._refractory_until = 0.0
+        _cum_kw = dict(text="I've CUM", command=self._on_cum,
+                       fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG)
+        self._cum_btn.configure(**_cum_kw)
+        try:
+            self._play_cum_btn.configure(**_cum_kw)
+        except Exception:
+            pass
         try:
             self._letmecum_btn.configure(state="normal")
         except Exception:
             pass
-        log.info("Session resumed after I've CUM")
+        log.info("Session resumed after refractory")
 
     def _hr_log_poll(self):
         """Log heart rate reading every 30 seconds when HR is active."""
@@ -2966,7 +3203,7 @@ class App:
         """Open the settings dialog."""
         win = ctk.CTkToplevel(self.root)
         win.title("Settings")
-        win.geometry("480x740")
+        win.geometry("480x860")
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
@@ -2979,26 +3216,61 @@ class App:
         appear_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
         appear_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
-        # Theme selector
-        ctk.CTkLabel(appear_frame, text="Theme", font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=self._C_TEXT_DIM).pack(padx=12, pady=(8, 2), anchor="w")
+        # Theme selector — collapsed by default, expand on click
         theme_var = tk.StringVar(value=self._theme_name)
-        for tname, tcolors in THEMES.items():
-            row = ctk.CTkFrame(appear_frame, fg_color="transparent")
-            row.pack(fill=tk.X, padx=12, pady=2)
-            ctk.CTkRadioButton(row, text=tname, variable=theme_var, value=tname,
-                               font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
-                               fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
-                               border_color=self._C_BORDER, width=100
-                               ).pack(side=tk.LEFT)
-            swatch_cv = tk.Canvas(row, width=120, height=16, bg=self._C_SURFACE,
-                                  highlightthickness=0)
-            swatch_cv.pack(side=tk.LEFT, padx=(8, 0))
-            preview_colors = [tcolors["BG"], tcolors["SURFACE"], tcolors["ACCENT"],
-                              tcolors["RED"], tcolors["GREEN"], tcolors["BLUE"]]
-            for i, col in enumerate(preview_colors):
-                swatch_cv.create_rectangle(i * 20, 1, i * 20 + 18, 15,
-                                           fill=col, outline=tcolors["BORDER"], width=1)
+        theme_hdr = ctk.CTkFrame(appear_frame, fg_color="transparent", cursor="hand2")
+        theme_hdr.pack(fill=tk.X, padx=12, pady=(8, 0))
+        theme_arrow_lbl = ctk.CTkLabel(theme_hdr, text="▶", font=ctk.CTkFont(size=10),
+                                       text_color=self._C_TEXT_DIM, width=14)
+        theme_arrow_lbl.pack(side=tk.LEFT)
+        theme_title_lbl = ctk.CTkLabel(
+            theme_hdr,
+            text=f"Theme: {self._theme_name}",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=self._C_TEXT_DIM, anchor="w")
+        theme_title_lbl.pack(side=tk.LEFT, padx=(4, 0))
+
+        theme_rows_frame = ctk.CTkFrame(appear_frame, fg_color="transparent")
+        # not packed yet — hidden until toggled
+
+        def _build_theme_rows():
+            for tname, tcolors in THEMES.items():
+                row = ctk.CTkFrame(theme_rows_frame, fg_color="transparent")
+                row.pack(fill=tk.X, padx=0, pady=2)
+                ctk.CTkRadioButton(row, text=tname, variable=theme_var, value=tname,
+                                   font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+                                   fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                                   border_color=self._C_BORDER, width=100,
+                                   command=lambda t=tname: theme_title_lbl.configure(
+                                       text=f"Theme: {t}")
+                                   ).pack(side=tk.LEFT)
+                swatch_cv = tk.Canvas(row, width=120, height=16, bg=self._C_SURFACE,
+                                      highlightthickness=0)
+                swatch_cv.pack(side=tk.LEFT, padx=(8, 0))
+                preview_colors = [tcolors["BG"], tcolors["SURFACE"], tcolors["ACCENT"],
+                                  tcolors["RED"], tcolors["GREEN"], tcolors["BLUE"]]
+                for i, col in enumerate(preview_colors):
+                    swatch_cv.create_rectangle(i * 20, 1, i * 20 + 18, 15,
+                                               fill=col, outline=tcolors["BORDER"], width=1)
+
+        _theme_rows_built = [False]
+        _theme_open = [False]
+
+        def _toggle_theme_rows(_event=None):
+            if not _theme_rows_built[0]:
+                _build_theme_rows()
+                _theme_rows_built[0] = True
+            if _theme_open[0]:
+                theme_rows_frame.pack_forget()
+                theme_arrow_lbl.configure(text="▶")
+            else:
+                theme_rows_frame.pack(fill=tk.X, padx=12, pady=(0, 4))
+                theme_arrow_lbl.configure(text="▼")
+            _theme_open[0] = not _theme_open[0]
+
+        theme_hdr.bind("<Button-1>", _toggle_theme_rows)
+        theme_arrow_lbl.bind("<Button-1>", _toggle_theme_rows)
+        theme_title_lbl.bind("<Button-1>", _toggle_theme_rows)
 
         # Font size
         ctk.CTkFrame(appear_frame, height=1, fg_color=self._C_BORDER
@@ -3181,6 +3453,44 @@ class App:
                            border_color=self._C_BORDER
                            ).pack(padx=16, pady=(2, 8), anchor="w")
 
+        # ── Refractory Period ─────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="Refractory Period",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        refrac_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        refrac_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        refrac_hdr = ctk.CTkFrame(refrac_frame, fg_color="transparent")
+        refrac_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
+        ctk.CTkLabel(refrac_hdr, text="Cooldown after I've CUM",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+        refrac_val_lbl = ctk.CTkLabel(
+            refrac_hdr,
+            text="Off" if self._refractory_mins == 0 else f"{self._refractory_mins} min",
+            font=lbl, text_color=self._C_ACCENT, anchor="e")
+        refrac_val_lbl.pack(side=tk.RIGHT)
+
+        refrac_var = tk.IntVar(value=self._refractory_mins)
+
+        def _on_refrac_slide(v):
+            val = int(float(v))
+            refrac_val_lbl.configure(text="Off" if val == 0 else f"{val} min")
+
+        ctk.CTkSlider(
+            refrac_frame, from_=0, to=30, number_of_steps=30,
+            variable=refrac_var, command=_on_refrac_slide,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            progress_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(fill=tk.X, padx=12, pady=(0, 4))
+        ctk.CTkLabel(
+            refrac_frame,
+            text="How long after cumming before the session auto-resumes. "
+                 "Set to 0 to disable the timer and resume manually. "
+                 "Clicking the button during refractory skips it early.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(0, 10))
+
         # ── Ruin Odds ─────────────────────────────────────────────────────────
         ctk.CTkLabel(win, text="😈 Ruin Odds (% chance when denied, Evil Mode only)",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
@@ -3259,6 +3569,7 @@ class App:
             ruin_text = ruin_phrases_box.get("1.0", "end").strip()
             self._ruin_phrases = [l.strip() for l in ruin_text.split("\n") if l.strip()]
             self._cum_override_range = override_var.get()
+            self._refractory_mins = int(refrac_var.get())
             self._ui_font_size = int(font_var.get())
             self._theme_name = theme_var.get()
             self._save_config()
@@ -3282,10 +3593,11 @@ class App:
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
-        ctk.CTkButton(btn_row, text="Save", command=_save, width=100,
+        ctk.CTkButton(btn_row, text="OK", command=_save, width=100,
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white", font=ctk.CTkFont(size=12, weight="bold")
                       ).pack(side=tk.RIGHT)
+        win.protocol("WM_DELETE_WINDOW", _save)
 
     def _on_floor_change(self, val):
         lo = int(self.min_vol_var.get())
@@ -3537,6 +3849,27 @@ class App:
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                      border_color=self._C_BORDER)
 
+    def _fit_window(self):
+        """Resize root height to exactly fit its current content."""
+        self.root.update_idletasks()
+        w = self.root.winfo_reqwidth()
+        h = self.root.winfo_reqheight()
+        self.root.geometry(f"{max(w, 540)}x{h + 24}")
+
+    def _toggle_play_mode(self):
+        self._play_mode = not getattr(self, '_play_mode', False)
+        if self._play_mode:
+            self._sf.pack_forget()
+            self._play_panel.pack(fill=tk.X)
+            self._play_btn.configure(text="⚙")
+            self.root.title("VisualStimEdger ▶" + (" 😈" if self._evil_mode else ""))
+        else:
+            self._play_panel.pack_forget()
+            self._sf.pack(fill=tk.X)
+            self._play_btn.configure(text="▶")
+            self.root.title("VisualStimEdger" + (" 😈" if self._evil_mode else ""))
+        self.root.after(50, self._fit_window)
+
     def _toggle_evil_mode(self):
         self._evil_mode = not self._evil_mode
         self._apply_evil_mode(self._evil_mode)
@@ -3757,6 +4090,11 @@ class App:
         cur_cx, cur_cy = px + pw // 2, py + ph // 2
         yx, yy, yw, yh = yolo_bbox
         det_cx, det_cy = yx + yw // 2, yy + yh // 2
+        # Discard detections whose centre falls inside any user-drawn exclusion zone
+        for _ez in self._exclusion_zones:
+            _ex, _ey, _ew, _eh = _ez
+            if _ex <= det_cx <= _ex + _ew and _ey <= det_cy <= _ey + _eh:
+                return
         # Clamp to a minimum so a shrunken tracker bbox can't permanently reject
         # valid YOLO detections that are "too far" from a tiny artifact.
         diag = max(np.sqrt(pw ** 2 + ph ** 2), 100.0)
@@ -3830,6 +4168,41 @@ class App:
                 cv2.putText(frame, msg, (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
             cv2.rectangle(frame, (px, py), (px + pw, py + ph), colour, 2)
+
+        # Exclusion zones — semi-transparent dark fill + red border + X
+        # BGR: (0,0,255) → RGB (255,0,0) = red
+        _EZ_RED = (0, 0, 255)
+        if self._exclusion_zones:
+            _ez_ol = frame.copy()
+            for _ez in self._exclusion_zones:
+                _ex, _ey, _ew, _eh = _ez
+                cv2.rectangle(_ez_ol, (_ex, _ey), (_ex + _ew, _ey + _eh), (10, 10, 10), -1)
+            cv2.addWeighted(_ez_ol, 0.7, frame, 0.3, 0, frame)
+            for _ez in self._exclusion_zones:
+                _ex, _ey, _ew, _eh = _ez
+                cv2.rectangle(frame, (_ex, _ey), (_ex + _ew, _ey + _eh), _EZ_RED, 1)
+                cv2.line(frame, (_ex, _ey), (_ex + _ew, _ey + _eh), _EZ_RED, 1)
+                cv2.line(frame, (_ex + _ew, _ey), (_ex, _ey + _eh), _EZ_RED, 1)
+
+        # In-progress exclusion zone while user is dragging
+        if getattr(self, '_ez_drawing', False):
+            _s = getattr(self, '_ez_disp_start', None)
+            _en = getattr(self, '_ez_disp_end',   None)
+            if _s and _en:
+                _sc = getattr(self, '_disp_scale', 1.0) or 1.0
+                _ox = getattr(self, '_disp_offset_x', 0)
+                _oy = getattr(self, '_disp_offset_y', 0)
+                _fw = getattr(self, '_disp_frame_w', frame.shape[1])
+                _fh = getattr(self, '_disp_frame_h', frame.shape[0])
+                def _cl(v, lo, hi): return max(lo, min(hi, v))
+                _px0 = _cl(int((min(_s[0], _en[0]) - _ox) / _sc), 0, _fw)
+                _py0 = _cl(int((min(_s[1], _en[1]) - _oy) / _sc), 0, _fh)
+                _px1 = _cl(int((max(_s[0], _en[0]) - _ox) / _sc), 0, _fw)
+                _py1 = _cl(int((max(_s[1], _en[1]) - _oy) / _sc), 0, _fh)
+                _ip_ol = frame.copy()
+                cv2.rectangle(_ip_ol, (_px0, _py0), (_px1, _py1), (10, 10, 10), -1)
+                cv2.addWeighted(_ip_ol, 0.7, frame, 0.3, 0, frame)
+                cv2.rectangle(frame, (_px0, _py0), (_px1, _py1), _EZ_RED, 1)
 
     def _edging_y(self):
         """Effective Edging line Y, with sensitivity offset baked in.
@@ -3911,6 +4284,11 @@ class App:
                   f"Erect {pcts['Erect']:.0f}%  "
                   f"Flaccid {pcts['Flaccid']:.0f}%")
         )
+        if getattr(self, '_play_mode', False):
+            elapsed = time.time() - self.session_start
+            m2, s2 = divmod(int(elapsed), 60)
+            self._play_edges_lbl.configure(text=f"{self.edge_count} edges")
+            self._play_time_lbl.configure(text=f"{m2:02d}:{s2:02d}")
 
     def _draw_height_lines(self, frame):
         fw = frame.shape[1]
@@ -4114,6 +4492,21 @@ class App:
             text=status_text,
             text_color=conn_color,
         )
+
+        # Update play panel if visible
+        if getattr(self, '_play_mode', False):
+            _sc = {"Edging": self._C_ACCENT, "Erect": self._C_GREEN, "Flaccid": self._C_BLUE}
+            self._play_state_lbl.configure(
+                text=state, text_color=_sc.get(state, self._C_TEXT))
+            self._play_vol_lbl.configure(text=f"Vol: {vol_str}")
+            if self.hr_on.get():
+                sbpm2 = self._active_hr.smooth_bpm()
+                self._play_hr_lbl.configure(
+                    text=f"♥ {sbpm2:.0f} bpm" if sbpm2 else "♥ --")
+            else:
+                self._play_hr_lbl.configure(text="")
+            self._play_snark_lbl.configure(
+                text=self._snark_label.cget("text") if hasattr(self, '_snark_label') else "")
 
     def _broadcast_overlay(self, state):
         # Use highest active volume so OBS reflects what's actually happening
