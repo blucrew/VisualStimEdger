@@ -4,7 +4,7 @@ import re, pathlib, sys
 
 # ── Read version from main.py ──────────────────────────────────────────────
 try:
-    src = pathlib.Path("main.py").read_text(encoding="utf-8")
+    src = pathlib.Path("VSE.py").read_text(encoding="utf-8")
     VERSION = re.search(r'VERSION\s*=\s*"([^"]+)"', src).group(1)
 except Exception:
     VERSION = "1.3.6"
@@ -71,7 +71,7 @@ draw.rounded_rectangle(
 )
 
 # ── Icon ──────────────────────────────────────────────────────────────────
-ICX, ICY, ICR = W // 2, 86, 34
+ICX, ICY, ICR = W // 2, 71, 34
 draw.ellipse([ICX - ICR, ICY - ICR, ICX + ICR, ICY + ICR], fill=RED)
 icon_path = pathlib.Path("icon.ico")
 if icon_path.exists():
@@ -108,11 +108,11 @@ def wrap(txt, f, max_w):
     return lines
 
 # ── Title ─────────────────────────────────────────────────────────────────
-text_c(132, "VisualStimEdger", f_title, WHITE)
-text_c(170, f"v{VERSION}  ·  edge smarter", f_sub, GREY)
+text_c(117, "VisualStimEdger", f_title, WHITE)
+text_c(155, f"v{VERSION}  ·  edge smarter", f_sub, GREY)
 
 # ── Section header ────────────────────────────────────────────────────────
-text_l(88, 202, "Before you hit Start", f_section, YELLOW)
+text_l(88, 187, "Before you hit Start", f_section, YELLOW)
 
 # ── Steps ─────────────────────────────────────────────────────────────────
 STEPS = [
@@ -126,7 +126,7 @@ STEPS = [
      "Do this during your session. AUTO mode can handle it automatically. Re-calibrate any time."),
 ]
 
-sy = 232
+sy = 217
 NR = 12
 
 for i, (title, body) in enumerate(STEPS):
@@ -151,12 +151,12 @@ for i, (title, body) in enumerate(STEPS):
     sy += 66
 
 # ── Disclaimer ────────────────────────────────────────────────────────────
-text_c(503, "Controls volume only — does not generate e-stim signals.", f_disc, DISC_COL)
-text_c(518, "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.", f_disc, DISC_COL)
+text_c(488, "Controls volume only — does not generate e-stim signals.", f_disc, DISC_COL)
+text_c(503, "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.", f_disc, DISC_COL)
 
 # ── Start button ──────────────────────────────────────────────────────────
-BX1, BY1 = 88, 540
-BX2, BY2 = 612, 596
+BX1, BY1 = 88, 525
+BX2, BY2 = 612, 581
 draw.rounded_rectangle([BX1, BY1, BX2, BY2], radius=9, fill=RED)
 btn_txt = "I'm ready \u2014 select my camera feed  \u2192"
 bb  = draw.textbbox((0, 0), btn_txt, font=f_btn)
@@ -166,6 +166,32 @@ draw.text(
     ((BX1 + BX2) // 2 - bw // 2, (BY1 + BY2) // 2 - bh // 2),
     btn_txt, fill=BTN_FG, font=f_btn
 )
+
+# ── Ko-fi footer ──────────────────────────────────────────────────────────
+f_kofi = font(16, bold=True)
+_kofi_txt = "enjoyed VSE?  support at ko-fi.com/stimstation"
+_bb_txt = draw.textbbox((0, 0), _kofi_txt, font=f_kofi)
+_txt_w = _bb_txt[2] - _bb_txt[0]
+_txt_h = _bb_txt[3] - _bb_txt[1]
+
+# Load and resize ko-fi logo to match text height
+_logo_h = 22
+_kofi_logo_path = pathlib.Path("ko-fi.png")
+if _kofi_logo_path.exists():
+    _logo = Image.open(_kofi_logo_path).convert("RGBA")
+    _logo_w = int(_logo.width * _logo_h / _logo.height)
+    _logo = _logo.resize((_logo_w, _logo_h), Image.LANCZOS)
+    _gap = 8
+    _total_w = _logo_w + _gap + _txt_w
+    _row_x = (W - _total_w) // 2
+    _row_y = 612
+    img.paste(_logo, (_row_x, _row_y + (_txt_h - _logo_h) // 2), _logo)
+    draw = ImageDraw.Draw(img)
+    draw.text((_row_x + _logo_w + _gap, _row_y), _kofi_txt, fill=YELLOW, font=f_kofi)
+else:
+    _bb_full = draw.textbbox((0, 0), _kofi_txt, font=f_kofi)
+    _kofi_x = (W - (_bb_full[2] - _bb_full[0])) // 2
+    draw.text((_kofi_x, 612), _kofi_txt, fill=YELLOW, font=f_kofi)
 
 # ── Save ──────────────────────────────────────────────────────────────────
 out = pathlib.Path("splash.png")

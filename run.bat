@@ -23,4 +23,4 @@ if %errorlevel% neq 0 (
 )
 
 echo Starting VisualStimEdger...
-python main.py
+python VSE.py

@@ -1,5 +1,7 @@
 # VisualStimEdger
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Z8Z64QF6Y)
+
 > **⚡ This is a companion app — it does not generate e-stim signals or audio on its own.**
 > You need an existing setup already producing stimulus: [Restim](https://restim.io), xToys, an `.mp3` file playing through a stereo box, or anything else you were already using. VisualStimEdger simply controls the **volume/intensity** of that existing signal based on what it sees on camera.
 

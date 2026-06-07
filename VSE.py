@@ -31,8 +31,9 @@ import webbrowser
 import requests
 import ssl
 import websocket
+import random
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 import customtkinter as ctk
 from PIL import Image, ImageTk
 import logging
@@ -107,44 +108,72 @@ class DickDetector:
 
     def detect_head(self, frame):
         """
-        Returns the highest-confidence 'dick-head' bbox as (x, y, w, h) in frame
-        pixel coordinates, or None if nothing found above the confidence threshold.
+        Three-tier confidence cascade (single forward pass):
+          Tier 1 — class 1 (head) conf >= 0.35                  anywhere in frame
+          Tier 2 — class 1 (head) conf >= 0.20                  lower 60% of frame only
+          Tier 3 — class 0 (shaft) conf >= 0.25                 infer head at top of shaft bbox
+        Returns (x, y, w, h) in frame pixels or None.
         """
         if not self.available:
             return None
 
-        h, w = frame.shape[:2]
+        fh, fw = frame.shape[:2]
         blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, self.INPUT_SIZE,
                                      swapRB=True, crop=False)
         self._net.setInput(blob)
         outputs = self._net.forward(self._output_layers)
 
-        boxes, confidences = [], []
+        head_boxes, head_confs   = [], []
+        shaft_boxes, shaft_confs = [], []
         for output in outputs:
             for det in output:
                 scores   = det[5:]
                 class_id = int(np.argmax(scores))
                 conf     = float(scores[class_id])
-                if class_id == 1 and conf >= self.conf_threshold:   # class 1 = dick-head
-                    cx = int(det[0] * w)
-                    cy = int(det[1] * h)
-                    bw = int(det[2] * w)
-                    bh = int(det[3] * h)
-                    boxes.append([cx - bw // 2, cy - bh // 2, bw, bh])
-                    confidences.append(conf)
+                cx = int(det[0] * fw);  cy = int(det[1] * fh)
+                bw = int(det[2] * fw);  bh = int(det[3] * fh)
+                box = [cx - bw // 2, cy - bh // 2, bw, bh]
+                if class_id == 1:
+                    head_boxes.append(box);  head_confs.append(conf)
+                elif class_id == 0:
+                    shaft_boxes.append(box); shaft_confs.append(conf)
 
-        if not boxes:
-            return None
+        def _best_nms(boxes, confs, min_conf):
+            filt = [(b, c) for b, c in zip(boxes, confs) if c >= min_conf]
+            if not filt:
+                return None, 0.0
+            fb, fc = zip(*filt)
+            idxs = cv2.dnn.NMSBoxes(list(fb), list(fc), min_conf, self.nms_threshold)
+            if len(idxs) == 0:
+                return None, 0.0
+            best = max(idxs.flatten(), key=lambda i: fc[i])
+            return tuple(fb[best]), fc[best]
 
-        indices = cv2.dnn.NMSBoxes(boxes, confidences,
-                                   self.conf_threshold, self.nms_threshold)
-        if len(indices) == 0:
-            return None
+        # Tier 1: head class, high confidence, full frame
+        bbox, conf = _best_nms(head_boxes, head_confs, 0.35)
+        if bbox:
+            self.last_conf = conf
+            return bbox
 
-        # Return the highest-confidence surviving detection
-        best = max(indices.flatten(), key=lambda i: confidences[i])
-        self.last_conf = confidences[best]
-        return tuple(boxes[best])
+        # Tier 2: head class, lower confidence, lower 60% of frame only
+        lower_idx   = [i for i, b in enumerate(head_boxes)
+                       if b[1] + b[3] // 2 >= fh * 0.40]
+        lower_boxes = [head_boxes[i] for i in lower_idx]
+        lower_confs = [head_confs[i] for i in lower_idx]
+        bbox, conf  = _best_nms(lower_boxes, lower_confs, 0.20)
+        if bbox:
+            self.last_conf = conf
+            return bbox
+
+        # Tier 3: shaft class fallback — infer head position at top of shaft bbox
+        shaft_bbox, conf = _best_nms(shaft_boxes, shaft_confs, 0.25)
+        if shaft_bbox:
+            sx, sy, sw, sh = shaft_bbox
+            head_h = max(20, sh // 4)
+            self.last_conf = conf
+            return (sx, sy, sw, head_h)
+
+        return None
 
 # --- CONFIGURATION ---
 VERSION = "1.8.0"
@@ -178,6 +207,7 @@ PREEMPT_UNLOCK = {
 CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
 
 HEAD_Y_SMOOTH      = 8    # rolling average window for head Y before volume logic
+CUM_DETECT_MAXLEN  = 300  # ~10 s of head-Y samples at 30 fps for cum detection
 
 class RegionSelector:
     def __init__(self, parent=None):
@@ -242,6 +272,8 @@ class RegionSelector:
         self.canvas.coords(self.rect, self.start_x, self.start_y, cur_x, cur_y)
 
     def on_release(self, event):
+        if self.start_x is None:
+            return
         end_x, end_y = (self.canvas.canvasx(event.x), self.canvas.canvasy(event.y))
         x1, x2 = sorted([self.start_x, end_x])
         y1, y2 = sorted([self.start_y, end_y])
@@ -499,7 +531,7 @@ class RestimClient:
 
 class XToysClient:
     """Sends intensity to xToys via the Private Webhook HTTP endpoint.
-    Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=set-intensity&intensity=<0-100>
+    Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=setIntensity&intensity=<0-100>
     The webhook_id is shown in xToys → https://xtoys.app/me → Private Webhook.
     Stateless HTTP GET — no persistent connection needed.
     """
@@ -537,7 +569,7 @@ class XToysClient:
                 return
             params = {
                 "id":        self.webhook_id.strip(),
-                "action":    "set-intensity",
+                "action":    "setIntensity",
                 "intensity": val_int,
             }
             try:
@@ -644,7 +676,7 @@ class SessionLogger:
 class HRClient:
     """
     Receives live heart-rate data from Pulsoid via WebSocket.
-    Token: https://pulsoid.net/ui/keys  (free tier works with most HR monitors)
+    Token: https://pulsoid.net/ui/keys  (requires Pulsoid paid plan as of 2025)
     WS endpoint: wss://dev.pulsoid.net/api/v1/data/real_time?access_token=<token>
     Message format: {"measured_at":..., "data":{"heart_rate": 75}}
 
@@ -904,25 +936,226 @@ class BLEHRClient:
     @staticmethod
     def scan_sync(timeout: float = 6.0) -> list[tuple[str, str]]:
         """Synchronous BLE scan. Blocks for `timeout` seconds. Returns [(address, name), ...]."""
-        import asyncio
+        import asyncio, sys
         async def _scan():
             try:
                 from bleak import BleakScanner
             except ImportError:
+                log.warning("BLE scan: bleak not installed — pip install bleak")
                 return []
-            devices = await BleakScanner.discover(
-                timeout=timeout,
-                service_uuids=[BLEHRClient.HR_SERVICE],
-            )
-            return [(d.address, d.name or d.address) for d in devices]
-        loop = asyncio.new_event_loop()
+            try:
+                devices = await BleakScanner.discover(
+                    timeout=timeout,
+                    service_uuids=[BLEHRClient.HR_SERVICE],
+                )
+                return [(d.address, d.name or d.address) for d in devices]
+            except Exception as e:
+                log.warning(f"BLE scan discover error: {e}")
+                return []
         try:
-            return loop.run_until_complete(_scan())
+            # On Windows, bleak uses WinRT which requires a ProactorEventLoop.
+            # Setting the policy explicitly before creating the loop fixes
+            # crashes when scan_sync is called from a background thread.
+            if sys.platform == "win32":
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_scan())
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
         except Exception as e:
             log.warning(f"BLE scan failed: {e}")
             return []
-        finally:
-            loop.close()
+
+
+class VoiceEngine:
+    """Offline keyword/phrase recogniser using Vosk + sounddevice.
+
+    Runs a background thread that feeds mic audio through a KaldiRecognizer
+    with a restricted grammar.  When a keyword is matched the registered
+    callback is called from the audio thread — the caller is responsible for
+    posting to the UI thread (root.after) if needed.
+
+    Model: vosk-model-small-en-us (~40 MB) placed at
+        <resource_path>/models/vosk-model-small-en-us
+    Install: pip install vosk sounddevice
+    """
+
+    # Phrase vocabulary (order matters: phrases before single words in matching)
+    _PHRASES = [
+        "erect up", "erect down",
+        "flaccid up", "flaccid down",
+        "edging up", "edging down",
+        "find head", "set lines",
+        "switch source", "resume session",
+        "clear exclude",
+    ]
+    _WORDS = [
+        "came", "cumming", "pause", "resume",
+        "select", "here", "confirm", "cancel", "again", "back",
+        "exclude",
+        "up", "down", "left", "right",
+        "one", "two", "three", "four", "five",
+        "six", "seven", "eight", "nine",
+    ]
+    _NUM_MAP = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    }
+    MODEL_DIR = "vosk-model-small-en-us"
+
+    def __init__(self, model_path: str, device_name: str = "", samplerate: int = 16000):
+        self.model_path  = model_path
+        self.device_name = device_name
+        self.samplerate  = samplerate
+        self._safeword   = "red"
+        self._cb         = None          # fn(keyword: str), called from audio thread
+        self._stop       = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._level      = 0.0           # RMS 0–1 for level meter UI
+        self._lock       = threading.Lock()
+
+    # ── public api ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def model_path_default() -> str:
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base, "models", VoiceEngine.MODEL_DIR)
+
+    @staticmethod
+    def model_available(path: str) -> bool:
+        return bool(path) and os.path.isdir(path)
+
+    @staticmethod
+    def list_input_devices() -> list[str]:
+        try:
+            import sounddevice as sd
+            return [d['name'] for d in sd.query_devices() if d['max_input_channels'] > 0]
+        except Exception:
+            return []
+
+    def set_safeword(self, word: str):
+        self._safeword = word.strip().lower() or "red"
+
+    def set_callback(self, fn):
+        """Register the single keyword callback (replaces previous one)."""
+        with self._lock:
+            self._cb = fn
+
+    @property
+    def level(self) -> float:
+        return self._level
+
+    @property
+    def running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def start(self):
+        if self.running:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="VoiceEngine")
+        self._thread.start()
+        log.info(f"VoiceEngine: starting (device={self.device_name or 'default'})")
+
+    def stop(self):
+        self._stop.set()
+        t = self._thread
+        self._thread = None
+        if t and t.is_alive():
+            t.join(timeout=1.0)
+
+    # ── internals ─────────────────────────────────────────────────────────────
+
+    def _build_grammar(self) -> str:
+        words: set[str] = set()
+        for ph in self._PHRASES:
+            words.update(ph.split())
+        words.update(self._WORDS)
+        for part in self._safeword.split():
+            words.add(part)
+        words.add("[unk]")
+        return json.dumps(sorted(words))
+
+    def _dispatch(self, kw: str):
+        with self._lock:
+            cb = self._cb
+        if cb:
+            try:
+                cb(kw)
+            except Exception as e:
+                log.warning(f"VoiceEngine callback error: {e}")
+
+    def _match(self, text: str):
+        """Match recognised text against vocabulary; dispatch first hit."""
+        # Safeword always wins
+        if self._safeword and self._safeword in text.split():
+            self._dispatch("safeword")
+            return
+        # Multi-word phrases before single words
+        for phrase in self._PHRASES:
+            if phrase in text:
+                self._dispatch(phrase)
+                return
+        # Single words (exact word boundary)
+        words_in = set(text.split())
+        for kw in self._WORDS:
+            if kw in words_in:
+                self._dispatch(kw)
+                return
+
+    def _run(self):
+        try:
+            from vosk import Model, KaldiRecognizer, SetLogLevel
+            SetLogLevel(-1)
+        except ImportError:
+            log.error("VoiceEngine: vosk not installed — pip install vosk")
+            return
+        try:
+            import sounddevice as sd
+        except ImportError:
+            log.error("VoiceEngine: sounddevice not installed")
+            return
+        if not os.path.isdir(self.model_path):
+            log.error(f"VoiceEngine: model not found at {self.model_path}")
+            return
+        try:
+            model = Model(self.model_path)
+            rec   = KaldiRecognizer(model, self.samplerate, self._build_grammar())
+        except Exception as e:
+            log.error(f"VoiceEngine: init failed: {e}")
+            return
+        # Resolve mic device index
+        dev_idx = None
+        if self.device_name:
+            try:
+                for i, d in enumerate(sd.query_devices()):
+                    if d['max_input_channels'] > 0 and self.device_name in d['name']:
+                        dev_idx = i
+                        break
+            except Exception:
+                pass
+        blocksize = int(self.samplerate * 0.1)   # 100ms chunks
+        try:
+            with sd.RawInputStream(
+                samplerate=self.samplerate, blocksize=blocksize,
+                device=dev_idx, dtype='int16', channels=1,
+            ) as stream:
+                while not self._stop.is_set():
+                    data, _ = stream.read(blocksize)
+                    raw = bytes(data)
+                    pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+                    self._level = min(1.0, float(np.sqrt(np.mean(pcm ** 2))) / 32768.0 * 8.0)
+                    if rec.AcceptWaveform(raw):
+                        text = json.loads(rec.Result()).get("text", "").strip().lower()
+                        if text and text != "[unk]":
+                            log.debug(f"VoiceEngine recognised: {text!r}")
+                            self._match(text)
+        except Exception as e:
+            if not self._stop.is_set():
+                log.error(f"VoiceEngine: stream error: {e}")
 
 
 class _DefaultAudioDevice:
@@ -940,13 +1173,34 @@ class _SounddeviceAudioDevice:
         self._dev = None
 
 
+def _pycaw_flow(d):
+    """Return the flow int for a pycaw device, or -1 if inaccessible."""
+    try:
+        return int(d.flow)
+    except Exception:
+        return -1
+
+
 def list_audio_devices():
     """Return all render (output) devices.
 
-    sounddevice is tried first — it bypasses COM entirely and is rock-solid
-    for listing.  pycaw is kept only as a fallback for volume control resolution.
+    Tries pycaw first (real IMMDevice objects = reliable volume control).
+    Falls back to sounddevice if pycaw finds nothing usable.
     """
-    # Level 1: sounddevice — most reliable for enumeration across all Windows versions
+    # Level 1: pycaw — enumerate named devices, prefer render (flow=0)
+    try:
+        all_devs = AudioUtilities.GetAllDevices()
+        named = [d for d in all_devs if d._dev is not None and d.FriendlyName]
+        render = [d for d in named if _pycaw_flow(d) == 0]
+        result = render if render else named   # if flow is broken, show all named
+        if result:
+            log.info(f"WinAudio: pycaw found {len(result)} device(s) "
+                     f"({'render-only' if render else 'flow unavailable, all named'})")
+            return result
+    except Exception as e:
+        log.error(f"WinAudio: GetAllDevices failed: {e}")
+
+    # Level 2: sounddevice (names only — _resolve_dev fuzzy-matches to pycaw for control)
     try:
         import sounddevice as sd
         devs = [_SounddeviceAudioDevice(d['name'])
@@ -956,24 +1210,13 @@ def list_audio_devices():
             log.info(f"WinAudio: sounddevice found {len(devs)} output device(s)")
             return devs
     except Exception as e:
-        log.error(f"WinAudio: sounddevice listing failed: {e}")
+        log.error(f"WinAudio: sounddevice failed: {e}")
 
-    # Level 2 & 3: pycaw full enumeration (fallback)
-    log.warning("WinAudio: sounddevice unavailable — falling back to pycaw")
-    try:
-        devices = AudioUtilities.GetAllDevices()
-        render = [d for d in devices if int(d.flow) == 0]
-        if render:
-            return render
-        if devices:
-            return list(devices)
-    except Exception as e:
-        log.error(f"WinAudio: GetAllDevices failed: {e}")
-
-    # Level 4: default speakers only
+    # Level 3: default speakers only
     try:
         default = AudioUtilities.GetSpeakers()
         if default:
+            log.info("WinAudio: using default speakers fallback")
             return [_DefaultAudioDevice(default)]
     except Exception as e:
         log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
@@ -1013,20 +1256,27 @@ class WindowsAudioClient:
         4. GetSpeakers() — default output endpoint.
         """
         try:
-            all_devs = [d for d in AudioUtilities.GetAllDevices() if d._dev is not None]
-            # Pass 1: exact
+            all_devs = [d for d in AudioUtilities.GetAllDevices()
+                        if d._dev is not None and d.FriendlyName]
+            nl = name.lower()
+            # Pass 1: exact match
             for d in all_devs:
                 if d.FriendlyName == name:
                     return d._dev
-            # Pass 2: fuzzy — one name is a substring of the other
-            nl = name.lower()
+            # Pass 2: substring — one is contained in the other
             for d in all_devs:
                 fl = d.FriendlyName.lower()
                 if nl in fl or fl in nl:
                     log.debug(f"WinAudio: fuzzy matched '{name}' → '{d.FriendlyName}'")
                     return d._dev
-            # Pass 3: first render device
-            render = [d for d in all_devs if int(d.flow) == 0]
+            # Pass 3: prefix match — sounddevice truncates names at ~31 chars
+            prefix = nl[:31]
+            for d in all_devs:
+                if d.FriendlyName.lower().startswith(prefix):
+                    log.debug(f"WinAudio: prefix matched '{name}' → '{d.FriendlyName}'")
+                    return d._dev
+            # Pass 4: first render device
+            render = [d for d in all_devs if _pycaw_flow(d) == 0]
             if render:
                 log.debug(f"WinAudio: no name match, using first render device '{render[0].FriendlyName}'")
                 return render[0]._dev
@@ -1241,17 +1491,33 @@ class MusicPlayer:
     EXTS = {'.mp3', '.wav', '.ogg', '.flac', '.m4a'}
 
     def __init__(self):
-        self._device    = None
-        self._stop_flag = False
-        self._state     = "stopped"   # stopped | playing | paused
-        self._skip      = 0           # +1 next, -1 prev (set from main thread)
-        self._playlist  = []          # list[pathlib.Path]
-        self._idx       = 0
-        self.loop_mode  = "folder"    # "track" | "folder"
-        self.volume     = 0.5         # 0.0–1.0, written from main thread, read from audio thread
+        self._device      = None
+        self._device_name = ""        # "" = system default; set via set_output_device()
+        self._stop_flag   = False
+        self._state       = "stopped"   # stopped | playing | paused
+        self._skip        = 0           # +1 next, -1 prev (set from main thread)
+        self._playlist    = []          # list[pathlib.Path]
+        self._idx         = 0
+        self.loop_mode    = "folder"    # "track" | "folder"
+        self.volume       = 0.5         # 0.0–1.0, written from main thread, read from audio thread
         # UI notification — set by audio thread, read by main thread (strings are atomic)
         self.track_name = ""
         self.track_info = ""          # e.g. "3 / 12"
+
+    @staticmethod
+    def list_devices() -> list[str]:
+        """Return names of available playback devices."""
+        try:
+            return [d['name'] for d in _miniaudio.Devices().get_playbacks()]
+        except Exception:
+            return []
+
+    def set_output_device(self, name: str):
+        """Switch output device — restarts playback if currently playing."""
+        self._device_name = name
+        if self._state == "playing":
+            self._stop_device()
+            self._start()
 
     # ── Generator ─────────────────────────────────────────────────────────────
     def _gen(self):
@@ -1321,10 +1587,20 @@ class MusicPlayer:
         gen = self._gen()
         next(gen)
         try:
+            device_id = None
+            if self._device_name:
+                try:
+                    for d in _miniaudio.Devices().get_playbacks():
+                        if d['name'] == self._device_name:
+                            device_id = d['id']
+                            break
+                except Exception:
+                    pass
             self._device = _miniaudio.PlaybackDevice(
                 output_format=_miniaudio.SampleFormat.FLOAT32,
                 nchannels=2, sample_rate=44100,
                 buffersize_msec=150,
+                device_id=device_id,
             )
             self._device.start(gen)
         except Exception as e:
@@ -1504,7 +1780,8 @@ class App:
     _C_BORDER    = "#333333"
 
     # ── YOLO reanchoring
-    _YOLO_INTERVAL = 15    # run detector every N frames
+    _YOLO_INTERVAL_LOCKED = 30   # frames between YOLO checks when tracking is solid
+    _YOLO_INTERVAL_LOST   = 5    # frames between YOLO checks when tracking is suspect/lost
     _YOLO_CONFIRM  = 2     # consecutive detections in same area before reanchoring
     _YOLO_MAX_JUMP = 2.0   # max allowed jump as multiple of current bbox diagonal
     # Tracker plausibility
@@ -1569,6 +1846,17 @@ class App:
         # Hold
         self.hold_active = False
 
+        # Lazy-initialised state — declared here to keep attribute creation in one place
+        self._proc_frame_count        = 0
+        self._last_status_time        = 0.0
+        self._last_display_time       = 0.0
+        self._play_mode               = False
+        self._auto_btn_state          = None
+        self._letmecum_cooldown_until = 0.0
+        self._cum_grant_expires       = 0.0
+        self._last_letmecum_result    = None
+        self._last_letmecum_time      = 0.0
+
         # Cum cooldown  (None = not active)
         self._cum_count = 0
         self._denial_count = 0
@@ -1576,12 +1864,56 @@ class App:
         self._cum_stopped = False         # True after "I've CUM" until "Resume"
         self._refractory_mins = 5        # cooldown duration (0 = no timer, manual resume)
         self._refractory_until: float = 0.0  # epoch time when refractory ends
+
+        # ── Auto-cum detection ────────────────────────────────────────────────
+        self._auto_cum_enabled     = False
+        self._auto_cum_delay       = 5      # seconds before _on_cum fires (0-10)
+        self._auto_cum_sensitivity = 5      # 1-10, higher = easier to trigger
+        self._cum_detect_buf: deque = deque(maxlen=CUM_DETECT_MAXLEN)
+
+        # ── Hands-free cum mode (settings-only toggle) ────────────────────────
+        self._hf_enabled    = False
+        self._hf_min_edges  = dict(self._HF_MIN_EDGES_DEFAULT)
+        self._hf_cum_chance = dict(self._HF_CUM_CHANCE_DEFAULT)
+
+        # ── Bondage mode ──────────────────────────────────────────────────────
+        self._bondage_active           = False
+        self._bondage_standby          = False   # True after safeword, awaiting "resume session"
+        self._bondage_safeword         = "red"
+        self._bondage_mic_device       = ""      # "" = system default
+        self._bondage_safeword_saved   = False   # True when safeword was loaded from config
+        self._bondage_configured       = False   # True once bondage has been started this session
+        self._evil_pulse_job           = None    # after() handle for snark pulse
+        self._voice_engine: VoiceEngine | None = None
+        # Grid navigator
+        self._grid_active  = False
+        self._grid_mode    = 'head'  # 'head' | 'exclude'
+        self._grid_region  = None   # (x, y, w, h) in frame px; None = full frame
+        self._grid_depth   = 0      # 0 = full frame, max 3
+        # Source picker (voice "switch source")
+        self._source_picker_active  = False
+        self._source_picker_windows: list = []   # [(hwnd, title), ...]
+        self._source_picker_win: object = None   # CTkToplevel reference
+        self._cum_peak_activity    = 0.0    # rolling max of slow-window std
+        self._cum_score            = 0.0    # accumulator 0-25
+        self._cum_cd_active        = False  # True during the cancel-window countdown
+        self._cum_cd_job           = None   # root.after handle
+        self._cum_cd_remaining     = 0      # seconds left in countdown
+        # Brightness spike detection
+        self._bright_buf:            deque = deque(maxlen=900)  # ~30s at 30fps
+        self._bright_baseline_ready = False
+        self._bright_baseline_mean  = 0.0
+        self._bright_baseline_std   = 2.0   # conservative floor
         self._ui_font_size = 11           # base font size for UI
         self._theme_name = DEFAULT_THEME
         self._cum_time: float | None = None
+        self._cum_undo_active = False   # UX-1: misclick protection
+        self._cum_undo_job    = None    # UX-1: root.after handle for undo window
         self._cum_allowed = False
         self._cum_odds = dict(self._CUM_ODDS_DEFAULT)
         self._denial_phrases = list(self._DENIAL_PHRASES_DEFAULT)
+
+        self._loading_config = False
 
         # Evil Mode state
         self._evil_mode      = False
@@ -1589,7 +1921,6 @@ class App:
         self._ruin_odds      = dict(self._RUIN_ODDS_DEFAULT)
         self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
         self._ruin_count     = 0
-        self._devil_label    = None
         self._exclusion_zones: list[tuple[int,int,int,int]] = []   # (x,y,w,h) in frame px
         self._ez_drawing    = False   # True while user is dragging a new zone
         self._ez_disp_start = None   # (x,y) display coords of drag start
@@ -1641,6 +1972,24 @@ class App:
         if _icon.exists():
             self.root.iconbitmap(str(_icon))
 
+        # ── Tcl/Tk error handler ───────────────────────────────────────────────
+        # CustomTkinter schedules cursor-blink after-callbacks that can fire
+        # after the widget is destroyed (pack_forget / window close).  In a
+        # compiled exe the resulting "invalid command name" Tcl error can
+        # escalate to Tcl_Panic → EXCEPTION_BREAKPOINT crash instead of the
+        # harmless stderr noise you get in dev.  Override bgerror to catch and
+        # swallow known-benign cases; log everything else.
+        def _tk_report_callback_exception(exc_type, exc_val, exc_tb):
+            msg = str(exc_val)
+            if "invalid command name" in msg and "_blink" in msg:
+                return  # CTk cursor blink on destroyed widget — harmless
+            log.error(
+                "Tk callback exception: %s: %s",
+                exc_type.__name__, exc_val,
+                exc_info=(exc_type, exc_val, exc_tb),
+            )
+        self.root.report_callback_exception = _tk_report_callback_exception
+
         # tkinter vars — must be created after root exists
         self.min_vol_var = tk.DoubleVar(value=0.0)
         self.max_vol_var = tk.DoubleVar(value=100.0)
@@ -1687,6 +2036,8 @@ class App:
         self._build_ui()
         self._on_aggr_change()   # set initial aggressiveness colour
         self._load_config()
+        # Sync toggle to loaded config value
+        self._auto_cum_var.set(self._auto_cum_enabled)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._start_update_check()
 
@@ -1753,9 +2104,10 @@ class App:
         # video — plain tk.Label so ImageTk works without wrapping
         vid_col = ctk.CTkFrame(top_frame, fg_color="transparent")
         vid_col.pack(side=tk.LEFT)
-        vid_shell = ctk.CTkFrame(vid_col, fg_color=self._C_SURFACE,
-                                 corner_radius=8, border_width=1, border_color=self._C_BORDER,
-                                 width=330, height=260)
+        self._vid_shell = ctk.CTkFrame(vid_col, fg_color=self._C_SURFACE,
+                                      corner_radius=8, border_width=1, border_color=self._C_BORDER,
+                                      width=330, height=260)
+        vid_shell = self._vid_shell
         vid_shell.pack()
         vid_shell.pack_propagate(False)
         self.video_label = tk.Label(vid_shell, bg=self._C_SURFACE)
@@ -1784,7 +2136,7 @@ class App:
             row.pack(fill=tk.X, pady=1)
             row.columnconfigure(0, weight=1, uniform="hbtn")
             row.columnconfigure(1, weight=1, uniform="hbtn")
-            ctk.CTkButton(row, text=text, command=set_cmd, font=btn, height=28,
+            ctk.CTkButton(row, text=f"\ud83d\udcf7 {text}", command=set_cmd, font=btn, height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
                           ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
@@ -1796,7 +2148,7 @@ class App:
             return row
 
         self._auto_btn = ctk.CTkButton(
-            hbf, text="AUTO  (observing...)", command=self._toggle_auto,
+            hbf, text="📷 AUTO  (observing...)", command=self._toggle_auto,
             font=btn, height=28, corner_radius=4,
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
@@ -1828,87 +2180,126 @@ class App:
         _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), self._C_BLUE,   self._C_BLUE_H)
 
         # cum buttons anchored at bottom
+        # Auto-cum toggle (packs at very bottom, below buttons)
+        _acd_row = ctk.CTkFrame(hbf, fg_color="transparent")
+        _acd_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 1))
+        self._auto_cum_var = tk.BooleanVar(value=False)
+        ctk.CTkSwitch(
+            _acd_row, text="Auto-detect cum",
+            variable=self._auto_cum_var,
+            command=self._on_auto_cum_toggle,
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            switch_width=28, switch_height=14,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
         cum_row = ctk.CTkFrame(hbf, fg_color="transparent")
         cum_row.pack(side=tk.BOTTOM, fill=tk.X, pady=1)
         cum_row.columnconfigure(0, weight=1, uniform="cumbtn")
         cum_row.columnconfigure(1, weight=1, uniform="cumbtn")
         self._letmecum_btn = ctk.CTkButton(
             cum_row, text="Let me cum?", command=self._on_letmecum,
-            font=btn, height=30, corner_radius=4,
+            font=btn, height=50, corner_radius=4,
             fg_color=self._C_GREEN, hover_color=self._C_GREEN_H, text_color="white")
         self._letmecum_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         Tooltip(self._letmecum_btn, "Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission")
         self._cum_btn = ctk.CTkButton(cum_row, text="I've CUM", command=self._on_cum,
-                      font=btn, height=30, corner_radius=4,
+                      font=btn, height=50, corner_radius=4,
                       fg_color="#e0e0e8", hover_color="#c8c8d0",
                       text_color=self._C_BG)
         self._cum_btn.grid(row=0, column=1, sticky="ew")
         Tooltip(self._cum_btn, "Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.")
 
-        def _divider():
-            ctk.CTkFrame(sf, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
+        # ── Vertical volume range slider — right of hbf ───────────────────────
+        _tiny = ctk.CTkFont(size=9)
+        vol_col = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE, corner_radius=8, width=50)
+        vol_col.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 0))
+        vol_col.pack_propagate(False)
 
-        _divider()
+        ctk.CTkLabel(vol_col, text="VOL\nRANGE", font=_tiny,
+                     text_color=self._C_TEXT_DIM, justify="center").pack(pady=(6, 0))
+        ctk.CTkLabel(vol_col, text="ceil", font=_tiny,
+                     text_color=self._C_TEXT_DIM).pack()
 
-        # ── Volume floor / ceiling ────────────────────────────────────────────
-        vol_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
-        vol_card.pack(fill=tk.X, padx=P, pady=2)
-
-        vol_row = ctk.CTkFrame(vol_card, fg_color="transparent")
-        vol_row.pack(fill=tk.X, padx=12, pady=4)
-        ctk.CTkLabel(vol_row, text="Volume Range", font=lbl,
-                     text_color=self._C_TEXT, anchor="w").pack(side=tk.LEFT)
-        self._range_lbl = ctk.CTkLabel(vol_row, text="0% – 100%", font=lbl,
-                                       text_color=self._C_YELLOW, anchor="e")
-        self._range_lbl.pack(side=tk.RIGHT)
-
-        # ── Custom dual-handle range slider ──
-        _track_h, _handle_r = 4, 7
-        _marker_h = 10
-        _canvas_h = _handle_r * 2 + 4 + _marker_h
-        self._range_cv = tk.Canvas(vol_card, height=_canvas_h, bg=self._C_SURFACE,
+        _track_w_v = 4
+        _handle_r  = 7
+        _cv_w      = _handle_r * 2 + 16   # canvas width (handle + triangle marker)
+        self._range_cv = tk.Canvas(vol_col, width=_cv_w, bg=self._C_SURFACE,
                                    highlightthickness=0)
-        self._range_cv.pack(fill=tk.X, padx=18, pady=(0, 8))
+        self._range_cv.pack(fill=tk.Y, expand=True, padx=4, pady=2)
+
+        ctk.CTkLabel(vol_col, text="floor", font=_tiny,
+                     text_color=self._C_TEXT_DIM).pack(pady=(0, 2))
+        self._range_lbl = ctk.CTkLabel(vol_col, text="0%\n–\n100%", font=_tiny,
+                                       text_color=self._C_YELLOW, wraplength=48, justify="center")
+        self._range_lbl.pack(pady=(0, 6))
 
         self._range_drag = None  # 'lo' or 'hi'
+        _drag_tip = [None]   # [Toplevel | None]
+
+        def _show_drag_tip(x_root, y_root, text):
+            if _drag_tip[0] is None or not _drag_tip[0].winfo_exists():
+                tip = tk.Toplevel(self.root)
+                tip.overrideredirect(True)
+                tip.attributes("-topmost", True)
+                lbl = tk.Label(tip, text=text,
+                               bg="#222222", fg="#ffffff",
+                               font=("Segoe UI", 10, "bold"),
+                               padx=8, pady=4, relief="flat")
+                lbl.pack()
+                _drag_tip[0] = tip
+            else:
+                _drag_tip[0].winfo_children()[0].configure(text=text)
+            _drag_tip[0].geometry(f"+{x_root + 18}+{y_root - 14}")
+
+        def _hide_drag_tip():
+            if _drag_tip[0] is not None and _drag_tip[0].winfo_exists():
+                _drag_tip[0].destroy()
+            _drag_tip[0] = None
 
         def _range_draw(event=None):
             c = self._range_cv
             c.delete("all")
-            w = c.winfo_width()
-            if w < 20:
+            h = c.winfo_height()
+            if h < 20:
                 return
             pad = _handle_r + 2
-            track_w = w - pad * 2
-            cy = _marker_h + (_canvas_h - _marker_h) // 2
+            track_h = h - pad * 2
+            cx = c.winfo_width() // 2
             lo = self.min_vol_var.get() / 100.0
             hi = self.max_vol_var.get() / 100.0
-            lx = pad + lo * track_w
-            hx = pad + hi * track_w
+            # Y=pad → 100%, Y=pad+track_h → 0%
+            lo_y = pad + (1.0 - lo) * track_h
+            hi_y = pad + (1.0 - hi) * track_h
             # background track
-            c.create_line(pad, cy, pad + track_w, cy, fill=self._C_SURFACE2,
-                          width=_track_h, capstyle="round")
+            c.create_line(cx, pad, cx, pad + track_h, fill=self._C_SURFACE2,
+                          width=_track_w_v, capstyle="round")
             # active range
-            c.create_line(lx, cy, hx, cy, fill=self._C_ACCENT,
-                          width=_track_h, capstyle="round")
+            c.create_line(cx, hi_y, cx, lo_y, fill=self._C_ACCENT,
+                          width=_track_w_v, capstyle="round")
             # handles
-            for x in (lx, hx):
-                c.create_oval(x - _handle_r, cy - _handle_r, x + _handle_r, cy + _handle_r,
+            for y in (lo_y, hi_y):
+                c.create_oval(cx - _handle_r, y - _handle_r,
+                              cx + _handle_r, y + _handle_r,
                               fill=self._C_ACCENT, outline="")
-            # cum release marker — inverted triangle above the bar
+            # cum release marker — right-pointing triangle beside the track
             cum_frac = 1.0 if self._cum_override_range else hi
-            cum_x = pad + cum_frac * track_w
-            ts = 5  # triangle half-width
-            c.create_polygon(cum_x - ts, 0, cum_x + ts, 0, cum_x, _marker_h - 2,
-                             fill="#3EC941", outline="")
+            cum_y = pad + (1.0 - cum_frac) * track_h
+            ts = 5
+            c.create_polygon(
+                cx + _handle_r + 2, cum_y - ts,
+                cx + _handle_r + 2, cum_y + ts,
+                cx + _handle_r + ts + 3, cum_y,
+                fill="#3EC941", outline="",
+            )
 
         def _range_press(e):
-            w = self._range_cv.winfo_width()
+            h = self._range_cv.winfo_height()
             pad = _handle_r + 2
-            track_w = w - pad * 2
-            if track_w < 1:
+            track_h = h - pad * 2
+            if track_h < 1:
                 return
-            frac = max(0.0, min(1.0, (e.x - pad) / track_w))
+            frac = max(0.0, min(1.0, 1.0 - (e.y - pad) / track_h))
             lo = self.min_vol_var.get() / 100.0
             hi = self.max_vol_var.get() / 100.0
             if abs(frac - lo) < abs(frac - hi):
@@ -1920,12 +2311,12 @@ class App:
         def _range_move(e):
             if not self._range_drag:
                 return
-            w = self._range_cv.winfo_width()
+            h = self._range_cv.winfo_height()
             pad = _handle_r + 2
-            track_w = w - pad * 2
-            if track_w < 1:
+            track_h = h - pad * 2
+            if track_h < 1:
                 return
-            frac = max(0.0, min(1.0, (e.x - pad) / track_w))
+            frac = max(0.0, min(1.0, 1.0 - (e.y - pad) / track_h))
             val = round(frac * 100)
             if self._range_drag == 'lo':
                 val = min(val, int(self.max_vol_var.get()))
@@ -1935,11 +2326,16 @@ class App:
                 self.max_vol_var.set(val)
             lo = int(self.min_vol_var.get())
             hi = int(self.max_vol_var.get())
-            self._range_lbl.configure(text=f"{lo}% – {hi}%")
+            self._range_lbl.configure(text=f"{lo}%\n–\n{hi}%")
             _range_draw()
+            if self._range_drag == 'lo':
+                _show_drag_tip(e.x_root, e.y_root, f"Min Vol ({lo}%)")
+            else:
+                _show_drag_tip(e.x_root, e.y_root, f"Max Vol ({hi}%)")
 
         def _range_release(e):
             self._range_drag = None
+            _hide_drag_tip()
             self._save_config()
 
         self._range_cv.bind("<ButtonPress-1>", _range_press)
@@ -1948,11 +2344,12 @@ class App:
         self._range_cv.bind("<Configure>", _range_draw)
         self._range_draw = _range_draw
         Tooltip(self._range_cv,
-               "Drag left handle = volume floor, right handle = ceiling.\n"
+               "Drag handles to set volume floor (bottom) and ceiling (top).\n"
                "Green triangle = where 'Let me cum?' sends volume.\n"
                "Change override behavior in Settings > Cum Volume Behavior.")
 
-        _divider()
+        def _divider():
+            ctk.CTkFrame(sf, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
 
         # ── Aggressiveness ────────────────────────────────────────────────────
         aggr_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
@@ -1968,9 +2365,10 @@ class App:
         ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self._evil_btn = ctk.CTkButton(
-            aggr_row, text="😈", command=self._toggle_evil_mode,
+            aggr_row, text="EVIL MODE", command=self._toggle_evil_mode,
             font=ctk.CTkFont(size=12), height=28, width=36, corner_radius=4,
-            fg_color="#cc0000", hover_color="#990000", text_color="white",
+            fg_color="transparent", hover_color="#3a0000",
+            border_width=2, border_color="#cc0000", text_color="#cc0000",
         )
         self._evil_btn.pack(side=tk.RIGHT, padx=(4, 0))
         Tooltip(self._evil_btn, "Evil Mode — adds ruin outcome, crimson theme, and devil.png overlay")
@@ -2110,7 +2508,7 @@ class App:
         ctk.CTkEntry(hr_row1, textvariable=self.hr_token_var, width=210,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT, show="\u2022",
-                     placeholder_text="paste from pulsoid.net/ui/keys").pack(side=tk.LEFT, padx=(0, 8))
+                     placeholder_text="pulsoid.net/ui/keys (paid plan required)").pack(side=tk.LEFT, padx=(0, 8))
         self._hr_bpm_label = ctk.CTkLabel(hr_row1, text="\u2665 -- bpm",
                                           font=ctk.CTkFont(size=fs + 1, weight="bold"),
                                           text_color="#e91e63")
@@ -2217,6 +2615,23 @@ class App:
             ctk.CTkButton(ctrl_row, text="⏹", command=self._mp3_stop, **btn_kw).pack(side=tk.LEFT, padx=2)
             ctk.CTkButton(ctrl_row, text="⏭", command=self._mp3_next, **btn_kw).pack(side=tk.LEFT, padx=2)
 
+            # Output device
+            dev_row = ctk.CTkFrame(mo, fg_color="transparent")
+            dev_row.pack(fill=tk.X, pady=(0, 4))
+            ctk.CTkLabel(dev_row, text="Out:", font=ctk.CTkFont(size=10),
+                         text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
+            _mp3_devs = ["Default"] + (MusicPlayer.list_devices() if _MINIAUDIO_OK else [])
+            self._mp3_dev_var = tk.StringVar(value="Default")
+            self._mp3_dev_combo = ctk.CTkComboBox(
+                dev_row, values=_mp3_devs, variable=self._mp3_dev_var,
+                width=220, font=ctk.CTkFont(size=10),
+                fg_color=self._C_SURFACE, border_color=self._C_BORDER,
+                button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+                dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
+                command=self._mp3_on_device_change,
+            )
+            self._mp3_dev_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
             # Loop mode
             loop_row = ctk.CTkFrame(mo, fg_color="transparent")
             loop_row.pack(pady=(0, 6))
@@ -2253,9 +2668,17 @@ class App:
         Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
-        self._play_btn = _ghost_btn(ctrl, "▶", self._toggle_play_mode, width=34)
+        self._play_btn = _ghost_btn(ctrl, "▶ Play", self._toggle_play_mode, width=60)
         self._play_btn.pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(self._play_btn, "Play Mode — minimal immersive view; hides settings")
+        self._bondage_btn = ctk.CTkButton(
+            ctrl, text="🎙 BONDAGE", command=self._open_bondage_splash,
+            font=ctk.CTkFont(size=10, weight="bold"), height=34, corner_radius=4,
+            fg_color="transparent", hover_color="#1a0028",
+            border_width=2, border_color="#8a2a9a", text_color="#c080ff", width=90,
+        )
+        self._bondage_btn.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(self._bondage_btn, "Bondage Mode — hands-free voice control (requires Vosk model)")
 
         _divider()
 
@@ -2323,7 +2746,7 @@ class App:
             return ctk.CTkButton(
                 parent, text=text, command=cmd,
                 font=ctk.CTkFont(size=13, weight="bold"),
-                height=44, corner_radius=6,
+                height=50, corner_radius=6,
                 fg_color=fg, hover_color=hov, text_color="white")
 
         row1 = ctk.CTkFrame(pp, fg_color="transparent")
@@ -2336,12 +2759,24 @@ class App:
         self._play_letmecum_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
 
         row2 = ctk.CTkFrame(pp, fg_color="transparent")
-        row2.pack(fill=tk.X, padx=P, pady=(0, 12))
+        row2.pack(fill=tk.X, padx=P, pady=(0, 4))
         self._play_cum_btn = _pbtn(row2, "I've CUM", self._on_cum, "#6a6a7a", "#555565")
         self._play_cum_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
         _pbtn(row2, "⚙ Settings", self._toggle_play_mode,
               self._C_SURFACE2, "#4a4a4a").pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(4, 0))
+
+        # Auto-detect toggle in play mode
+        _play_acd_row = ctk.CTkFrame(pp, fg_color="transparent")
+        _play_acd_row.pack(fill=tk.X, padx=P, pady=(0, 8))
+        ctk.CTkSwitch(
+            _play_acd_row, text="Auto-detect cum",
+            variable=self._auto_cum_var,
+            command=self._on_auto_cum_toggle,
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            switch_width=28, switch_height=14,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(side=tk.LEFT)
 
         # Size window to content once everything is laid out
         parent.after(100, self._fit_window)
@@ -2390,13 +2825,22 @@ class App:
                 "theme": self._theme_name,
                 "ruin_odds": self._ruin_odds,
                 "ruin_phrases": self._ruin_phrases,
-                "exclusion_zones": self._exclusion_zones,
+                "exclusion_zones":      self._exclusion_zones,
+                "auto_cum_enabled":     self._auto_cum_enabled,
+                "auto_cum_delay":       self._auto_cum_delay,
+                "auto_cum_sensitivity": self._auto_cum_sensitivity,
+                "hf_enabled":           self._hf_enabled,
+                "hf_min_edges":         self._hf_min_edges,
+                "hf_cum_chance":        self._hf_cum_chance,
+                "bondage_safeword":     self._bondage_safeword,
+                "bondage_mic_device":   self._bondage_mic_device,
             }
             CONFIG_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
             log.warning(f"Config: save failed: {e}")
 
     def _load_config(self):
+        self._loading_config = True
         try:
             if not CONFIG_PATH.exists():
                 return
@@ -2473,7 +2917,8 @@ class App:
             self._ble_addr  = data.get("ble_addr", "")
             self._ble_name  = data.get("ble_name", "")
             if "port"        in data: self.port_var.set(data["port"])
-            if "device_name" in data: self._device_combo.set(data["device_name"])
+            if "device_name" in data:
+                self._refresh_devices(select_name=data["device_name"])
             if _MINIAUDIO_OK and self.music_player:
                 if "mp3_loop" in data:
                     self._mp3_loop_var.set(data["mp3_loop"])
@@ -2513,7 +2958,7 @@ class App:
             # Legacy keys cum_silence / cum_ramp are silently ignored.
             if "ui_font_size" in data:
                 self._ui_font_size = int(data["ui_font_size"])
-            if "theme" in data and data["theme"] in THEMES:
+            if "theme" in data and data["theme"] in THEMES and data["theme"] != "Evil":
                 self._theme_name = data["theme"]
             if "ruin_odds" in data and isinstance(data["ruin_odds"], dict):
                 self._ruin_odds.update(data["ruin_odds"])
@@ -2521,9 +2966,32 @@ class App:
                 self._ruin_phrases = data["ruin_phrases"]
             if "exclusion_zones" in data and isinstance(data["exclusion_zones"], list):
                 self._exclusion_zones = [tuple(z) for z in data["exclusion_zones"]]
+            if "auto_cum_enabled" in data:
+                self._auto_cum_enabled = bool(data["auto_cum_enabled"])
+            if "auto_cum_delay" in data:
+                self._auto_cum_delay = max(0, min(10, int(data["auto_cum_delay"])))
+            if "auto_cum_sensitivity" in data:
+                self._auto_cum_sensitivity = max(1, min(10, int(data["auto_cum_sensitivity"])))
+            if "hf_enabled" in data:
+                self._hf_enabled = bool(data["hf_enabled"])
+            if "hf_min_edges" in data and isinstance(data["hf_min_edges"], dict):
+                self._hf_min_edges.update(
+                    {k: max(0, int(v)) for k, v in data["hf_min_edges"].items()})
+            if "hf_cum_chance" in data and isinstance(data["hf_cum_chance"], dict):
+                self._hf_cum_chance.update(
+                    {k: max(1, int(v)) for k, v in data["hf_cum_chance"].items()})
+            if "bondage_safeword" in data:
+                w = str(data["bondage_safeword"]).strip().lower()
+                if w:
+                    self._bondage_safeword      = w
+                    self._bondage_safeword_saved = True
+            if "bondage_mic_device" in data:
+                self._bondage_mic_device = str(data["bondage_mic_device"])
             log.info(f"Config: loaded from {CONFIG_PATH}")
         except Exception as e:
             log.warning(f"Config: load failed: {e}")
+        finally:
+            self._loading_config = False
 
     @property
     def _active_hr(self):
@@ -2585,6 +3053,18 @@ class App:
             self.ble_hr_client.stop()
         except Exception:
             pass
+
+        # Stop voice engine (bondage mode)
+        if getattr(self, '_voice_engine', None):
+            try:
+                self._voice_engine.stop()
+            except Exception:
+                pass
+        if getattr(self, '_splash_voice_engine', None):
+            try:
+                self._splash_voice_engine.stop()
+            except Exception:
+                pass
 
         # Stop overlay server
         if hasattr(self, '_overlay'):
@@ -2662,10 +3142,10 @@ class App:
             self._auto_min_y = self._auto_max_y = None
             self._auto_obs_start = None
             self._auto_last_apply = 0.0
-            self._auto_btn.configure(text="AUTO  (observing...)",
+            self._auto_btn.configure(text="📷 AUTO  (observing...)",
                                      fg_color="#b8a000", hover_color="#8a7800")
         else:
-            self._auto_btn.configure(text="AUTO  (off)",
+            self._auto_btn.configure(text="📷 AUTO  (off)",
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _auto_feed(self, y: float):
@@ -2701,19 +3181,19 @@ class App:
             # Enough range — set Edging and Erect
             self.heights["Edging"] = self._auto_min_y + 0.05 * rng
             self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
-            if getattr(self, '_auto_btn_state', None) != "active":
+            if self._auto_btn_state != "active":
                 self._auto_btn_state = "active"
-                self._auto_btn.configure(text="AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
+                self._auto_btn.configure(text="\ud83d\udcf7 AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
-            self._auto_btn.configure(text=f"AUTO  (flaccid set, need more range)")
+            self._auto_btn.configure(text="📷 AUTO  (flaccid set, need more range)")
 
     def _disable_auto(self):
         """Turn off AUTO so manual height settings aren't overwritten."""
         if self._auto_mode:
             self._auto_mode = False
-            self._auto_btn.configure(text="AUTO  (off)",
+            self._auto_btn.configure(text="📷 AUTO  (off)",
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _cancel_pick(self):
@@ -2847,10 +3327,9 @@ class App:
         self._auto_obs_start = None
         self._auto_last_apply = 0.0
         self._head_y_history.clear()
-        if hasattr(self, '_auto_btn_state'):
-            self._auto_btn_state = None
+        self._auto_btn_state = None
         if hasattr(self, '_auto_btn'):
-            self._auto_btn.configure(text="AUTO", fg_color=self._C_SURFACE2,
+            self._auto_btn.configure(text="📷 AUTO", fg_color=self._C_SURFACE2,
                                      hover_color="#4a4a4a")
         log.info("Heights reset after feed re-selection")
 
@@ -2918,6 +3397,12 @@ class App:
 
     # Odds of "Let me cum?" being granted per aggressiveness level
     _CUM_ODDS_DEFAULT = {"Easy": 2, "Middle": 4, "Hard": 6, "Expert": 30}
+
+    # Hands-free "Let me cum?" — auto-grant after enough edges (settings-only toggle)
+    # _hf_min_edges : minimum edge count before HF can ever fire (per level)
+    # _hf_cum_chance: 1-in-N roll per edge once min is reached (lower N = more likely)
+    _HF_MIN_EDGES_DEFAULT  = {"Easy": 2, "Middle": 4, "Hard":  6, "Expert": 10}
+    _HF_CUM_CHANCE_DEFAULT = {"Easy": 2, "Middle": 4, "Hard":  6, "Expert": 10}
     _CUM_DENY_COOLDOWN = {"Easy": 30, "Middle": 30, "Hard": 60, "Expert": 120}
     _CUM_GRANT_TIME = {"Easy": 300, "Middle": 300, "Hard": 180, "Expert": 60}
     _DENIAL_PHRASES_DEFAULT = [
@@ -2932,10 +3417,8 @@ class App:
 
     def _on_letmecum(self):
         """Roll the dice — grant or deny permission to cum."""
-        import random
-
         # Check denial cooldown
-        cooldown_left = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
+        cooldown_left = self._letmecum_cooldown_until - time.time()
         if cooldown_left > 0:
             self._letmecum_btn.configure(text=f"Wait {int(cooldown_left)}s...")
             return
@@ -2948,28 +3431,7 @@ class App:
         self.session_logger.log_letmecum(self._last_letmecum_result, aggr, denominator)
 
         if granted:
-            self._cum_allowed = True
-            grant_secs = self._CUM_GRANT_TIME.get(aggr, 300)
-            self._cum_grant_expires = time.time() + grant_secs
-            mins = grant_secs // 60
-            self._snark_label.configure(text=f"You've been a good boy. You have {mins} min.",
-                                        text_color="#3EC941")
-            self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#3EC941",
-                                         hover_color="#32a435")
-            if self._cum_override_range:
-                target_vol = 1.0
-            else:
-                target_vol = self.max_vol_var.get() / 100.0
-            if self.restim_on.get():
-                self.restim.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
-            if self.xtoys_on.get():
-                self.xtoys.set_volume(target_vol, instant=True, floor=0.0, ceiling=1.0)
-            if self.audio_on.get() and self.win_audio and self.win_audio.connected:
-                self.win_audio.set_volume(target_vol, 0.0, 1.0)
-            if self.mp3_on.get() and self.music_player:
-                self.music_player.volume = target_vol
-            self.root.after(1000, self._tick_cum_grant)
-            log.info(f"Cum GRANTED (1/{denominator} on {aggr}) — {mins} min window")
+            self._grant_cum(aggr, source=f"manual 1/{denominator}")
         else:
             self._cum_allowed = False
             self._denial_count += 1
@@ -2991,11 +3453,35 @@ class App:
             self.root.after(2000, lambda: self._tick_letmecum_cooldown())
             log.info(f"Cum DENIED (1/{denominator} on {aggr}) — {cooldown}s cooldown")
 
+    def _grant_cum(self, aggr: str, source: str = "manual"):
+        """Grant cum permission for the given aggressiveness level.
+
+        Called by _on_letmecum() on a successful roll, and directly by
+        _hf_check_edge() when hands-free mode auto-fires.
+        """
+        self._cum_allowed = True
+        grant_secs = self._CUM_GRANT_TIME.get(aggr, 300)
+        self._cum_grant_expires = time.time() + grant_secs
+        mins = grant_secs // 60
+        hf_tag = " [auto]" if source != "manual" and not source.startswith("manual") else ""
+        self._snark_label.configure(
+            text=f"You've been a good boy.{hf_tag} You have {mins} min.",
+            text_color="#3EC941")
+        self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#3EC941",
+                                     hover_color="#32a435")
+        if self._cum_override_range:
+            target_vol = 1.0
+        else:
+            target_vol = self.max_vol_var.get() / 100.0
+        self._set_all_outputs(target_vol, instant=True)
+        self.root.after(1000, self._tick_cum_grant)
+        log.info(f"Cum GRANTED ({source}, {aggr}) — {mins} min window")
+
     def _tick_letmecum_cooldown(self):
         """Update the button text with remaining cooldown, then restore."""
         if not self._running:
             return
-        remaining = getattr(self, '_letmecum_cooldown_until', 0.0) - time.time()
+        remaining = self._letmecum_cooldown_until - time.time()
         if remaining > 0:
             self._letmecum_btn.configure(text=f"Wait {int(remaining)}s...",
                                          fg_color="#FF4444", hover_color="#cc3636")
@@ -3015,7 +3501,7 @@ class App:
             return
         if not self._cum_allowed:
             return
-        remaining = getattr(self, '_cum_grant_expires', 0) - time.time()
+        remaining = self._cum_grant_expires - time.time()
         if remaining > 0:
             m = int(remaining) // 60
             s = int(remaining) % 60
@@ -3032,26 +3518,35 @@ class App:
                                          fg_color="#FF4444", hover_color="#cc3636")
             self._snark_label.configure(text="Time's up. Back to edging.",
                                         text_color="#ff4444")
-            self.root.after(3000, lambda: (
+            if getattr(self, '_evil_mode', False):
+                _btn_fg  = "#8a1a1a"
+                _btn_hov = "#6b0000"
+            else:
+                _btn_fg  = "#3EC941"
+                _btn_hov = "#32a435"
+            self.root.after(3000, lambda fg=_btn_fg, hov=_btn_hov: (
                 self._letmecum_btn.configure(text="Let me cum?",
-                                             fg_color="#3EC941", hover_color="#32a435"),
+                                             fg_color=fg, hover_color=hov),
                 self._snark_label.configure(text="")))
             log.info("Cum grant expired — permission revoked")
 
-    def _ruin_set_volume(self, vol: float):
-        """Set all active outputs instantly (used by the ruin pulse sequence)."""
+    def _set_all_outputs(self, vol: float, instant: bool = False):
+        """Send vol to every active output. Caller is responsible for clamping vol first."""
         if self.restim_on.get():
-            self.restim.set_volume(vol, instant=True)
+            self.restim.set_volume(vol, instant=instant)
         if self.xtoys_on.get():
-            self.xtoys.set_volume(vol, instant=True)
+            self.xtoys.set_volume(vol, instant=instant)
         if self.audio_on.get() and self.win_audio and self.win_audio.connected:
             self.win_audio.set_volume(vol, 0.0, 1.0)
         if self.mp3_on.get() and self.music_player:
             self.music_player.volume = vol
 
+    def _ruin_set_volume(self, vol: float):
+        """Set all active outputs instantly (used by the ruin pulse sequence)."""
+        self._set_all_outputs(vol, instant=True)
+
     def _do_ruin(self, aggr: str):
         """Execute the ruin pulse sequence using root.after() — no blocking."""
-        import random
         self._last_letmecum_result = "ruin"
         self._last_letmecum_time = time.time()
         self._ruin_count += 1
@@ -3093,8 +3588,70 @@ class App:
         self.root.after(2100, _step5)
         self.root.after(2700, _step6)
 
-    def _on_cum(self):
-        """Hard stop — volume to 0; refractory countdown then auto-resume."""
+    def _on_cum(self, source="click"):
+        """Hard stop — volume to 0; refractory countdown then auto-resume.
+
+        source="click"  → 3-second undo window before committing.
+        source="voice"  → immediate (no undo window).
+        Internal calls (auto-cum, safeword) pass source="voice" to skip undo.
+        """
+        # UX-1: if undo window is active, clicking the button cancels instead
+        if self._cum_undo_active:
+            self._cum_undo()
+            return
+
+        if source == "click" and not self._cum_stopped:
+            # Arm undo window
+            self._cum_undo_active = True
+            try:
+                self._cum_btn.configure(
+                    text="↩ Undo (3s)", command=self._on_cum,
+                    fg_color="#F5A623", hover_color="#d08800", text_color="black")
+            except Exception:
+                pass
+            btn = getattr(self, '_play_cum_btn', None)
+            if btn:
+                try:
+                    btn.configure(
+                        text="↩ Undo (3s)", command=self._on_cum,
+                        fg_color="#F5A623", hover_color="#d08800", text_color="black")
+                except Exception:
+                    pass
+            self._cum_undo_job = self.root.after(3000, self._cum_confirm)
+            return
+
+        # Voice / internal path — commit immediately
+        self._cum_confirm()
+
+    def _cum_undo(self):
+        """Cancel the 3-second undo window — restores button, no cum logged."""
+        if self._cum_undo_job:
+            self.root.after_cancel(self._cum_undo_job)
+        self._cum_undo_job    = None
+        self._cum_undo_active = False
+        _cum_kw = dict(text="I've CUM", command=self._on_cum,
+                       fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG)
+        try: self._cum_btn.configure(**_cum_kw)
+        except Exception: pass
+        try: self._play_cum_btn.configure(**_cum_kw)
+        except Exception: pass
+        log.info("cum undone")
+
+    def _cum_confirm(self):
+        """Actual cum logic — called after undo window expires or immediately for voice."""
+        if not self._cum_undo_active and self._cum_stopped:
+            # Already stopped (e.g. called twice); nothing to do
+            return
+        self._cum_undo_active = False
+        self._cum_undo_job    = None
+
+        # Disarm any in-progress auto-cum countdown (fired manually or by _cum_now)
+        if self._cum_cd_active:
+            if self._cum_cd_job:
+                self.root.after_cancel(self._cum_cd_job)
+            self._cum_cd_job    = None
+            self._cum_cd_active = False
+        self._cum_score = 0.0
         self._cum_count += 1
         self.session_logger.log_cum()
         self._cum_time = time.time()
@@ -3102,40 +3659,27 @@ class App:
         self._cum_allowed = False
         self._cum_grant_expires = 0
         self._letmecum_btn.configure(text="Let me cum?", fg_color="#3EC941",
-                                     hover_color="#32a435")
-        try:
-            self._letmecum_btn.configure(state="disabled")
-        except Exception:
-            pass
+                                     hover_color="#32a435", state="disabled")
         self._snark_label.configure(text="")
 
         # Zero all outputs
-        ceil_val = self.max_vol_var.get() / 100.0
-        if self.restim_on.get():
-            self.restim.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
-        if self.xtoys_on.get():
-            self.xtoys.set_volume(0.0, instant=True, floor=0.0, ceiling=ceil_val)
-        if self.audio_on.get() and self.win_audio and self.win_audio.connected:
-            self.win_audio.set_volume(0.0, 0.0, 1.0)
-        if self.mp3_on.get() and self.music_player:
-            self.music_player.volume = 0.0
+        self._set_all_outputs(0.0, instant=True)
 
         if self._refractory_mins > 0:
             # Refractory countdown — clicking the button skips it early
             self._refractory_until = time.time() + self._refractory_mins * 60
             self._cum_btn.configure(
-                text=f"Refractory: {self._refractory_mins}:00  (click to skip)",
+                text=f"Refractory: {self._refractory_mins}:00\n(click to skip)",
                 command=self._on_resume,
                 fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                 text_color=self._C_TEXT_DIM)
-            try:
-                self._play_cum_btn.configure(
+            btn = getattr(self, '_play_cum_btn', None)
+            if btn:
+                btn.configure(
                     text=f"Refractory: {self._refractory_mins}:00",
                     command=self._on_resume,
                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                     text_color=self._C_TEXT_DIM)
-            except Exception:
-                pass
             self.root.after(1000, self._tick_refractory)
             log.info(f"Refractory started — {self._refractory_mins} min")
         else:
@@ -3143,12 +3687,11 @@ class App:
             self._cum_btn.configure(text="Resume", command=self._on_resume,
                                     fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
                                     text_color="white")
-            try:
-                self._play_cum_btn.configure(text="Resume", command=self._on_resume,
-                                             fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
-                                             text_color="white")
-            except Exception:
-                pass
+            btn = getattr(self, '_play_cum_btn', None)
+            if btn:
+                btn.configure(text="Resume", command=self._on_resume,
+                               fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
+                               text_color="white")
             log.info("Cum triggered — session stopped, awaiting Resume")
 
     def _tick_refractory(self):
@@ -3161,16 +3704,12 @@ class App:
             return
         m = int(remaining) // 60
         s = int(remaining) % 60
-        label = f"Refractory: {m}:{s:02d}  (click to skip)"
+        label = f"Refractory: {m}:{s:02d}\n(click to skip)"
         short  = f"Refractory: {m}:{s:02d}"
-        try:
-            self._cum_btn.configure(text=label)
-        except Exception:
-            pass
-        try:
-            self._play_cum_btn.configure(text=short)
-        except Exception:
-            pass
+        self._cum_btn.configure(text=label)
+        btn = getattr(self, '_play_cum_btn', None)
+        if btn:
+            btn.configure(text=short)
         self.root.after(1000, self._tick_refractory)
 
     def _on_resume(self):
@@ -3178,6 +3717,10 @@ class App:
         self._cum_stopped = False
         self._cum_time = None
         self._refractory_until = 0.0
+        # Reset detection state so next round has a clean slate
+        self._cum_detect_buf.clear()
+        self._cum_peak_activity = 0.0
+        self._cum_score = 0.0
         _cum_kw = dict(text="I've CUM", command=self._on_cum,
                        fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG)
         self._cum_btn.configure(**_cum_kw)
@@ -3191,6 +3734,233 @@ class App:
             pass
         log.info("Session resumed after refractory")
 
+    # ------------------------------------------------------------------ auto-cum detection
+
+    def _on_auto_cum_toggle(self):
+        self._auto_cum_enabled = bool(self._auto_cum_var.get())
+        if not self._auto_cum_enabled:
+            # Cancel any active countdown if user turns it off
+            self._cum_cancel()
+        self._cum_detect_buf.clear()
+        self._cum_peak_activity = 0.0
+        self._cum_score = 0.0
+        self._save_config()
+
+    def _hf_check_edge(self):
+        """Called (on main thread) each time edge_count increments.
+
+        If hands-free mode is enabled and the level-specific minimum edge count
+        has been reached, rolls 1-in-N and — on a hit — grants cum permission
+        automatically via _grant_cum(), just as if the user had pressed and won
+        "Let me cum?".
+        """
+        if not self._hf_enabled:
+            return
+        if self._cum_stopped or self._cum_allowed or self._cum_cd_active:
+            return
+        # Don't fire during a denial cooldown (respect the cooldown window)
+        if self._letmecum_cooldown_until > time.time():
+            return
+        aggr    = self.aggr_var.get()
+        min_e   = self._hf_min_edges.get(aggr, 999)
+        if self.edge_count < min_e:
+            return
+        chance  = max(1, self._hf_cum_chance.get(aggr, 10))
+        if random.randint(1, chance) == 1:
+            log.info(f"Hands-free cum: edge {self.edge_count}, rolled 1/{chance} on {aggr} — GRANTED")
+            self.session_logger.log_letmecum("granted", aggr, chance)
+            self._last_letmecum_result = "granted"
+            self._last_letmecum_time   = time.time()
+            self._grant_cum(aggr, source=f"hands-free 1/{chance}")
+        else:
+            log.debug(f"Hands-free cum: edge {self.edge_count}, rolled miss on 1/{chance} ({aggr})")
+
+    def _tick_cum_detect(self, y: int, frame=None):
+        """
+        Called each heavy frame when tracking OK and auto-cum is enabled.
+
+        Two independent signals feed a combined score (0–25):
+          Motion:     slow-window std drops (stroking stopped) + fast-window jitter present
+          Brightness: ROI mean brightness spikes ≥ 2.5σ above session baseline
+                      (ejaculation creates a bright white visual event)
+
+        Score accumulation:
+          Motion + brightness:  +1.5 / frame   (strongest signal)
+          Motion only:          +1.0 / frame   (original behaviour)
+          Brightness only:      +0.5 / frame   (visual signal without motion signature)
+          Neither:              −2.0 / frame
+        """
+        if self._cum_cd_active or self._cum_stopped:
+            return
+
+        self._cum_detect_buf.append(y)
+        n = len(self._cum_detect_buf)
+        if n < 30:
+            return
+
+        buf = list(self._cum_detect_buf)
+
+        # ── Motion signal ─────────────────────────────────────────────────────
+        fast_std = float(np.std(buf[-8:]))  if n >= 8  else float(np.std(buf))
+        slow_std = float(np.std(buf[-60:])) if n >= 60 else float(np.std(buf))
+
+        self._cum_peak_activity = max(self._cum_peak_activity * 0.9998, slow_std)
+
+        sensitivity = self._auto_cum_sensitivity
+        min_peak_px = max(2.0, 15.0 - sensitivity * 1.0)
+        if self._cum_peak_activity < min_peak_px:
+            return
+
+        stroking_paused = slow_std < self._cum_peak_activity * 0.30
+        jitter_present  = 1.5 < fast_std < 20.0
+        motion_signal   = stroking_paused and jitter_present
+
+        # ── Brightness spike signal ───────────────────────────────────────────
+        bright_signal = False
+        if frame is not None:
+            bx, by, bw, bh = self.last_bbox
+            fh, fw = frame.shape[:2]
+            roi = frame[max(0, by):min(fh, by + bh), max(0, bx):min(fw, bx + bw)]
+            if roi.size > 0:
+                gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                lit  = gray[gray > 30]          # ignore dark background pixels
+                if lit.size > 0:
+                    brightness = float(np.mean(lit))
+                    self._bright_buf.append(brightness)
+                    nb = len(self._bright_buf)
+                    if nb >= 300 and not self._bright_baseline_ready:
+                        # 10-second initial calibration window
+                        self._bright_baseline_mean  = float(np.mean(self._bright_buf))
+                        self._bright_baseline_std   = max(2.0, float(np.std(self._bright_buf)))
+                        self._bright_baseline_ready = True
+                    elif self._bright_baseline_ready:
+                        z = (brightness - self._bright_baseline_mean) / self._bright_baseline_std
+                        bright_signal = z >= 2.5
+                        # Slowly drift baseline toward current level (resists long-term lighting shifts)
+                        diff = brightness - self._bright_baseline_mean
+                        self._bright_baseline_mean += diff * 0.001
+                        self._bright_baseline_std   = max(2.0,
+                            self._bright_baseline_std * 0.9999 + abs(diff) * 0.0001)
+
+        # ── Score accumulation / decay ────────────────────────────────────────
+        if motion_signal and bright_signal:
+            self._cum_score = min(self._cum_score + 1.5, 25.0)
+        elif motion_signal:
+            self._cum_score = min(self._cum_score + 1.0, 25.0)
+        elif bright_signal:
+            self._cum_score = min(self._cum_score + 0.5, 25.0)
+        else:
+            self._cum_score = max(self._cum_score - 2.0, 0.0)
+
+        # ── Trigger ───────────────────────────────────────────────────────────
+        trigger = 25.0 - (sensitivity - 1) * 2.0   # sens=1 → 25, sens=10 → 7
+        if self._cum_score >= trigger:
+            self._cum_score = 0.0
+            self.root.after(0, self._start_cum_countdown)
+
+    def _start_cum_countdown(self):
+        """Begin the cancel-window countdown that precedes auto-firing _on_cum."""
+        if self._cum_cd_active or self._cum_stopped:
+            return
+        self._cum_cd_active    = True
+        self._cum_cd_remaining = self._auto_cum_delay
+        log.info(f"Auto-cum detected — {self._auto_cum_delay}s countdown started")
+
+        # Repurpose "Let me cum?" as the Cancel button
+        try:
+            self._letmecum_btn.configure(
+                text="✕ Cancel", command=self._cum_cancel,
+                fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                text_color=self._C_TEXT, state="normal",
+            )
+        except Exception:
+            pass
+        self._cum_cd_tick()
+
+    def _cum_cd_tick(self):
+        """Decrement countdown; fire or schedule next tick."""
+        if not self._cum_cd_active:
+            return
+        rem = self._cum_cd_remaining
+        _orange = "#d07020"
+        _orange_h = "#b05010"
+        label = f"Cumming… {rem}" if rem > 0 else "Cumming…"
+        for btn in (self._cum_btn, getattr(self, '_play_cum_btn', None)):
+            if btn is None:
+                continue
+            try:
+                btn.configure(
+                    text=label,
+                    fg_color=_orange, hover_color=_orange_h,
+                    text_color="white",
+                    command=self._cum_now,   # clicking = skip delay
+                )
+            except Exception:
+                pass
+
+        # UX-5: show countdown in snark label
+        try:
+            if rem > 0:
+                self._snark_label.configure(
+                    text=f"⏳ Cum window: {rem}s remaining — say 'came' or click Cancel",
+                    text_color="#3EC941")
+            else:
+                self._snark_label.configure(text="", text_color=self._C_TEXT)
+        except Exception:
+            pass
+
+        if rem <= 0:
+            self._cum_now()
+            return
+
+        self._cum_cd_remaining -= 1
+        self._cum_cd_job = self.root.after(1000, self._cum_cd_tick)
+
+    def _cum_now(self):
+        """Skip remaining delay and fire _on_cum immediately."""
+        if self._cum_cd_job:
+            self.root.after_cancel(self._cum_cd_job)
+        self._cum_cd_job    = None
+        self._cum_cd_active = False
+        self._restore_cum_btn_normal()
+        self._on_cum(source="voice")
+
+    def _cum_cancel(self):
+        """Cancel the auto-cum countdown and restore buttons."""
+        if self._cum_cd_job:
+            self.root.after_cancel(self._cum_cd_job)
+        self._cum_cd_job    = None
+        self._cum_cd_active = False
+        self._cum_score     = 0.0
+        # Damp peak so the detector needs renewed activity before re-triggering
+        self._cum_peak_activity *= 0.5
+        self._restore_cum_btn_normal()
+        # UX-5: clear the countdown snark message
+        try:
+            self._snark_label.configure(text="", text_color=self._C_TEXT)
+        except Exception:
+            pass
+        log.info("Auto-cum countdown cancelled by user")
+
+    def _restore_cum_btn_normal(self):
+        """Put I've CUM / Let me cum? back to their standard appearance."""
+        _cum_kw = dict(
+            text="I've CUM", command=self._on_cum,
+            fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG,
+        )
+        try: self._cum_btn.configure(**_cum_kw)
+        except Exception: pass
+        try: self._play_cum_btn.configure(**_cum_kw)
+        except Exception: pass
+        try:
+            self._letmecum_btn.configure(
+                text="Let me cum?", command=self._on_letmecum,
+                fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
+                text_color="white",
+            )
+        except Exception:
+            pass
+
     def _hr_log_poll(self):
         """Log heart rate reading every 30 seconds when HR is active."""
         if self.hr_on.get() and self._active_hr.connected:
@@ -3201,19 +3971,41 @@ class App:
 
     def _open_settings(self):
         """Open the settings dialog."""
+        # UX-3: snapshot reversible settings before opening so Cancel can restore them
+        _orig = {
+            "cum_odds":          dict(self._cum_odds),
+            "ruin_odds":         dict(self._ruin_odds),
+            "denial_phrases":    list(self._denial_phrases),
+            "ruin_phrases":      list(self._ruin_phrases),
+            "cum_override_range":self._cum_override_range,
+            "refractory_mins":   self._refractory_mins,
+            "auto_cum_delay":    self._auto_cum_delay,
+            "auto_cum_sensitivity": self._auto_cum_sensitivity,
+            "bondage_safeword":  self._bondage_safeword,
+            "hf_enabled":        self._hf_enabled,
+            "hf_min_edges":      dict(self._hf_min_edges),
+            "hf_cum_chance":     dict(self._hf_cum_chance),
+        }
+
         win = ctk.CTkToplevel(self.root)
         win.title("Settings")
-        win.geometry("480x860")
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
+        # Cap height to screen so content never overflows
+        _scr_h = win.winfo_screenheight()
+        win.geometry(f"490x{min(860, _scr_h - 80)}")
+
+        # Scrollable content body + pinned OK/Reset footer
+        sf = ctk.CTkScrollableFrame(win, fg_color="transparent", corner_radius=0)
+        sf.pack(fill=tk.BOTH, expand=True)
 
         lbl = ctk.CTkFont(size=11, weight="bold")
 
         # ── Appearance (Theme + Font) ─────────────────────────────────────────
-        ctk.CTkLabel(win, text="Appearance",
+        ctk.CTkLabel(sf, text="Appearance",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
-        appear_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        appear_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         appear_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         # Theme selector — collapsed by default, expand on click
@@ -3309,13 +4101,16 @@ class App:
             self._ui_font_size = int(font_var.get())
             self._save_config()
             win.destroy()
-            self._on_close()
-            import sys, os
-            # PyInstaller frozen: sys.argv[0] is already the EXE path — don't prepend again
+            # Use subprocess.Popen + sys.exit so Windows doesn't get confused.
+            # os.execv after root.destroy() is unreliable on Windows because
+            # tkinter threads may still be running when exec replaces the image.
+            import sys, subprocess
+            self._cleanup()
             if getattr(sys, "frozen", False):
-                os.execv(sys.executable, sys.argv)
+                subprocess.Popen([sys.executable] + sys.argv[1:])
             else:
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                subprocess.Popen([sys.executable] + sys.argv)
+            sys.exit(0)
 
         ctk.CTkButton(appear_frame, text="Apply (restarts app)", command=_apply_appearance,
                       font=ctk.CTkFont(size=10, weight="bold"), height=28, corner_radius=4,
@@ -3323,9 +4118,9 @@ class App:
                       text_color="white").pack(padx=12, pady=(4, 10), anchor="e")
 
         # ── Calibration ───────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Calibration",
+        ctk.CTkLabel(sf, text="Calibration",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        calib_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        calib_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         calib_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         sens_hdr = ctk.CTkFrame(calib_frame, fg_color="transparent")
@@ -3358,9 +4153,9 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
         # ── Restim ────────────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Restim",
+        ctk.CTkLabel(sf, text="Restim",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        restim_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        restim_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         restim_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         ax_row = ctk.CTkFrame(restim_frame, fg_color="transparent")
@@ -3395,9 +4190,9 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
 
         # ── xToys ─────────────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="xToys",
+        ctk.CTkLabel(sf, text="xToys",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        xtoys_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        xtoys_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         xtoys_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         xtoys_help_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
@@ -3435,9 +4230,9 @@ class App:
 
 
         # ── Cum Volume Override ───────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Cum Volume Behavior",
+        ctk.CTkLabel(sf, text="Cum Volume Behavior",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        cum_vol_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        cum_vol_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         cum_vol_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
         override_var = tk.BooleanVar(value=self._cum_override_range)
         ctk.CTkRadioButton(cum_vol_frame, text="Override to 100% volume (ignore range)",
@@ -3454,9 +4249,9 @@ class App:
                            ).pack(padx=16, pady=(2, 8), anchor="w")
 
         # ── Refractory Period ─────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Refractory Period",
+        ctk.CTkLabel(sf, text="Refractory Period",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        refrac_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        refrac_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         refrac_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         refrac_hdr = ctk.CTkFrame(refrac_frame, fg_color="transparent")
@@ -3491,10 +4286,161 @@ class App:
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
-        # ── Ruin Odds ─────────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="😈 Ruin Odds (% chance when denied, Evil Mode only)",
+        # ── Auto-Cum Detection ────────────────────────────────────────────────
+        ctk.CTkLabel(sf, text="Auto-Cum Detection",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        ruin_odds_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        acd_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
+        acd_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        # Delay slider
+        acd_delay_hdr = ctk.CTkFrame(acd_frame, fg_color="transparent")
+        acd_delay_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
+        ctk.CTkLabel(acd_delay_hdr, text="Countdown delay",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+        acd_delay_val = ctk.CTkLabel(
+            acd_delay_hdr,
+            text="Off" if self._auto_cum_delay == 0 else f"{self._auto_cum_delay}s",
+            font=lbl, text_color=self._C_ACCENT, anchor="e")
+        acd_delay_val.pack(side=tk.RIGHT)
+        acd_delay_var = tk.IntVar(value=self._auto_cum_delay)
+
+        def _on_delay_slide(v):
+            val = int(float(v))
+            acd_delay_val.configure(text="Off" if val == 0 else f"{val}s")
+
+        ctk.CTkSlider(
+            acd_frame, from_=0, to=10, number_of_steps=10,
+            variable=acd_delay_var, command=_on_delay_slide,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            progress_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        # Sensitivity slider
+        acd_sens_hdr = ctk.CTkFrame(acd_frame, fg_color="transparent")
+        acd_sens_hdr.pack(fill=tk.X, padx=12, pady=(0, 2))
+        ctk.CTkLabel(acd_sens_hdr, text="Detection sensitivity",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+        acd_sens_val = ctk.CTkLabel(
+            acd_sens_hdr, text=str(self._auto_cum_sensitivity),
+            font=lbl, text_color=self._C_ACCENT, anchor="e")
+        acd_sens_val.pack(side=tk.RIGHT)
+        acd_sens_var = tk.IntVar(value=self._auto_cum_sensitivity)
+
+        def _on_sens_slide(v):
+            acd_sens_val.configure(text=str(int(float(v))))
+
+        ctk.CTkSlider(
+            acd_frame, from_=1, to=10, number_of_steps=9,
+            variable=acd_sens_var, command=_on_sens_slide,
+            button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+            progress_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        ).pack(fill=tk.X, padx=12, pady=(0, 4))
+        ctk.CTkLabel(
+            acd_frame,
+            text="Higher sensitivity = triggers on less motion change. "
+                 "If it fires too easily, lower this. "
+                 "The countdown delay lets you cancel false positives.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(0, 10))
+
+        # ── Hands-Free "Let Me Cum?" ──────────────────────────────────────────
+        ctk.CTkLabel(sf, text="Hands-Free \"Let Me Cum?\"",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        hf_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
+        hf_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        # Toggle
+        hf_toggle_row = ctk.CTkFrame(hf_frame, fg_color="transparent")
+        hf_toggle_row.pack(fill=tk.X, padx=12, pady=(10, 4))
+        hf_var = tk.BooleanVar(value=self._hf_enabled)
+        hf_switch = ctk.CTkSwitch(
+            hf_toggle_row, text="Enable hands-free mode",
+            variable=hf_var,
+            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+            switch_width=36, switch_height=18,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+        )
+        hf_switch.pack(side=tk.LEFT)
+
+        ctk.CTkFrame(hf_frame, height=1, fg_color=self._C_BORDER
+                     ).pack(fill=tk.X, padx=12, pady=(6, 4))
+
+        # Column headers
+        hdr_row = ctk.CTkFrame(hf_frame, fg_color="transparent")
+        hdr_row.pack(fill=tk.X, padx=12, pady=(0, 2))
+        ctk.CTkLabel(hdr_row, text="Level", font=ctk.CTkFont(size=9),
+                     text_color=self._C_TEXT_DIM, width=70, anchor="w").pack(side=tk.LEFT)
+        ctk.CTkLabel(hdr_row, text="Min edges", font=ctk.CTkFont(size=9),
+                     text_color=self._C_TEXT_DIM, width=80, anchor="w").pack(side=tk.LEFT)
+        ctk.CTkLabel(hdr_row, text="1-in-N chance", font=ctk.CTkFont(size=9),
+                     text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
+
+        hf_min_vars    = {}
+        hf_chance_vars = {}
+        for level in ("Easy", "Middle", "Hard", "Expert"):
+            row = ctk.CTkFrame(hf_frame, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=3)
+            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+                         width=70, anchor="w").pack(side=tk.LEFT)
+            min_var = tk.IntVar(value=self._hf_min_edges.get(level, 0))
+            hf_min_vars[level] = min_var
+            ctk.CTkEntry(row, textvariable=min_var, width=56,
+                         fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                         text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 12))
+            chance_var = tk.IntVar(value=self._hf_cum_chance.get(level, 10))
+            hf_chance_vars[level] = chance_var
+            ctk.CTkLabel(row, text="1 in", font=ctk.CTkFont(size=10),
+                         text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
+            ctk.CTkEntry(row, textvariable=chance_var, width=56,
+                         fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                         text_color=self._C_TEXT).pack(side=tk.LEFT)
+
+        ctk.CTkLabel(
+            hf_frame,
+            text="When enabled, VSE automatically rolls for cum permission each time an edge "
+                 "is detected. 'Min edges' sets how many edges must occur first. "
+                 "'1 in N' is the per-edge roll chance (lower N = more likely). "
+                 "Uses the same grant window as a manual roll.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(4, 10))
+
+        # ── Bondage Mode Defaults ─────────────────────────────────────────────
+        ctk.CTkLabel(sf, text="🎙 Bondage Mode Defaults",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        bm_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
+        bm_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        bm_sw_row = ctk.CTkFrame(bm_frame, fg_color="transparent")
+        bm_sw_row.pack(fill=tk.X, padx=12, pady=(10, 4))
+        ctk.CTkLabel(bm_sw_row, text="Default safeword:", font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, width=130, anchor="w").pack(side=tk.LEFT)
+        bm_sw_var = tk.StringVar(value=self._bondage_safeword)
+        ctk.CTkEntry(bm_sw_row, textvariable=bm_sw_var, width=160,
+                     fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                     text_color=self._C_TEXT,
+                     placeholder_text="red").pack(side=tk.LEFT)
+
+        bm_mic_row = ctk.CTkFrame(bm_frame, fg_color="transparent")
+        bm_mic_row.pack(fill=tk.X, padx=12, pady=(4, 10))
+        ctk.CTkLabel(bm_mic_row, text="Default mic device:", font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM, width=130, anchor="w").pack(side=tk.LEFT)
+        _bm_mics   = ["System Default"] + VoiceEngine.list_input_devices()
+        _bm_cur    = self._bondage_mic_device if self._bondage_mic_device in _bm_mics else "System Default"
+        bm_mic_var = tk.StringVar(value=_bm_cur)
+        ctk.CTkComboBox(bm_mic_row, values=_bm_mics, variable=bm_mic_var, width=240,
+                        fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                        button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+                        dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
+                        ).pack(side=tk.LEFT)
+
+        # ── Ruin Odds ─────────────────────────────────────────────────────────
+        ctk.CTkLabel(sf, text="😈 Ruin Odds (% chance when denied, Evil Mode only)",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        ruin_odds_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         ruin_odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         ruin_odds_vars = {}
@@ -3512,9 +4458,9 @@ class App:
                          text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         # ── Ruin Phrases ──────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Ruin Phrases (one per line)",
+        ctk.CTkLabel(sf, text="Ruin Phrases (one per line)",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        ruin_phrases_box = ctk.CTkTextbox(win, height=150,
+        ruin_phrases_box = ctk.CTkTextbox(sf, height=150,
                                           fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                                           text_color=self._C_TEXT, border_width=1,
                                           font=ctk.CTkFont(size=11))
@@ -3522,9 +4468,9 @@ class App:
         ruin_phrases_box.insert("1.0", "\n".join(self._ruin_phrases))
 
         # ── Cum Odds ──────────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="\"Let me cum?\" Odds  (1 in N chance)",
+        ctk.CTkLabel(sf, text="\"Let me cum?\" Odds  (1 in N chance)",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
-        odds_frame = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        odds_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         odds_vars = {}
@@ -3542,18 +4488,36 @@ class App:
                          text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         # ── Denial Phrases ────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="Denial Phrases  (one per line)",
+        ctk.CTkLabel(sf, text="Denial Phrases  (one per line)",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
-        phrases_box = ctk.CTkTextbox(win, height=220,
+        phrases_box = ctk.CTkTextbox(sf, height=220,
                                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                                      text_color=self._C_TEXT, border_width=1,
                                      font=ctk.CTkFont(size=11))
-        phrases_box.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        phrases_box.pack(fill=tk.BOTH, padx=16, pady=(0, 8))
         phrases_box.insert("1.0", "\n".join(self._denial_phrases))
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_row = ctk.CTkFrame(win, fg_color="transparent")
         btn_row.pack(fill=tk.X, padx=16, pady=(0, 12))
+
+        def _cancel():
+            """Revert reversible settings to their pre-dialog values and close."""
+            self._cum_odds          = _orig["cum_odds"]
+            self._ruin_odds         = _orig["ruin_odds"]
+            self._denial_phrases    = _orig["denial_phrases"]
+            self._ruin_phrases      = _orig["ruin_phrases"]
+            self._cum_override_range   = _orig["cum_override_range"]
+            self._refractory_mins      = _orig["refractory_mins"]
+            self._auto_cum_delay       = _orig["auto_cum_delay"]
+            self._auto_cum_sensitivity = _orig["auto_cum_sensitivity"]
+            self._bondage_safeword     = _orig["bondage_safeword"]
+            self._hf_enabled           = _orig["hf_enabled"]
+            self._hf_min_edges         = _orig["hf_min_edges"]
+            self._hf_cum_chance        = _orig["hf_cum_chance"]
+            # Note: theme, font size, and output device are NOT reverted —
+            # they take effect immediately or require a restart.
+            win.destroy()
 
         def _save():
             for level, var in odds_vars.items():
@@ -3568,9 +4532,28 @@ class App:
             self._denial_phrases = [l.strip() for l in text.split("\n") if l.strip()]
             ruin_text = ruin_phrases_box.get("1.0", "end").strip()
             self._ruin_phrases = [l.strip() for l in ruin_text.split("\n") if l.strip()]
-            self._cum_override_range = override_var.get()
-            self._refractory_mins = int(refrac_var.get())
-            self._ui_font_size = int(font_var.get())
+            self._cum_override_range   = override_var.get()
+            self._refractory_mins      = int(refrac_var.get())
+            self._auto_cum_delay       = int(acd_delay_var.get())
+            self._auto_cum_sensitivity = int(acd_sens_var.get())
+            # bondage defaults
+            _bsw = bm_sw_var.get().strip().lower()
+            if _bsw:
+                self._bondage_safeword = _bsw
+            _bmic = bm_mic_var.get()
+            self._bondage_mic_device = "" if _bmic == "System Default" else _bmic
+            self._hf_enabled = hf_var.get()
+            for level, var in hf_min_vars.items():
+                try:
+                    self._hf_min_edges[level] = max(0, int(var.get()))
+                except Exception:
+                    pass
+            for level, var in hf_chance_vars.items():
+                try:
+                    self._hf_cum_chance[level] = max(1, int(var.get()))
+                except Exception:
+                    pass
+            self._ui_font_size         = int(font_var.get())
             self._theme_name = theme_var.get()
             self._save_config()
             win.destroy()
@@ -3584,6 +4567,11 @@ class App:
                 var.set(self._CUM_ODDS_DEFAULT.get(level, 4))
             for level, var in ruin_odds_vars.items():
                 var.set(self._RUIN_ODDS_DEFAULT.get(level, 0))
+            for level, var in hf_min_vars.items():
+                var.set(self._HF_MIN_EDGES_DEFAULT.get(level, 0))
+            for level, var in hf_chance_vars.items():
+                var.set(self._HF_CUM_CHANCE_DEFAULT.get(level, 10))
+            hf_var.set(False)
             phrases_box.delete("1.0", "end")
             phrases_box.insert("1.0", "\n".join(self._denial_phrases))
             ruin_phrases_box.delete("1.0", "end")
@@ -3593,27 +4581,15 @@ class App:
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
+        ctk.CTkButton(btn_row, text="Cancel", command=_cancel, width=90,
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT_DIM, border_width=1, border_color=self._C_BORDER,
+                      font=ctk.CTkFont(size=11)).pack(side=tk.RIGHT, padx=(4, 0))
         ctk.CTkButton(btn_row, text="OK", command=_save, width=100,
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white", font=ctk.CTkFont(size=12, weight="bold")
                       ).pack(side=tk.RIGHT)
-        win.protocol("WM_DELETE_WINDOW", _save)
-
-    def _on_floor_change(self, val):
-        lo = int(self.min_vol_var.get())
-        hi = int(self.max_vol_var.get())
-        self._range_lbl.configure(text=f"{lo}% – {hi}%")
-        if hasattr(self, '_range_draw'):
-            self._range_draw()
-        self._save_config()
-
-    def _on_ceil_change(self, val):
-        lo = int(self.min_vol_var.get())
-        hi = int(self.max_vol_var.get())
-        self._range_lbl.configure(text=f"{lo}% – {hi}%")
-        if hasattr(self, '_range_draw'):
-            self._range_draw()
-        self._save_config()
+        win.protocol("WM_DELETE_WINDOW", _cancel)
 
     def _on_output_change(self):
         P = 12
@@ -3656,7 +4632,8 @@ class App:
                 self._refresh_devices()
         if self.mp3_on.get() and _MINIAUDIO_OK:
             self._mp3_opts.pack(fill=tk.X, padx=P, pady=(0, 4), after=after)
-        self._save_config()
+        if not getattr(self, '_loading_config', False):
+            self._save_config()
 
     def _on_tcode_axis_change(self, *_):
         """Swap the axis VSE sends volume on. No reconnect needed — the next
@@ -3699,9 +4676,7 @@ class App:
             self._ble_row.pack_forget()
             tok = self.hr_token_var.get().strip()
             if tok:
-                self.hr_client.start(tok,
-                                     int(self.hr_resting_var.get()),
-                                     int(self.hr_peak_var.get()))
+                self.hr_client.start()
         self._save_config()
 
     def _on_hr_token_change(self, *_):
@@ -3806,8 +4781,9 @@ class App:
                         old_ws.close()
                     except Exception:
                         pass
+            self._save_config()
 
-    def _refresh_devices(self):
+    def _refresh_devices(self, select_name: str = None):
         try:
             self.win_devices = list_audio_devices()
         except Exception as e:
@@ -3821,8 +4797,10 @@ class App:
         names = [d.FriendlyName for d in self.win_devices]
         self._device_combo.configure(values=names)
         if names:
-            self._device_combo.set(names[0])
-            self._on_device_select(names[0])
+            # Prefer previously-selected name, fall back to first device
+            target = select_name if select_name in names else names[0]
+            self._device_combo.set(target)
+            self._on_device_select(target)
         else:
             log.warning("No audio output devices found")
 
@@ -3844,10 +4822,16 @@ class App:
             self._hold_btn.configure(text="HELD [|]",
                                      fg_color=self._C_RED, hover_color=self._C_RED_HOV,
                                      border_color=self._C_RED)
+            if hasattr(self, '_play_hold_btn'):
+                self._play_hold_btn.configure(text="HELD [|]",
+                                              fg_color=self._C_RED, hover_color=self._C_RED_HOV)
         else:
             self._hold_btn.configure(text="Hold Volume",
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                      border_color=self._C_BORDER)
+            if hasattr(self, '_play_hold_btn'):
+                self._play_hold_btn.configure(text="Hold Volume",
+                                              fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _fit_window(self):
         """Resize root height to exactly fit its current content."""
@@ -3857,17 +4841,17 @@ class App:
         self.root.geometry(f"{max(w, 540)}x{h + 24}")
 
     def _toggle_play_mode(self):
-        self._play_mode = not getattr(self, '_play_mode', False)
+        self._play_mode = not self._play_mode
         if self._play_mode:
             self._sf.pack_forget()
             self._play_panel.pack(fill=tk.X)
             self._play_btn.configure(text="⚙")
-            self.root.title("VisualStimEdger ▶" + (" 😈" if self._evil_mode else ""))
+            self.root.title(("👿 " if self._evil_mode else "") + "VisualStimEdger ▶" + (" [EVIL]" if self._evil_mode else ""))
         else:
             self._play_panel.pack_forget()
             self._sf.pack(fill=tk.X)
-            self._play_btn.configure(text="▶")
-            self.root.title("VisualStimEdger" + (" 😈" if self._evil_mode else ""))
+            self._play_btn.configure(text="▶ Play")
+            self.root.title(("👿 " if self._evil_mode else "") + "VisualStimEdger" + (" [EVIL]" if self._evil_mode else ""))
         self.root.after(50, self._fit_window)
 
     def _toggle_evil_mode(self):
@@ -3875,77 +4859,62 @@ class App:
         self._apply_evil_mode(self._evil_mode)
 
     def _apply_evil_mode(self, on: bool):
+        """Toggle Evil Mode — adds ruin outcome chance."""
         if on:
-            self._pre_evil_theme = self._theme_name
-            self._apply_theme("Evil")
-            # Propagate colours to already-created widgets
-            self.root.configure(fg_color=self._C_BG)
-            self._sf.configure(fg_color=self._C_BG)
-            for _w in self._sf.winfo_children():
-                if isinstance(_w, ctk.CTkFrame):
-                    _w.configure(fg_color=self._C_SURFACE)
-            self.info_label.configure(text_color=self._C_TEXT)
-            self.stats_label.configure(text_color=self._C_TEXT_DIM)
-            self.root.title("VisualStimEdger 😈")
-            # Style evil button: brighter red = active
-            self._evil_btn.configure(fg_color="#ff2200", hover_color="#cc0000")
-            # Style letmecum button with reddish tint when not granted
+            # 1. Title
+            self.root.title("👿 VisualStimEdger [EVIL MODE]")
+            # 2. Window background — dark red tint (shows through transparent frames)
+            self.root.configure(fg_color="#120005")
+            # 3. Video border — red
+            self._vid_shell.configure(border_width=2, border_color="#cc0000")
+            # 4. Evil button — filled red
+            self._evil_btn.configure(fg_color="#dd1100", hover_color="#aa0000",
+                                     border_color="#ff2200", text_color="white")
+            # 5. Let me cum? — red border
             if not self._cum_allowed:
-                self._letmecum_btn.configure(fg_color="#8a1a1a", hover_color="#6a0a0a")
-            # Load devil.png — check next to EXE (frozen) or next to script (source)
-            if getattr(sys, "frozen", False):
-                _base_dir = pathlib.Path(sys.executable).parent
+                self._letmecum_btn.configure(fg_color="#8a1a1a", hover_color="#6a0a0a",
+                                             border_width=2, border_color="#aa0000")
             else:
-                _base_dir = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
-            devil_path = _base_dir / "devil.png"
-            if devil_path.exists():
-                try:
-                    from PIL import ImageTk as _ITk
-                    pil_img = Image.open(str(devil_path)).convert("RGBA")
-                    # Scale to a larger size so it fills the background
-                    pw, ph = 200, 280
-                    pil_img = pil_img.resize((pw, ph), Image.LANCZOS)
-                    # 25% opacity — watermark float over settings panel
-                    r, g, b, a = pil_img.split()
-                    a = a.point(lambda x: int(x * 0.25))
-                    pil_img.putalpha(a)
-                    ctk_img = ctk.CTkImage(light_image=pil_img,
-                                           dark_image=pil_img, size=(pw, ph))
-                    self._devil_label = ctk.CTkLabel(
-                        self.root, image=ctk_img, text="", fg_color="transparent")
-                    # Float over the settings panel (below video feed area)
-                    self._devil_label.place(relx=0.5, rely=0.65, anchor="center")
-                    log.info(f"Evil Mode: devil.png placed on UI ({pw}×{ph})")
-                except Exception as e:
-                    log.warning(f"Evil Mode: failed to place devil.png: {e}")
-                    self._devil_label = None
-            else:
-                self._devil_label = None
+                self._letmecum_btn.configure(border_width=2, border_color="#aa0000")
+            # Snark label pulse
+            self._evil_pulse_snark(0)
+            log.info("Evil Mode: on")
         else:
-            self._apply_theme(self._pre_evil_theme)
-            # Propagate restored colours to widgets
-            self.root.configure(fg_color=self._C_BG)
-            self._sf.configure(fg_color=self._C_BG)
-            for _w in self._sf.winfo_children():
-                if isinstance(_w, ctk.CTkFrame):
-                    _w.configure(fg_color=self._C_SURFACE)
-            self.info_label.configure(text_color=self._C_TEXT)
-            self.stats_label.configure(text_color=self._C_TEXT_DIM)
+            # 1. Title
             self.root.title("VisualStimEdger")
-            # Restore evil button to normal red (not active)
-            self._evil_btn.configure(fg_color="#cc0000", hover_color="#990000")
-            # Restore letmecum button
-            self._letmecum_btn.configure(fg_color="#3EC941", hover_color="#32a435")
-            if self._devil_label is not None:
-                self._devil_label.place_forget()
-                self._devil_label.destroy()
-                self._devil_label = None
+            # 2. Restore window background
+            self.root.configure(fg_color=self._C_BG)
+            # 3. Restore video border
+            self._vid_shell.configure(border_width=1, border_color=self._C_BORDER)
+            # 4. Evil button — outline only
+            self._evil_btn.configure(fg_color="transparent", hover_color="#3a0000",
+                                     border_color="#cc0000", text_color="#cc0000")
+            # 5. Restore let me cum? button
+            self._letmecum_btn.configure(fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
+                                         border_width=0)
+            # Stop snark pulse
+            if self._evil_pulse_job:
+                self.root.after_cancel(self._evil_pulse_job)
+                self._evil_pulse_job = None
+            self._snark_label.configure(text_color="#ff4444")
+            log.info("Evil Mode: off")
         self._save_config()
+
+    def _evil_pulse_snark(self, phase: int = 0):
+        """Oscillate snark label between two reds while evil mode is active."""
+        if not self._evil_mode:
+            return
+        try:
+            self._snark_label.configure(
+                text_color="#ff2200" if phase % 2 == 0 else "#880000"
+            )
+        except Exception:
+            pass
+        self._evil_pulse_job = self.root.after(600, lambda: self._evil_pulse_snark(phase + 1))
 
     # ------------------------------------------------------------------ MP3 transport callbacks
 
     def _mp3_load_file(self):
-        from tkinter import filedialog
         path = filedialog.askopenfilename(
             title="Select audio file",
             filetypes=[
@@ -3961,7 +4930,6 @@ class App:
             self._mp3_update_track_label()
 
     def _mp3_load_folder(self):
-        from tkinter import filedialog
         folder = filedialog.askdirectory(title="Select music folder")
         if folder and self.music_player:
             self.music_player.load_folder(folder)
@@ -3996,6 +4964,10 @@ class App:
     def _mp3_on_loop_change(self, val):
         if self.music_player:
             self.music_player.loop_mode = val
+
+    def _mp3_on_device_change(self, val):
+        if self.music_player:
+            self.music_player.set_output_device("" if val == "Default" else val)
 
     def _mp3_update_track_label(self):
         if not self.music_player:
@@ -4035,7 +5007,7 @@ class App:
             self._frame_times.append(now)
 
             # Tracking + volume: every other frame in non-Expert modes
-            self._proc_frame_count = getattr(self, '_proc_frame_count', 0) + 1
+            self._proc_frame_count = self._proc_frame_count + 1
             heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
 
             if heavy:
@@ -4051,8 +5023,7 @@ class App:
                 self._tick_volume()
 
             # Status label — throttled to _STATUS_INTERVAL_MS
-            _last_status = getattr(self, '_last_status_time', 0.0)
-            if now - _last_status >= self._STATUS_INTERVAL_MS / 1000:
+            if now - self._last_status_time >= self._STATUS_INTERVAL_MS / 1000:
                 self._update_status_label(state)
                 self._last_status_time = now
 
@@ -4062,8 +5033,7 @@ class App:
                 self._broadcast_overlay(state)
 
             # Video display — throttled to _DISPLAY_INTERVAL_MS
-            _last_disp = getattr(self, '_last_display_time', 0.0)
-            if now - _last_disp >= self._DISPLAY_INTERVAL_MS / 1000:
+            if now - self._last_display_time >= self._DISPLAY_INTERVAL_MS / 1000:
                 self._draw_height_lines(frame)
                 self._draw_tracking_overlay(frame)
                 self._display_frame(frame)
@@ -4076,8 +5046,9 @@ class App:
             self.root.after(interval, self._update_frame)
 
     def _maybe_yolo_reanchor(self, frame):
+        interval = self._YOLO_INTERVAL_LOST if not self.tracking_ok else self._YOLO_INTERVAL_LOCKED
         self.yolo_frame_counter += 1
-        if not self.detector.available or self.yolo_frame_counter < self._YOLO_INTERVAL:
+        if not self.detector.available or self.yolo_frame_counter < interval:
             return
         self.yolo_frame_counter = 0
 
@@ -4143,6 +5114,9 @@ class App:
                 self._track_msg   = ""
                 self.head_y       = new_cy
                 self._head_y_history.append(new_cy)
+                # Feed auto-cum detector
+                if self._auto_cum_enabled and not self._cum_stopped:
+                    self._tick_cum_detect(new_cy, frame)
             else:
                 reason = "size" if not size_ok else "jump"
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
@@ -4183,6 +5157,38 @@ class App:
                 cv2.rectangle(frame, (_ex, _ey), (_ex + _ew, _ey + _eh), _EZ_RED, 1)
                 cv2.line(frame, (_ex, _ey), (_ex + _ew, _ey + _eh), _EZ_RED, 1)
                 cv2.line(frame, (_ex + _ew, _ey), (_ex, _ey + _eh), _EZ_RED, 1)
+
+        # ── Grid navigator overlay ────────────────────────────────────────────
+        if getattr(self, '_grid_active', False):
+            fh, fw = frame.shape[:2]
+            region = self._grid_region or (0, 0, fw, fh)
+            gx, gy, gw, gh = region
+            # dim everything outside the active region
+            dim = frame.copy()
+            cv2.rectangle(dim, (0, 0), (fw, fh), (0, 0, 0), -1)
+            cv2.addWeighted(dim, 0.45, frame, 0.55, 0, frame)
+            # re-brighten the active region
+            cv2.rectangle(frame, (gx, gy), (gx + gw, gy + gh), (255, 255, 255), 0)
+            cw, ch = gw // 3, gh // 3
+            # grid lines
+            for col in range(1, 3):
+                lx = gx + col * cw
+                cv2.line(frame, (lx, gy), (lx, gy + gh), (200, 200, 200), 1)
+            for row in range(1, 3):
+                ly = gy + row * ch
+                cv2.line(frame, (gx, ly), (gx + gw, ly), (200, 200, 200), 1)
+            # border
+            cv2.rectangle(frame, (gx, gy), (gx + gw, gy + gh), (255, 255, 255), 2)
+            # numbers
+            for i in range(9):
+                row, col = divmod(i, 3)
+                ncx = gx + col * cw + cw // 2
+                ncy = gy + row * ch + ch // 2
+                cv2.putText(frame, str(i + 1), (ncx - 9, ncy + 9),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            # hint bar
+            cv2.putText(frame, "say: 1-9 zoom  |  select/here confirm  |  cancel reset",
+                        (5, fh - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 180, 255), 1)
 
         # In-progress exclusion zone while user is dragging
         if getattr(self, '_ez_drawing', False):
@@ -4256,8 +5262,10 @@ class App:
                 self._last_edge_time = now
                 self._edge_counted = True
                 self.session_logger.log_edge_counted(self.edge_count)
+                if self._hf_enabled:
+                    self._hf_check_edge()
         else:
-            if self._prev_state == "Edging" and state != "Edging":
+            if self._prev_state == "Edging":
                 self.session_logger.log_state_change(state)
             self._edge_counted = False
 
@@ -4284,7 +5292,7 @@ class App:
                   f"Erect {pcts['Erect']:.0f}%  "
                   f"Flaccid {pcts['Flaccid']:.0f}%")
         )
-        if getattr(self, '_play_mode', False):
+        if self._play_mode:
             elapsed = time.time() - self.session_start
             m2, s2 = divmod(int(elapsed), 60)
             self._play_edges_lbl.configure(text=f"{self.edge_count} edges")
@@ -4375,22 +5383,14 @@ class App:
         self.last_vol_time = cur_time
 
         # ── Cum allowed — volume locked at 100% until "I've CUM" ─────────────
-        if getattr(self, '_cum_allowed', False):
+        if self._cum_allowed:
             return
 
         # ── Session stopped after "I've CUM" — volume pinned at 0 ───────────
         # (_on_cum set the volume to 0 already; just keep it there every tick
         # in case something else nudged it.)
         if self._cum_stopped:
-            ceil_val = self.max_vol_var.get() / 100.0
-            if self.restim_on.get():
-                self.restim.set_volume(0.0, floor=0.0, ceiling=ceil_val)
-            if self.xtoys_on.get():
-                self.xtoys.set_volume(0.0, floor=0.0, ceiling=ceil_val)
-            if self.audio_on.get() and self.win_audio and self.win_audio.connected:
-                self.win_audio.set_volume(0.0, 0.0, 1.0)
-            if self.mp3_on.get() and self.music_player:
-                self.music_player.volume = 0.0
+            self._set_all_outputs(0.0)
             return
 
         if self.hold_active:
@@ -4493,8 +5493,20 @@ class App:
             text_color=conn_color,
         )
 
+        # UX-4: calibration hint — show when all three heights are unset and session is live
+        if hasattr(self, '_snark_label'):
+            _all_unset = all(self.heights.get(k) is None for k in ("Erect", "Flaccid", "Edging"))
+            _session_live = self._running and not self._cum_stopped and not getattr(self, 'tracking_paused', False)
+            _snark_now = self._snark_label.cget("text")
+            _calib_hint = "💡 Press AUTO to calibrate height lines"
+            if _all_unset and _session_live:
+                if _snark_now == "" or _snark_now == _calib_hint:
+                    self._snark_label.configure(text=_calib_hint, text_color="#5ba3c9")
+            elif _snark_now == _calib_hint:
+                self._snark_label.configure(text="")
+
         # Update play panel if visible
-        if getattr(self, '_play_mode', False):
+        if self._play_mode:
             _sc = {"Edging": self._C_ACCENT, "Erect": self._C_GREEN, "Flaccid": self._C_BLUE}
             self._play_state_lbl.configure(
                 text=state, text_color=_sc.get(state, self._C_TEXT))
@@ -4521,18 +5533,18 @@ class App:
 
         # "Let me cum?" tattle-tale
         letmecum = None
-        result = getattr(self, '_last_letmecum_result', None)
+        result = self._last_letmecum_result
         if result:
-            elapsed_lmc = time.time() - getattr(self, '_last_letmecum_time', 0)
+            elapsed_lmc = time.time() - self._last_letmecum_time
             if result == "granted" and self._cum_allowed:
-                grant_left = getattr(self, '_cum_grant_expires', 0) - time.time()
+                grant_left = self._cum_grant_expires - time.time()
                 letmecum = {"result": "granted", "time_left": round(max(grant_left, 0))}
             elif result == "expired" and elapsed_lmc < 5:
                 letmecum = {"result": "expired"}
             elif result == "ruined" and elapsed_lmc < 8:
                 letmecum = {"result": "ruined"}
             elif result == "denied":
-                cooldown_left = getattr(self, '_letmecum_cooldown_until', 0) - time.time()
+                cooldown_left = self._letmecum_cooldown_until - time.time()
                 if cooldown_left > 0:
                     letmecum = {"result": "denied", "retry_in": round(cooldown_left)}
                 elif elapsed_lmc < 5:
@@ -4561,6 +5573,1146 @@ class App:
             "denial_count": self._denial_count,
             "hr": hr_data,
         }))
+
+    # ================================================================ bondage mode
+
+    def _open_bondage_splash(self):
+        """Launch the bondage mode setup flow (two-page splash)."""
+        if self._bondage_active:
+            return  # already live — ignore
+        if self._bondage_configured:
+            # Setup was already completed this session — skip the splash and go straight in
+            self._start_bondage_session()
+            return
+        model_path = VoiceEngine.model_path_default()
+        if not VoiceEngine.model_available(model_path):
+            messagebox.showwarning(
+                "Vosk model missing",
+                f"Bondage Mode requires the Vosk small English model.\n\n"
+                f"Download from:\n  https://alphacephei.com/vosk/models\n"
+                f"(vosk-model-small-en-us-0.22.zip)\n\n"
+                f"Extract so this folder exists:\n  {model_path}",
+                parent=self.root,
+            )
+            return
+
+        win = ctk.CTkToplevel(self.root)
+        win.title("🎙 Bondage Mode — Setup")
+        win.configure(fg_color=self._C_BG)
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+        win.geometry("480x540")
+        _lbl = ctk.CTkFont(size=11, weight="bold")
+        _dim = ctk.CTkFont(size=10)
+        P = 16
+
+        # ── title ─────────────────────────────────────────────────────────────
+        ctk.CTkLabel(win, text="🎙 Bondage Mode Setup",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=self._C_TEXT).pack(pady=(P, 4))
+        ctk.CTkLabel(win,
+                     text="Configure your microphone and safeword before the session starts.",
+                     font=_dim, text_color=self._C_TEXT_DIM, wraplength=440).pack(pady=(0, 8))
+
+        card = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
+        card.pack(fill=tk.X, padx=P, pady=4)
+
+        # ── mic device ────────────────────────────────────────────────────────
+        mic_row = ctk.CTkFrame(card, fg_color="transparent")
+        mic_row.pack(fill=tk.X, padx=12, pady=(10, 4))
+        ctk.CTkLabel(mic_row, text="Microphone:", font=_lbl,
+                     text_color=self._C_TEXT, width=110, anchor="w").pack(side=tk.LEFT)
+        mic_devices = VoiceEngine.list_input_devices()
+        mic_options  = ["System Default"] + mic_devices
+        _default_sel = self._bondage_mic_device if self._bondage_mic_device in mic_devices else "System Default"
+        mic_var = tk.StringVar(value=_default_sel)
+        ctk.CTkComboBox(mic_row, values=mic_options, variable=mic_var,
+                        width=280,
+                        fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                        button_color=self._C_ACCENT, button_hover_color=self._C_ACCENT_H,
+                        dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
+                        ).pack(side=tk.LEFT)
+
+        # ── level meter ───────────────────────────────────────────────────────
+        meter_row = ctk.CTkFrame(card, fg_color="transparent")
+        meter_row.pack(fill=tk.X, padx=12, pady=(4, 8))
+        ctk.CTkLabel(meter_row, text="Mic level:", font=_dim,
+                     text_color=self._C_TEXT_DIM, width=110, anchor="w").pack(side=tk.LEFT)
+        meter_cv = tk.Canvas(meter_row, width=280, height=14,
+                             bg=self._C_SURFACE2, highlightthickness=0)
+        meter_cv.pack(side=tk.LEFT)
+
+        def _draw_meter():
+            meter_cv.delete("all")
+            engine = getattr(self, '_splash_voice_engine', None)
+            lvl = engine.level if engine else 0.0
+            fill_w = int(lvl * 280)
+            col = "#3EC941" if lvl < 0.6 else "#F5A623" if lvl < 0.85 else "#FF4444"
+            if fill_w > 0:
+                meter_cv.create_rectangle(0, 0, fill_w, 14, fill=col, outline="")
+
+        ctk.CTkFrame(card, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=12, pady=2)
+
+        # ── safeword ──────────────────────────────────────────────────────────
+        sw_row = ctk.CTkFrame(card, fg_color="transparent")
+        sw_row.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ctk.CTkLabel(sw_row, text="Safeword:", font=_lbl,
+                     text_color=self._C_TEXT, width=110, anchor="w").pack(side=tk.LEFT)
+        sw_var = tk.StringVar(value=self._bondage_safeword)
+        sw_entry = ctk.CTkEntry(sw_row, textvariable=sw_var, width=160,
+                                fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                                text_color=self._C_TEXT)
+        sw_entry.pack(side=tk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(sw_row, text="(single word)", font=_dim,
+                     text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
+
+        # verification status — saved safeword pre-fills the field but still requires saying it
+        _pre_verified = False
+        verify_lbl = ctk.CTkLabel(
+            card,
+            text="✓ Using saved safeword" if _pre_verified else "Say your safeword aloud to verify ↑",
+            font=_dim,
+            text_color="#3EC941" if _pre_verified else self._C_TEXT_DIM,
+        )
+        verify_lbl.pack(pady=(0, 10))
+        _verified = [_pre_verified]
+
+        ctk.CTkFrame(card, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=12, pady=2)
+
+        # ── skip row ──────────────────────────────────────────────────────────
+        skip_row = ctk.CTkFrame(card, fg_color="transparent")
+        skip_row.pack(fill=tk.X, padx=12, pady=(8, 10))
+        skip_var = tk.BooleanVar(value=False)
+        skip_cb  = ctk.CTkCheckBox(skip_row, text="Skip voice verification",
+                                   variable=skip_var, onvalue=True, offvalue=False,
+                                   font=_dim, text_color=self._C_TEXT_DIM,
+                                   fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
+                                   border_color=self._C_BORDER)
+        skip_cb.pack(side=tk.LEFT)
+
+        # ── navigation ────────────────────────────────────────────────────────
+        nav_row = ctk.CTkFrame(win, fg_color="transparent")
+        nav_row.pack(fill=tk.X, padx=P, pady=(8, P))
+
+        cont_btn = ctk.CTkButton(nav_row, text="Continue →",
+                                 font=ctk.CTkFont(size=12, weight="bold"),
+                                 height=36, corner_radius=4,
+                                 fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                                 text_color=self._C_TEXT_DIM, state="disabled")
+        cont_btn.pack(side=tk.RIGHT, padx=(4, 0))
+
+        practice_btn = ctk.CTkButton(nav_row, text="Practice Grid →",
+                                     font=ctk.CTkFont(size=11),
+                                     height=36, corner_radius=4,
+                                     fg_color="#2a1a3a", hover_color="#4a2a5a",
+                                     text_color=self._C_TEXT_DIM, state="disabled")
+        practice_btn.pack(side=tk.RIGHT)
+
+        ctk.CTkButton(nav_row, text="Cancel", command=win.destroy,
+                      font=ctk.CTkFont(size=11), height=36, corner_radius=4,
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT).pack(side=tk.LEFT)
+
+        # ── engine lifecycle ──────────────────────────────────────────────────
+        def _unlock_continue():
+            cont_btn.configure(state="normal", fg_color="#4a0a6a", hover_color="#6a1a8a",
+                               text_color="white")
+            practice_btn.configure(state="normal", fg_color="#2a1a3a", hover_color="#4a2a5a",
+                                   text_color=self._C_TEXT)
+
+        if _pre_verified:
+            _unlock_continue()
+
+        def _on_splash_keyword(kw):
+            """Called from VoiceEngine audio thread."""
+            if kw == "safeword":
+                self.root.after(0, _on_verified)
+
+        def _on_verified():
+            if _verified[0]:
+                return
+            _verified[0] = True
+            verify_lbl.configure(text="✓ Safeword verified!", text_color="#3EC941")
+            _unlock_continue()
+
+        def _on_skip_toggle():
+            if skip_var.get():
+                _unlock_continue()
+            else:
+                if not _verified[0]:
+                    cont_btn.configure(state="disabled",
+                                       fg_color=self._C_SURFACE2, text_color=self._C_TEXT_DIM)
+
+        skip_var.trace_add("write", lambda *_: _on_skip_toggle())
+
+        def _start_splash_engine(*_):
+            old = getattr(self, '_splash_voice_engine', None)
+            if old:
+                old.stop()
+            sel = mic_var.get()
+            dev = "" if sel == "System Default" else sel
+            eng = VoiceEngine(VoiceEngine.model_path_default(), device_name=dev)
+            eng.set_safeword(sw_var.get().strip().lower() or "red")
+            eng.set_callback(_on_splash_keyword)
+            self._splash_voice_engine = eng
+            eng.start()
+
+        # Restart engine when mic changes (immediate) or safeword changes (debounced
+        # so we don't reload Vosk on every keystroke).
+        _sw_restart_job = [None]
+        def _debounce_sw(*_):
+            if _sw_restart_job[0]:
+                win.after_cancel(_sw_restart_job[0])
+            _sw_restart_job[0] = win.after(700, _start_splash_engine)
+
+        mic_var.trace_add("write", _start_splash_engine)
+        sw_var.trace_add("write", _debounce_sw)
+        _start_splash_engine()   # start immediately with current device
+
+        # meter poll
+        def _meter_tick():
+            if not win.winfo_exists():
+                return
+            _draw_meter()
+            win.after(80, _meter_tick)
+        _meter_tick()
+
+        # ── continue action ───────────────────────────────────────────────────
+        def _do_continue():
+            sel = mic_var.get()
+            self._bondage_mic_device = "" if sel == "System Default" else sel
+            self._bondage_safeword   = sw_var.get().strip().lower() or "red"
+            self._save_config()
+            eng = getattr(self, '_splash_voice_engine', None)
+            if eng:
+                eng.stop()
+                self._splash_voice_engine = None
+            win.destroy()
+            self._start_bondage_session()
+
+        def _do_practice():
+            sel = mic_var.get()
+            self._bondage_mic_device = "" if sel == "System Default" else sel
+            self._bondage_safeword   = sw_var.get().strip().lower() or "red"
+            eng = getattr(self, '_splash_voice_engine', None)
+            if eng:
+                eng.stop()
+                self._splash_voice_engine = None
+            win.destroy()
+            self._open_grid_practice()
+
+        cont_btn.configure(command=_do_continue)
+        practice_btn.configure(command=_do_practice)
+        win.protocol("WM_DELETE_WINDOW", lambda: (
+            setattr(self, '_splash_voice_engine',
+                    getattr(self, '_splash_voice_engine', None) and
+                    getattr(self, '_splash_voice_engine').stop() or None),
+            win.destroy()
+        ))
+
+    def _open_grid_practice(self):
+        """Splash 2 — 🍆 bouncing mini-game. Navigate the grid to pin the green stem."""
+        CV_W, CV_H = 360, 360
+        EMOJI_FONT = ("Segoe UI Emoji", 128)
+        # Base stem offset for 0° orientation (upper-left of glyph)
+        _BASE_CX = -36
+        _BASE_CY = -52
+        STEM_RX  = 20
+        STEM_RY  = 12
+        # Only upright and flipped — sideways is too hard to navigate
+        _ROT_ANGLES  = [0, 180]
+        _ROT_OFFSETS = [
+            (_BASE_CX,  _BASE_CY),    # 0°:   stem upper-left
+            (-_BASE_CX, -_BASE_CY),   # 180°: stem lower-right
+        ]
+
+        P = 12
+
+        win = ctk.CTkToplevel(self.root)
+        win.title("🍆 Grid Practice")
+        win.configure(fg_color=self._C_BG)
+        win.transient(self.root)
+        win.grab_set()
+        win.geometry("510x700")
+        win.resizable(False, False)
+
+        ctk.CTkLabel(win, text="🍆  Grid Navigator Practice",
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=self._C_TEXT).pack(pady=(P, 2))
+        ctk.CTkLabel(win,
+                     text="1–9  zoom in    •    here  confirm    •    back  step back    •    cancel  reset",
+                     font=ctk.CTkFont(size=13), text_color=self._C_TEXT,
+                     wraplength=490).pack(pady=(0, 6))
+
+        # Score + status row
+        hdr = ctk.CTkFrame(win, fg_color="transparent")
+        hdr.pack(fill=tk.X, padx=P, pady=(0, 4))
+        score_lbl = ctk.CTkLabel(hdr, text="Score: 0",
+                                  font=ctk.CTkFont(size=13, weight="bold"),
+                                  text_color="#44ff44")
+        score_lbl.pack(side=tk.LEFT, padx=8)
+        status_lbl = ctk.CTkLabel(hdr, text="Navigate to the 🌿 stem!",
+                                   font=ctk.CTkFont(size=11), text_color=self._C_TEXT_DIM)
+        status_lbl.pack(side=tk.LEFT, padx=4)
+
+        # Game canvas
+        cv = tk.Canvas(win, width=CV_W, height=CV_H, bg="#12121e",
+                       highlightthickness=2, highlightbackground=self._C_BORDER)
+        cv.pack(pady=4)
+
+        # ── game state ────────────────────────────────────────────────────────
+        gs = {
+            "score": 0,
+            "ex": CV_W // 2, "ey": CV_H // 2,   # emoji centre position
+            "tick": 0,
+            "celebrate": 0,    # frames of celebration remaining
+            "miss_flash": 0,   # frames of red-X flash remaining
+            "miss_x": 0, "miss_y": 0,
+            "pin_x": None, "pin_y": None, "pin_w": None, "pin_h": None,
+            "grid_x": 0, "grid_y": 0, "grid_w": CV_W, "grid_h": CV_H,
+            "grid_stack": [],   # undo stack for back-stepping
+            "rot_idx": 0,
+            "running": True,
+        }
+
+        # Pre-render 4 rotations with the target ring baked in — ring always tracks the stem
+        _eggplant_photos = []
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageTk as _ITk
+            _ef  = ImageFont.truetype("C:/Windows/Fonts/seguiemj.ttf", 120)
+            _bim = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+            _bdraw = ImageDraw.Draw(_bim)
+            _bdraw.text((80, 80), "🍆", font=_ef, anchor="mm", embedded_color=True)
+            # Bake ring at stem position in the unrotated image
+            _rx0 = 80 + _BASE_CX - STEM_RX - 3
+            _ry0 = 80 + _BASE_CY - STEM_RY - 3
+            _rx1 = 80 + _BASE_CX + STEM_RX + 3
+            _ry1 = 80 + _BASE_CY + STEM_RY + 3
+            _bdraw.ellipse([_rx0, _ry0, _rx1, _ry1], outline=(68, 255, 68, 255), width=3)
+            for ang in _ROT_ANGLES:
+                _eggplant_photos.append(_ITk.PhotoImage(_bim.rotate(ang)))
+        except Exception:
+            pass   # fallback: create_text + separate ring below
+
+        def _reset_eggplant():
+            margin = 80
+            gs["ex"] = random.randint(margin, CV_W - margin)
+            gs["ey"] = random.randint(margin, CV_H - margin)
+            gs["grid_x"], gs["grid_y"] = 0, 0
+            gs["grid_w"], gs["grid_h"] = CV_W, CV_H
+            gs["grid_stack"].clear()
+            gs["pin_x"] = gs["pin_y"] = None
+            gs["rot_idx"] = random.randint(0, len(_ROT_ANGLES) - 1)
+
+        def _draw():
+            cv.delete("all")
+            ex, ey = int(gs["ex"]), int(gs["ey"])
+            t = gs["tick"]
+
+            # Emoji — wobble during celebration
+            wobble = 0
+            if gs["celebrate"] > 0:
+                wobble = 7 if (t // 3) % 2 == 0 else -7
+            cx = ex + wobble
+            ri = gs["rot_idx"]
+            if _eggplant_photos:
+                cv.create_image(cx, ey, image=_eggplant_photos[ri], anchor="center")
+            else:
+                # Fallback: emoji text + separate ring
+                cv.create_text(cx, ey, text="🍆", font=EMOJI_FONT, anchor="center")
+                scx_off, scy_off = _ROT_OFFSETS[ri]
+                scx, scy = cx + scx_off, ey + scy_off
+                cv.create_oval(scx - STEM_RX - 3, scy - STEM_RY - 3,
+                               scx + STEM_RX + 3, scy + STEM_RY + 3,
+                               outline="#44ff44", width=3, fill="")
+
+            # Dim overlay outside active grid region
+            gx, gy, gw, gh = gs["grid_x"], gs["grid_y"], gs["grid_w"], gs["grid_h"]
+            if gw < CV_W or gh < CV_H:
+                for rx, ry, rw, rh in [
+                    (0,       0,        CV_W,          gy),
+                    (0,       gy + gh,  CV_W,          CV_H - gy - gh),
+                    (0,       gy,       gx,            gh),
+                    (gx + gw, gy,       CV_W - gx - gw, gh),
+                ]:
+                    if rw > 0 and rh > 0:
+                        cv.create_rectangle(rx, ry, rx + rw, ry + rh,
+                                             fill="#000000", stipple="gray50", outline="")
+
+            # Grid lines inside active region
+            cw, ch = gw // 3, gh // 3
+            for c in range(1, 3):
+                cv.create_line(gx + c * cw, gy, gx + c * cw, gy + gh,
+                               fill="#888888", width=1)
+            for r in range(1, 3):
+                cv.create_line(gx, gy + r * ch, gx + gw, gy + r * ch,
+                               fill="#888888", width=1)
+            cv.create_rectangle(gx, gy, gx + gw, gy + gh, outline="#cccccc", width=2)
+            for i in range(9):
+                r, c = divmod(i, 3)
+                ncx = gx + c * cw + cw // 2
+                ncy = gy + r * ch + ch // 2
+                cv.create_text(ncx, ncy, text=str(i + 1),
+                               fill="#aaaaaa", font=("Segoe UI", 10, "bold"))
+
+            # Pinned region box
+            if gs["pin_x"] is not None:
+                px, py, pw, ph = gs["pin_x"], gs["pin_y"], gs["pin_w"], gs["pin_h"]
+                cv.create_rectangle(px, py, px + pw, py + ph,
+                                     outline="#44aaff", width=3)
+
+            # Miss flash: red X
+            if gs["miss_flash"] > 0:
+                fx, fy, r2 = int(gs["miss_x"]), int(gs["miss_y"]), 18
+                cv.create_line(fx - r2, fy - r2, fx + r2, fy + r2,
+                               fill="#ff3333", width=4)
+                cv.create_line(fx + r2, fy - r2, fx - r2, fy + r2,
+                               fill="#ff3333", width=4)
+
+            # Hit banner
+            if gs["celebrate"] > 20:
+                cv.create_text(cx, ey - 100, text="✓  HIT!", fill="#44ff44",
+                               font=("Segoe UI", 17, "bold"))
+
+        def _tick():
+            if not gs["running"]:
+                return
+            gs["tick"] += 1
+
+            if gs["celebrate"] > 0:
+                gs["celebrate"] -= 1
+                if gs["celebrate"] == 0:
+                    _reset_eggplant()
+            if gs["miss_flash"] > 0:
+                gs["miss_flash"] -= 1
+
+            try:
+                _draw()
+            except Exception:
+                pass
+            try:
+                win.after(33, _tick)
+            except Exception:
+                pass
+
+        def _zoom_cell(n: int):
+            gx, gy, gw, gh = gs["grid_x"], gs["grid_y"], gs["grid_w"], gs["grid_h"]
+            gs["grid_stack"].append((gx, gy, gw, gh))
+            cw, ch = gw // 3, gh // 3
+            r, c = divmod(n - 1, 3)
+            gs["grid_x"] = gx + c * cw
+            gs["grid_y"] = gy + r * ch
+            gs["grid_w"] = cw
+            gs["grid_h"] = ch
+            gs["pin_x"] = gs["pin_y"] = None
+            depth = len(gs["grid_stack"])
+            status_lbl.configure(text=f"Cell {n} — 'here' to pin · up/down/left/right to nudge · 'back' to step back · 'cancel' to reset")
+
+        def _confirm_pin():
+            gx, gy, gw, gh = gs["grid_x"], gs["grid_y"], gs["grid_w"], gs["grid_h"]
+            if gw >= CV_W and gh >= CV_H:
+                status_lbl.configure(text="Zoom in first — say a number!")
+                return
+            gs["pin_x"], gs["pin_y"] = gx, gy
+            gs["pin_w"], gs["pin_h"] = gw, gh
+            pin_cx = gx + gw // 2
+            pin_cy = gy + gh // 2
+            ex, ey = int(gs["ex"]), int(gs["ey"])
+            scx_off, scy_off = _ROT_OFFSETS[gs["rot_idx"]]
+            stem_left  = ex + scx_off - STEM_RX
+            stem_right = ex + scx_off + STEM_RX
+            stem_top   = ey + scy_off - STEM_RY
+            stem_bot   = ey + scy_off + STEM_RY
+            hit = stem_left <= pin_cx <= stem_right and stem_top <= pin_cy <= stem_bot
+            if hit:
+                gs["score"] += 1
+                score_lbl.configure(text=f"Score: {gs['score']}")
+                gs["celebrate"] = 45
+                status_lbl.configure(text="🎉 Nice shot!")
+            else:
+                gs["miss_x"] = pin_cx
+                gs["miss_y"] = pin_cy
+                gs["miss_flash"] = 28
+                gs["grid_x"], gs["grid_y"] = 0, 0
+                gs["grid_w"], gs["grid_h"] = CV_W, CV_H
+                gs["grid_stack"].clear()
+                gs["pin_x"] = gs["pin_y"] = None
+                status_lbl.configure(text="Miss — aim for the green ring at the top!")
+
+        def _cancel_grid():
+            """Step back one zoom level. 'again' does a full reset."""
+            if gs["grid_stack"]:
+                gx, gy, gw, gh = gs["grid_stack"].pop()
+                gs["grid_x"], gs["grid_y"] = gx, gy
+                gs["grid_w"], gs["grid_h"] = gw, gh
+                gs["pin_x"] = gs["pin_y"] = None
+                if gs["grid_stack"]:
+                    status_lbl.configure(text="Stepped back — say a number or 'back' again")
+                else:
+                    status_lbl.configure(text="Back to full view — navigate to the 🌿 stem!")
+            else:
+                status_lbl.configure(text="Already at full view!")
+
+        def _reset_grid():
+            gs["grid_x"], gs["grid_y"] = 0, 0
+            gs["grid_w"], gs["grid_h"] = CV_W, CV_H
+            gs["grid_stack"].clear()
+            gs["pin_x"] = gs["pin_y"] = None
+            status_lbl.configure(text="Reset — navigate to the 🌿 stem!")
+
+        def _nudge_grid(dx: int, dy: int):
+            gw, gh = gs["grid_w"], gs["grid_h"]
+            if gw >= CV_W and gh >= CV_H:
+                status_lbl.configure(text="Zoom in first — say a number!")
+                return
+            gs["grid_x"] = max(0, min(CV_W - gw, gs["grid_x"] + dx))
+            gs["grid_y"] = max(0, min(CV_H - gh, gs["grid_y"] + dy))
+            gs["pin_x"] = gs["pin_y"] = None
+
+        # ── voice engine for practice ─────────────────────────────────────────
+        def _on_practice_voice(kw: str):
+            n = VoiceEngine._NUM_MAP.get(kw)
+            if n is not None:
+                win.after(0, lambda k=n: _zoom_cell(k))
+                return
+            if kw in ("select", "here", "confirm"):
+                win.after(0, _confirm_pin)
+            elif kw == "back":
+                win.after(0, _cancel_grid)
+            elif kw in ("cancel", "again"):
+                win.after(0, _reset_grid)
+            elif kw == "up":
+                win.after(0, lambda: _nudge_grid(0, -gs["grid_h"]))
+            elif kw == "down":
+                win.after(0, lambda: _nudge_grid(0,  gs["grid_h"]))
+            elif kw == "left":
+                win.after(0, lambda: _nudge_grid(-gs["grid_w"], 0))
+            elif kw == "right":
+                win.after(0, lambda: _nudge_grid( gs["grid_w"], 0))
+
+        _practice_engine = VoiceEngine(
+            VoiceEngine.model_path_default(),
+            device_name=self._bondage_mic_device,
+        )
+        _practice_engine.set_safeword(self._bondage_safeword)
+        _practice_engine.set_callback(_on_practice_voice)
+        _practice_engine.start()
+
+        def _stop_practice_engine():
+            gs["running"] = False
+            try:
+                _practice_engine.stop()
+            except Exception:
+                pass
+
+        win.protocol("WM_DELETE_WINDOW", lambda: (_stop_practice_engine(), win.destroy()))
+
+        # Start bondage session when done
+        def _done():
+            _stop_practice_engine()
+            win.destroy()
+            self._start_bondage_session()
+
+        # ── mic level meter ───────────────────────────────────────────────────
+        mic_row = ctk.CTkFrame(win, fg_color="transparent")
+        mic_row.pack(fill=tk.X, padx=P, pady=(4, 0))
+        ctk.CTkLabel(mic_row, text="🎙 MIC",
+                     font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
+        mic_bar_cv = tk.Canvas(mic_row, width=260, height=12, bg=self._C_SURFACE2,
+                               highlightthickness=0)
+        mic_bar_cv.pack(side=tk.LEFT, padx=(6, 0))
+        mic_status = ctk.CTkLabel(mic_row, text="loading…",
+                                   font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM, width=60)
+        mic_status.pack(side=tk.LEFT, padx=(6, 0))
+
+        def _mic_poll():
+            if not gs["running"]:
+                return
+            level = _practice_engine.level
+            alive = _practice_engine.running
+            mic_bar_cv.delete("all")
+            if alive:
+                w = int(level * 260)
+                color = "#44ff44" if level < 0.6 else "#ffaa00"
+                if w > 0:
+                    mic_bar_cv.create_rectangle(0, 0, w, 12, fill=color, outline="")
+                mic_status.configure(text="listening", text_color="#44ff44")
+            else:
+                mic_status.configure(text="loading…", text_color=self._C_TEXT_DIM)
+            try:
+                win.after(80, _mic_poll)
+            except Exception:
+                pass
+
+        nav = ctk.CTkFrame(win, fg_color="transparent")
+        nav.pack(fill=tk.X, padx=P, pady=(6, P))
+        ctk.CTkButton(nav, text="← Back",
+                      command=lambda: (_stop_practice_engine(), win.destroy()),
+                      font=ctk.CTkFont(size=11), height=34,
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT).pack(side=tk.LEFT)
+        ctk.CTkButton(nav, text="Start Bondage Mode →", command=_done,
+                      font=ctk.CTkFont(size=12, weight="bold"), height=34,
+                      fg_color="#4a0a6a", hover_color="#6a1a8a",
+                      text_color="white").pack(side=tk.RIGHT)
+
+        # Kick off
+        _reset_eggplant()
+        _tick()
+        _mic_poll()
+
+    def _start_bondage_session(self):
+        """Activate bondage mode: start VoiceEngine, update button, show indicator."""
+        model_path = VoiceEngine.model_path_default()
+        if self._voice_engine:
+            self._voice_engine.stop()
+        self._voice_engine = VoiceEngine(
+            model_path,
+            device_name=self._bondage_mic_device,
+        )
+        self._voice_engine.set_safeword(self._bondage_safeword)
+        self._voice_engine.set_callback(self._voice_raw_cb)
+        self._voice_engine.start()
+        self._bondage_active     = True
+        self._bondage_configured = True
+        self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="#6a1a8a",
+                                    hover_color="#4a0a6a", border_color="#9a3aaa",
+                                    text_color="white")
+        self._snark_label.configure(
+            text=f'🎙 Bondage active — safeword: "{self._bondage_safeword}"',
+            text_color="#c080ff")
+        log.info(f"Bondage mode started (safeword={self._bondage_safeword!r}, "
+                 f"mic={self._bondage_mic_device or 'default'})")
+        self._show_voice_cheatsheet()
+
+    def _show_voice_cheatsheet(self):
+        """Pop a closeable reference window listing all voice commands."""
+        ref = ctk.CTkToplevel(self.root)
+        ref.title("🎙 Voice Commands")
+        ref.configure(fg_color="#0d0012")
+        ref.attributes("-topmost", True)
+        ref.resizable(False, True)
+        ref.geometry("400x920")
+
+        _head = ctk.CTkFont(size=13, weight="bold")
+        _body = ctk.CTkFont(size=13)
+        _dim  = ctk.CTkFont(size=11)
+        P = 12
+
+        ctk.CTkLabel(ref, text="🎙 Voice Commands",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color="#c080ff").pack(pady=(P, 6))
+
+        # ── Safeword — extra-large ────────────────────────────────────────────
+        sw_card = ctk.CTkFrame(ref, fg_color="#2a0008", corner_radius=8,
+                               border_width=2, border_color="#cc0000")
+        sw_card.pack(fill=tk.X, padx=P, pady=(0, 8))
+        ctk.CTkLabel(sw_card, text="🛑  SAFEWORD",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#ff6060").pack(pady=(10, 2))
+        ctk.CTkLabel(sw_card, text=f'"{self._bondage_safeword}"',
+                     font=ctk.CTkFont(size=30, weight="bold"),
+                     text_color="#ff2020").pack(pady=(0, 4))
+        ctk.CTkLabel(sw_card, text="hard stop — mic stays on, say 'resume session' to continue",
+                     font=_dim, text_color="#ff8080", wraplength=360).pack(pady=(0, 10))
+
+        def _section(title, rows, title_color="#c080ff"):
+            f = ctk.CTkFrame(ref, fg_color="#1e002c", corner_radius=6)
+            f.pack(fill=tk.X, padx=P, pady=3)
+            ctk.CTkLabel(f, text=title, font=_head,
+                         text_color=title_color).pack(anchor="w", padx=10, pady=(8, 2))
+            for cmd, desc in rows:
+                row = ctk.CTkFrame(f, fg_color="transparent")
+                row.pack(fill=tk.X, padx=10, pady=2)
+                ctk.CTkLabel(row, text=cmd, font=_body, text_color="#e0d0ff",
+                             width=200, anchor="w").pack(side=tk.LEFT)
+                ctk.CTkLabel(row, text=desc, font=_dim, text_color="#9a8aaa",
+                             anchor="w").pack(side=tk.LEFT)
+            ctk.CTkFrame(f, height=1, fg_color="#2d1a40").pack(fill=tk.X, padx=10, pady=(6, 8))
+
+        _section("🎬  Session", [
+            ('"came" / "cumming"',      "log that you came"),
+            ('"pause"',                 "freeze tracking"),
+            ('"resume"',                "unfreeze tracking"),
+        ])
+
+        _section("📏  Height lines", [
+            ('"erect up" / "erect down"',     "±3% frame height"),
+            ('"flaccid up" / "flaccid down"', "±3% frame height"),
+            ('"edging up" / "edging down"',   "±3% frame height"),
+            ('"set lines"',                   "auto-place all three"),
+        ])
+
+        _section("🎯  Head tracking", [
+            ('"find head"',                       "open grid navigator"),
+            ('"one" – "nine"',                    "zoom into that cell"),
+            ('"here" / "select" / "confirm"',     "lock on & reanchor"),
+            ('"back" / "cancel" / "again"',       "reset grid / exit"),
+        ])
+
+        _section("🚫  Exclusion zones", [
+            ('"exclude"',                         "open grid to mark a zone to ignore"),
+            ('"one" – "nine"',                    "zoom into that cell"),
+            ('"exclude" / "here"',                "add that region as exclusion zone"),
+            ('"back" / "cancel"',                 "exit without adding"),
+            ('"clear exclude"',                   "remove all exclusion zones"),
+        ], title_color="#ff8800")
+
+        _section("🖥️  Feed source", [
+            ('"switch source"',         "list open windows 1–9"),
+            ('"one" – "nine"',          "switch to that window"),
+            ('"cancel" / "again"',      "abort picker"),
+        ])
+
+        ctk.CTkButton(ref, text="Got it — close",
+                      command=ref.destroy,
+                      font=ctk.CTkFont(size=13, weight="bold"), height=36,
+                      fg_color="#2d1a40", hover_color="#4a0a6a",
+                      text_color="#c080ff", corner_radius=6,
+                      ).pack(pady=(6, P), padx=P, fill=tk.X)
+
+    def _stop_bondage_mode(self):
+        """Deactivate bondage mode cleanly (full stop, including engine)."""
+        self._bondage_active  = False
+        self._bondage_standby = False
+        self._grid_active     = False
+        self._grid_mode       = 'head'
+        self._grid_region     = None
+        self._grid_depth      = 0
+        self._source_picker_close()
+        if self._voice_engine:
+            self._voice_engine.stop()
+            self._voice_engine = None
+        try:
+            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="transparent",
+                                        hover_color="#1a0028",
+                                        border_color="#8a2a9a", text_color="#c080ff")
+        except Exception:
+            pass
+        log.info("Bondage mode stopped")
+
+    # ── voice keyword dispatcher ──────────────────────────────────────────────
+
+    def _voice_raw_cb(self, kw: str):
+        """Called from VoiceEngine audio thread — posts to main thread."""
+        self.root.after(0, lambda: self._on_voice_keyword(kw))
+
+    def _on_voice_keyword(self, kw: str):
+        """Dispatches a recognised keyword (runs on main thread)."""
+        # Standby after safeword — only "resume session" (or safeword repeat) accepted
+        if self._bondage_standby:
+            if kw == "resume session":
+                self._voice_resume_session()
+            return
+
+        if not self._bondage_active:
+            return
+        log.info(f"Voice command: {kw!r}")
+
+        # ── safeword — hard stop, always wins ────────────────────────────────
+        if kw == "safeword":
+            self._voice_safeword()
+            return
+
+        # ── grid navigator takes over when active ─────────────────────────────
+        if self._grid_active:
+            n = VoiceEngine._NUM_MAP.get(kw)
+            if n is not None:
+                self._grid_zoom(n)
+                return
+            if kw in ("select", "here", "confirm") or \
+               (kw == "exclude" and self._grid_mode == 'exclude'):
+                self._grid_confirm()
+                return
+            if kw in ("cancel", "again", "back"):
+                self._grid_cancel()
+                return
+            return  # ignore other keywords while grid is up
+
+        # ── source picker takes over when active ──────────────────────────────
+        if self._source_picker_active:
+            n = VoiceEngine._NUM_MAP.get(kw)
+            if n is not None:
+                self._source_picker_select(n)
+                return
+            if kw in ("cancel", "again"):
+                self._source_picker_close()
+                self._snark_label.configure(text="🎙 Source switch cancelled",
+                                            text_color="#F5A623")
+                return
+            return  # absorb everything else while picker is up
+
+        # ── regular session commands ──────────────────────────────────────────
+        if kw in ("came", "cumming"):
+            self._on_cum(source="voice")
+            return
+        if kw == "pause":
+            if not self.tracking_paused:
+                self.tracking_paused = True
+                self._snark_label.configure(text="🎙 Paused (say 'resume')",
+                                            text_color="#F5A623")
+            return
+        if kw == "resume":
+            self.tracking_paused = False
+            self._snark_label.configure(text="", text_color="#ff4444")
+            return
+        if kw == "find head":
+            self._grid_start()
+            return
+        if kw == "exclude":
+            self._grid_start_exclude()
+            return
+        if kw == "clear exclude":
+            self._exclusion_zones.clear()
+            self._save_config()
+            self._snark_label.configure(text="🎙 Exclusion zones cleared",
+                                        text_color="#F5A623")
+            log.info("Voice: all exclusion zones cleared")
+            return
+        if kw == "set lines":
+            self._voice_set_lines()
+            return
+        if kw == "switch source":
+            self._voice_switch_source()
+            return
+        # Height adjustments
+        for which in ("erect", "flaccid", "edging"):
+            if kw == f"{which} up":
+                self._voice_adjust_height(which.capitalize(), -1)
+                return
+            if kw == f"{which} down":
+                self._voice_adjust_height(which.capitalize(), +1)
+                return
+
+    def _voice_safeword(self):
+        """Safeword — pause everything but keep mic alive for 'resume session'."""
+        # Partial stop: don't kill the engine
+        self._bondage_active  = False
+        self._bondage_standby = True
+        self._grid_active     = False
+        self._grid_mode       = 'head'
+        self._grid_region     = None
+        self._grid_depth      = 0
+        self._source_picker_close()
+        self.tracking_paused  = True
+        # End the edge/cum session if running
+        try:
+            if not self._cum_stopped:
+                self._on_cum(source="voice")
+        except Exception:
+            pass
+        # UI
+        try:
+            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="transparent",
+                                        hover_color="#1a0000",
+                                        border_color="#aa0000", text_color="#ff8080")
+        except Exception:
+            pass
+        try:
+            self._snark_label.configure(
+                text='🛑 SAFEWORD — say "resume session" to continue',
+                text_color="#FF4444")
+        except Exception:
+            pass
+        log.warning("SAFEWORD triggered — standing by for 'resume session'")
+
+    def _voice_resume_session(self):
+        """Resume bondage mode after safeword — engine was never stopped."""
+        self._bondage_standby = False
+        self._bondage_active  = True
+        self.tracking_paused  = False
+        try:
+            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="#6a1a8a",
+                                        hover_color="#4a0a6a",
+                                        border_color="#9a3aaa", text_color="white")
+        except Exception:
+            pass
+        try:
+            self._snark_label.configure(text="🎙 Session resumed",
+                                        text_color="#3EC941")
+        except Exception:
+            pass
+        log.info("Bondage mode resumed after safeword")
+
+    def _voice_adjust_height(self, which: str, direction: int):
+        """Move a height line up (direction=-1) or down (+1) by ~3% of frame height."""
+        fh = getattr(self, '_disp_frame_h', None) or self.rel_box.get('height', 300)
+        step = max(5, int(fh * 0.03))
+        current = self.heights.get(which)
+        if current is None:
+            # Line not set — place it at current head position
+            current = self.head_y
+        new_val = max(0, min(fh, current + direction * step))
+        self.heights[which] = new_val
+        self._disable_auto()
+        self._save_config()
+        names = {"Erect": "erect", "Flaccid": "flaccid", "Edging": "edging"}
+        arrow = "↑" if direction < 0 else "↓"
+        self._snark_label.configure(
+            text=f"🎙 {names.get(which, which)} {arrow}  ({int(new_val)}px)",
+            text_color="#c080ff")
+        log.info(f"Voice: {which} line → {new_val}px")
+
+    def _voice_set_lines(self):
+        """Auto-position all three lines spread across the current frame height."""
+        fh = getattr(self, '_disp_frame_h', None) or self.rel_box.get('height', 300)
+        self.heights["Edging"]  = int(fh * 0.20)
+        self.heights["Erect"]   = int(fh * 0.50)
+        self.heights["Flaccid"] = int(fh * 0.80)
+        self._disable_auto()
+        self._save_config()
+        self._snark_label.configure(text="🎙 Lines set — adjust with voice",
+                                    text_color="#c080ff")
+        log.info("Voice: set lines auto-positioned")
+
+    # ── source picker (voice "switch source") ─────────────────────────────────
+
+    def _voice_switch_source(self):
+        """Enumerate visible windows, show a numbered picker; user says 1-9."""
+        # Collect candidate windows — visible, non-minimised, titled, not us
+        candidates: list[tuple[int, str]] = []
+        try:
+            own_hwnd = int(self.root.wm_frame(), 0)
+        except Exception:
+            own_hwnd = 0
+
+        def _enum_cb(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            if win32gui.IsIconic(hwnd):          # minimised
+                return True
+            title = win32gui.GetWindowText(hwnd).strip()
+            if not title:
+                return True
+            # Skip ourselves
+            try:
+                if hwnd == own_hwnd:
+                    return True
+            except Exception:
+                pass
+            candidates.append((hwnd, title))
+            return True
+
+        try:
+            win32gui.EnumWindows(_enum_cb, None)
+        except Exception as e:
+            log.warning(f"switch source: EnumWindows failed: {e}")
+
+        if not candidates:
+            self._snark_label.configure(text="🎙 No windows found", text_color="#F5A623")
+            return
+
+        # Limit to 9 and store
+        self._source_picker_windows = candidates[:9]
+        self._source_picker_active  = True
+
+        # Close any stale picker window (without resetting state)
+        try:
+            if self._source_picker_win:
+                self._source_picker_win.destroy()
+        except Exception:
+            pass
+        self._source_picker_win = None
+
+        win = ctk.CTkToplevel(self.root)
+        win.title("🎙 Switch Source")
+        win.configure(fg_color="#0d0012")
+        win.attributes("-topmost", True)
+        win.resizable(False, False)
+        win.protocol("WM_DELETE_WINDOW", self._source_picker_close)
+        self._source_picker_win = win
+
+        _hfont = ctk.CTkFont(size=13, weight="bold")
+        _bfont = ctk.CTkFont(size=11)
+
+        ctk.CTkLabel(win, text="🎙 Switch Source",
+                     font=_hfont, text_color="#c080ff").pack(pady=(10, 4), padx=14)
+        ctk.CTkLabel(win, text='Say a number, or "cancel"',
+                     font=ctk.CTkFont(size=9, slant="italic"),
+                     text_color="#7a6a90").pack(pady=(0, 8))
+
+        scroll_frame = ctk.CTkScrollableFrame(win, fg_color="#0d0012",
+                                              border_width=0, height=300)
+        scroll_frame.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        for i, (hwnd, title) in enumerate(self._source_picker_windows, 1):
+            short = title if len(title) <= 44 else title[:41] + "…"
+            row = ctk.CTkFrame(scroll_frame, fg_color="#1e002c", corner_radius=6)
+            row.pack(fill=tk.X, padx=0, pady=2)
+            ctk.CTkLabel(row, text=f" {i} ", font=_hfont,
+                         text_color="#ff90ff", width=28, anchor="e").pack(side=tk.LEFT, padx=(6, 0))
+            ctk.CTkLabel(row, text=short, font=_bfont,
+                         text_color="#e0d0ff", anchor="w").pack(side=tk.LEFT, padx=6, pady=6)
+
+        ctk.CTkButton(win, text="Cancel",
+                      command=self._source_picker_close,
+                      font=ctk.CTkFont(size=10), height=28,
+                      fg_color="#2d1a40", hover_color="#4a0a6a",
+                      text_color="#c080ff", corner_radius=6,
+                      ).pack(pady=(6, 12), padx=12, fill=tk.X)
+
+        self._snark_label.configure(
+            text="🎙 Say 1-%d to pick source, 'cancel' to abort" % len(self._source_picker_windows),
+            text_color="#c080ff")
+        log.info(f"Source picker: {len(self._source_picker_windows)} windows listed")
+
+    def _source_picker_select(self, n: int):
+        """User said number n — switch feed to that window."""
+        if n < 1 or n > len(self._source_picker_windows):
+            return
+        hwnd, title = self._source_picker_windows[n - 1]
+        self._source_picker_close()
+
+        try:
+            wx, wy, wr, wb = win32gui.GetWindowRect(hwnd)
+            ww = wr - wx
+            wh = wb - wy
+            if ww <= 0 or wh <= 0:
+                raise ValueError("zero-size window")
+            new_rel_box = {
+                'x1': 0, 'y1': 0,
+                'x2': ww, 'y2': wh,
+                'width': ww, 'height': wh,
+            }
+            self.hwnd    = hwnd
+            self.rel_box = new_rel_box
+            self._reset_heights()
+            self._snark_label.configure(
+                text=f"🎙 Source → {title[:30]}… — say 'find head' to reanchor",
+                text_color="#3EC941")
+            log.info(f"Source switched to hwnd={hwnd} '{title}'")
+            # Kick grid so user can reanchor head hands-free
+            self._grid_start()
+        except Exception as e:
+            log.warning(f"switch source: failed to switch to hwnd={hwnd}: {e}")
+            self._snark_label.configure(text="🎙 Source switch failed", text_color="#FF4444")
+
+    def _source_picker_close(self):
+        """Dismiss the picker window and reset state."""
+        self._source_picker_active  = False
+        self._source_picker_windows = []
+        try:
+            if self._source_picker_win:
+                self._source_picker_win.destroy()
+        except Exception:
+            pass
+        self._source_picker_win = None
+
+    # ── grid navigator ────────────────────────────────────────────────────────
+
+    def _grid_start(self):
+        """Activate the grid overlay in head-reanchor mode."""
+        self._grid_active = True
+        self._grid_mode   = 'head'
+        self._grid_region = None
+        self._grid_depth  = 0
+        self._snark_label.configure(text="🎙 Grid — say 1-9 to zoom, 'here' to lock",
+                                    text_color="#c080ff")
+        log.info("Grid navigator: head mode started")
+
+    def _grid_start_exclude(self):
+        """Activate the grid overlay in exclusion-zone mode."""
+        self._grid_active = True
+        self._grid_mode   = 'exclude'
+        self._grid_region = None
+        self._grid_depth  = 0
+        self._snark_label.configure(
+            text="🎙 Exclude zone — say 1-9 to zoom, 'exclude'/'here' to add",
+            text_color="#ff8800")
+        log.info("Grid navigator: exclude mode started")
+
+    def _grid_zoom(self, cell: int):
+        """Zoom into cell 1-9 within the current grid region."""
+        fh = getattr(self, '_disp_frame_h', None) or self.rel_box.get('height', 300)
+        fw = getattr(self, '_disp_frame_w', None) or self.rel_box.get('width', 400)
+        if self._grid_region is None:
+            rx, ry, rw, rh = 0, 0, fw, fh
+        else:
+            rx, ry, rw, rh = self._grid_region
+        cw, ch = rw // 3, rh // 3
+        r, c   = divmod(cell - 1, 3)
+        self._grid_region = (rx + c * cw, ry + r * ch, cw, ch)
+        self._grid_depth  = min(self._grid_depth + 1, 3)
+        self._snark_label.configure(
+            text=f"🎙 Grid cell {cell} (zoom {self._grid_depth}) — say 'here' to lock, or zoom more",
+            text_color="#c080ff")
+        log.info(f"Grid zoom: cell={cell} region={self._grid_region} depth={self._grid_depth}")
+
+    def _grid_confirm(self):
+        """Confirm current grid region — reanchor head or add exclusion zone."""
+        if getattr(self, '_grid_mode', 'head') == 'exclude':
+            self._grid_confirm_exclude()
+            return
+        fh = getattr(self, '_disp_frame_h', None) or self.rel_box.get('height', 300)
+        fw = getattr(self, '_disp_frame_w', None) or self.rel_box.get('width', 400)
+        if self._grid_region is None:
+            rx, ry, rw, rh = 0, 0, fw, fh
+        else:
+            rx, ry, rw, rh = self._grid_region
+        cx = rx + rw // 2
+        cy = ry + rh // 2
+        # Build a small bbox around the confirmed point
+        # Use last known bbox size as reference, or fall back to 60×60
+        pw, ph = self.last_bbox[2], self.last_bbox[3]
+        new_bbox = (max(0, cx - pw // 2), max(0, cy - ph // 2), pw, ph)
+        # Reinit tracker — grab latest frame from queue, or capture fresh if empty
+        frame = None
+        try:
+            frame = self._frame_queue.get_nowait()
+            self._frame_queue.put_nowait(frame)  # put it back
+        except Exception:
+            pass
+        if frame is None:
+            frame = capture_window_region(self.hwnd, self.rel_box)
+        self._grid_active = False
+        self._grid_mode   = 'head'
+        self._grid_region = None
+        self._grid_depth  = 0
+        if frame is not None:
+            self.tracker.init(frame, new_bbox)
+            self.last_bbox   = new_bbox
+            self.head_y      = cy
+            self.tracking_ok = True
+            self._head_y_history.clear()
+            self._snark_label.configure(text="🎙 Head reselected ✓", text_color="#3EC941")
+            log.info(f"Grid confirm: head reanchored at ({cx}, {cy})")
+        else:
+            self._snark_label.configure(text="🎙 Confirm failed — feed gone?",
+                                        text_color="#FF4444")
+            log.warning("Grid confirm: could not grab frame to reinit tracker")
+
+    def _grid_confirm_exclude(self):
+        """Add current grid region as an exclusion zone."""
+        fh = getattr(self, '_disp_frame_h', None) or self.rel_box.get('height', 300)
+        fw = getattr(self, '_disp_frame_w', None) or self.rel_box.get('width', 400)
+        if self._grid_region is None:
+            rx, ry, rw, rh = 0, 0, fw, fh
+        else:
+            rx, ry, rw, rh = self._grid_region
+        self._grid_active = False
+        self._grid_mode   = 'head'
+        self._grid_region = None
+        self._grid_depth  = 0
+        self._exclusion_zones.append((rx, ry, rw, rh))
+        self._save_config()
+        n = len(self._exclusion_zones)
+        self._snark_label.configure(
+            text=f"🎙 Exclusion zone added ({n} total) — say 'clear exclude' to remove all",
+            text_color="#3EC941")
+        log.info(f"Voice: exclusion zone added ({rx},{ry},{rw},{rh}), total={n}")
+
+    def _grid_cancel(self):
+        """Reset grid back to full frame, or exit if already at depth 0."""
+        if self._grid_depth > 0:
+            self._grid_region = None
+            self._grid_depth  = 0
+            self._snark_label.configure(
+                text="🎙 Grid reset — say 1-9 to zoom", text_color="#c080ff")
+        else:
+            self._grid_active = False
+            self._snark_label.configure(text="🎙 Grid cancelled", text_color="#F5A623")
+        log.info("Grid cancel")
 
     def _display_frame(self, frame):
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -4626,20 +6778,19 @@ def show_splash() -> bool:
             img = Image.open(splash_path).convert("RGBA")
             W, H = img.size
 
-            # Stamp version number in the gap below the subtitle
-            draw = ImageDraw.Draw(img)
-            try:
-                f_ver = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 14)
-            except Exception:
-                f_ver = ImageFont.load_default()
-            ver_txt = f"v{VERSION}"
-            bb = draw.textbbox((0, 0), ver_txt, font=f_ver)
-            tx = (W - (bb[2] - bb[0])) // 2
-            draw.text((tx, 160), ver_txt, fill=(100, 100, 100, 255), font=f_ver)
-
             # Flatten RGBA onto the dark background colour (#0d0d0d = 13,13,13)
             bg_flat = Image.new("RGB", (W, H), (13, 13, 13))
             bg_flat.paste(img, mask=img.split()[3])
+
+            # Scale up for high-DPI / 4K displays
+            try:
+                dpi_scale = root.winfo_fpixels('1i') / 96.0
+            except Exception:
+                dpi_scale = 1.0
+            if dpi_scale > 1.05:
+                W = int(W * dpi_scale)
+                H = int(H * dpi_scale)
+                bg_flat = bg_flat.resize((W, H), Image.LANCZOS)
 
             photo = ImageTk.PhotoImage(bg_flat)
 
@@ -4649,28 +6800,40 @@ def show_splash() -> bool:
             lbl.pack()
 
             # Click-zone over the baked-in button in the PNG.
-            # Fractional positions from splash.png pixel scan.
-            _btn_y1 = int(0.873 * H)   # 511/585
-            _btn_y2 = int(0.971 * H)   # 568/585
-            _btn_x1 = int(0.059 * W)   # 35/591
-            _btn_x2 = int(0.941 * W)   # 556/591
+            # Fractions from make_splash.py: BX1=88,BX2=612,BY1=525,BY2=581 in 700x640
+            _btn_y1 = int(0.820 * H)   # 525/640
+            _btn_y2 = int(0.908 * H)   # 581/640
+            _btn_x1 = int(0.126 * W)   # 88/700
+            _btn_x2 = int(0.874 * W)   # 612/700
 
             def _in_btn(e):
                 return _btn_x1 <= e.x <= _btn_x2 and _btn_y1 <= e.y <= _btn_y2
 
-            lbl.bind("<Button-1>", lambda e: _start() if _in_btn(e) else None)
+            # Ko-fi footer click zone (full width, bottom ~28px of image)
+            _kofi_y1 = int(0.950 * H)
+            _kofi_y2 = H
+
+            def _in_kofi(e):
+                return _kofi_y1 <= e.y <= _kofi_y2
+
+            def _on_click(e):
+                if _in_btn(e):
+                    _start()
+                elif _in_kofi(e):
+                    webbrowser.open("https://ko-fi.com/stimstation")
+
+            lbl.bind("<Button-1>", _on_click)
             lbl.configure(cursor="arrow")
 
             # Blink: alternate between normal image and a bright-flash
             # version to draw attention to the Start button.
-            flash = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            flash = Image.new("RGBA", (W, H), (0, 0, 0, 0))
             flash_draw = ImageDraw.Draw(flash)
             flash_draw.rounded_rectangle(
                 [_btn_x1, _btn_y1, _btn_x2, _btn_y2],
                 radius=int(12 * W / 700), fill=(255, 255, 255, 60))
-            img_bright = Image.alpha_composite(img, flash)
-            bg_bright = Image.new("RGB", (W, H), (13, 13, 13))
-            bg_bright.paste(img_bright, mask=img_bright.split()[3])
+            bg_bright = bg_flat.copy().convert("RGBA")
+            bg_bright = Image.alpha_composite(bg_bright, flash).convert("RGB")
             photo_bright = ImageTk.PhotoImage(bg_bright)
 
             _blink_id = [None]
@@ -4684,7 +6847,7 @@ def show_splash() -> bool:
             # Hand cursor only when entering/leaving the button area
             _cursor = ["arrow"]
             def _on_motion(e):
-                want = "hand2" if _in_btn(e) else "arrow"
+                want = "hand2" if (_in_btn(e) or _in_kofi(e)) else "arrow"
                 if want != _cursor[0]:
                     _cursor[0] = want
                     lbl.configure(cursor=want)
@@ -4815,6 +6978,7 @@ def main():
     args = parser.parse_args()
 
     # Always log to a file, because the windowed exe has no console.
+    # Keep last 3 sessions: vse.log (current), vse.log.1, vse.log.2
     log_path = CONFIG_PATH.parent / "vse.log"
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4822,7 +6986,13 @@ def main():
         pass
     handlers = [logging.StreamHandler()]
     try:
-        fh = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+        from logging.handlers import RotatingFileHandler
+        fh = RotatingFileHandler(
+            log_path, mode="a", encoding="utf-8",
+            maxBytes=2 * 1024 * 1024,  # rotate at 2 MB (safety net)
+            backupCount=2,
+        )
+        fh.doRollover()  # always start a fresh file each launch; old ones shift to .1/.2
         handlers.append(fh)
     except Exception:
         pass
