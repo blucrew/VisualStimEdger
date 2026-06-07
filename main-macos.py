@@ -3,25 +3,29 @@ import sys
 import tempfile
 import ctypes
 
+WINDOWS = sys.platform == 'win32'
+
 # ── DPI awareness (must be set before any GUI / coordinate work) ──────────
 # Without this, Windows virtualises coordinates on multi-monitor setups with
 # scaling enabled, causing mss, win32gui and tkinter to disagree on positions.
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PROCESS_PER_MONITOR_DPI_AWARE
-except Exception:
+if WINDOWS:
     try:
-        ctypes.windll.user32.SetProcessDPIAware()     # fallback for older Windows
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # PROCESS_PER_MONITOR_DPI_AWARE
     except Exception:
-        pass
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()     # fallback for older Windows
+        except Exception:
+            pass
 
 # Redirect comtypes generated-interface cache to a writable location BEFORE
 # pycaw/comtypes are imported.  In a frozen exe (PyInstaller or Nuitka) the
 # bundled comtypes/gen directory is read-only, so COM interface generation
 # silently fails and device enumeration returns nothing.
-import comtypes.gen as _comtypes_gen
-_cache = os.path.join(tempfile.gettempdir(), "VisualStimEdger_comtypes_gen")
-os.makedirs(_cache, exist_ok=True)
-_comtypes_gen.__path__ = [_cache]
+if WINDOWS:
+    import comtypes.gen as _comtypes_gen
+    _cache = os.path.join(tempfile.gettempdir(), "VisualStimEdger_comtypes_gen")
+    os.makedirs(_cache, exist_ok=True)
+    _comtypes_gen.__path__ = [_cache]
 
 import cv2
 import numpy as np
@@ -42,17 +46,19 @@ import argparse
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 from mss import mss
-import win32gui
-import win32ui
-import win32con
-import win32api
+if WINDOWS:
+    import win32gui
+    import win32ui
+    import win32con
+    import win32api
 import json
 import datetime
 import pathlib
 import queue
 from collections import deque
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from comtypes import CLSCTX_ALL
+if WINDOWS:
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    from comtypes import CLSCTX_ALL
 
 import atexit
 
@@ -204,7 +210,10 @@ PREEMPT_UNLOCK = {
     "Expert": 0,      # predictive from the first moment
 }
 
-CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
+if WINDOWS:
+    CONFIG_PATH = pathlib.Path(os.environ.get("APPDATA", ".")) / "VisualStimEdger" / "config.json"
+else:
+    CONFIG_PATH = pathlib.Path.home() / "Library" / "Application Support" / "VisualStimEdger" / "config.json"
 
 HEAD_Y_SMOOTH      = 8    # rolling average window for head Y before volume logic
 CUM_DETECT_MAXLEN  = 300  # ~10 s of head-Y samples at 30 fps for cum detection
@@ -237,8 +246,18 @@ class RegionSelector:
         # tkinter geometry strings like "+-1920+0" cannot express correctly).
         self.root.geometry(f"{w}x{h}+0+0")
         self.root.update_idletasks()
-        ctypes.windll.user32.MoveWindow(
-            self.root.winfo_id(), self.offset_x, self.offset_y, w, h, True)
+        if WINDOWS:
+            try:
+                ctypes.windll.user32.MoveWindow(
+                    self.root.winfo_id(), self.offset_x, self.offset_y, w, h, True)
+            except Exception:
+                pass
+        else:
+            try:
+                self.root.lift()
+                self.root.focus_force()
+            except Exception:
+                pass
         self.root.config(cursor="cross")
 
         self.canvas = tk.Canvas(self.root, cursor="cross", bg="black",
@@ -299,6 +318,14 @@ def select_region(parent=None):
     x1, y1 = selector.region['left'], selector.region['top']
     x2, y2 = x1 + selector.region['width'], y1 + selector.region['height']
     
+
+    if not WINDOWS:
+        abs_box = {
+            'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+            'width': x2 - x1, 'height': y2 - y1,
+        }
+        return None, abs_box
+
     cx = (x1 + x2) // 2
     cy = (y1 + y2) // 2
     
@@ -319,6 +346,15 @@ def select_region(parent=None):
 
 def capture_window_region(hwnd, rel_box):
     try:
+        if not WINDOWS or hwnd is None:
+            monitor = {
+                "top":    int(rel_box.get('y1', rel_box.get('top', 0))),
+                "left":   int(rel_box.get('x1', rel_box.get('left', 0))),
+                "width":  int(rel_box['width']),
+                "height": int(rel_box['height']),
+            }
+            grab = _get_sct().grab(monitor)
+            return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
         left, top, right, bot = win32gui.GetWindowRect(hwnd)
         w = right - left
         h = bot - top
@@ -380,6 +416,21 @@ def capture_window_region(hwnd, rel_box):
         return None
 
 def select_head(frame_cv, parent=None):
+    if not WINDOWS:
+        display = frame_cv.copy()
+        cv2.putText(display,
+                    "Step 2: Draw a box around the target. ENTER/SPACE to confirm, C to cancel.",
+                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+        win_name = "Step 2: Select Target"
+        cv2.namedWindow(win_name, cv2.WINDOW_AUTOSIZE)
+        roi = cv2.selectROI(win_name, display, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow(win_name)
+        cv2.waitKey(1)
+        rx, ry, rw, rh = roi
+        if rx + rw > frame_cv.shape[1] * 1.1 or ry + rh > frame_cv.shape[0] * 1.1:
+            rx, ry, rw, rh = int(rx * 0.5), int(ry * 0.5), int(rw * 0.5), int(rh * 0.5)
+        return (rx, ry, rw, rh)
+
     if parent is None:
         root = tk.Tk()
         is_main = True
@@ -1181,309 +1232,327 @@ def _pycaw_flow(d):
         return -1
 
 
-def list_audio_devices():
-    """Return all render (output) devices.
+if WINDOWS:
+    def list_audio_devices():
+        """Return all render (output) devices.
 
-    Tries pycaw first (real IMMDevice objects = reliable volume control).
-    Falls back to sounddevice if pycaw finds nothing usable.
-    """
-    # Level 1: pycaw — enumerate named devices, prefer render (flow=0)
-    try:
-        all_devs = AudioUtilities.GetAllDevices()
-        named = [d for d in all_devs if d._dev is not None and d.FriendlyName]
-        render = [d for d in named if _pycaw_flow(d) == 0]
-        result = render if render else named   # if flow is broken, show all named
-        if result:
-            log.info(f"WinAudio: pycaw found {len(result)} device(s) "
-                     f"({'render-only' if render else 'flow unavailable, all named'})")
-            return result
-    except Exception as e:
-        log.error(f"WinAudio: GetAllDevices failed: {e}")
-
-    # Level 2: sounddevice (names only — _resolve_dev fuzzy-matches to pycaw for control)
-    try:
-        import sounddevice as sd
-        devs = [_SounddeviceAudioDevice(d['name'])
-                for d in sd.query_devices()
-                if d['max_output_channels'] > 0]
-        if devs:
-            log.info(f"WinAudio: sounddevice found {len(devs)} output device(s)")
-            return devs
-    except Exception as e:
-        log.error(f"WinAudio: sounddevice failed: {e}")
-
-    # Level 3: default speakers only
-    try:
-        default = AudioUtilities.GetSpeakers()
-        if default:
-            log.info("WinAudio: using default speakers fallback")
-            return [_DefaultAudioDevice(default)]
-    except Exception as e:
-        log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
-
-    return []
-
-
-class WindowsAudioClient:
-    def __init__(self, device):
-        self._volume_interface = None
-        dev = device._dev
-
-        # _dev is None when we came via the sounddevice fallback path.
-        # Try to find the matching IMMDevice by name; fall back to default speakers.
-        if dev is None:
-            dev = self._resolve_dev(device.FriendlyName)
-
-        if dev is None:
-            log.error(f"WinAudio: could not resolve IMMDevice for '{device.FriendlyName}'")
-            return
-        try:
-            interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            self._volume_interface = interface.QueryInterface(IAudioEndpointVolume)
-            log.info(f"WinAudio: connected to {device.FriendlyName}")
-        except Exception as e:
-            log.error(f"WinAudio: failed to activate device: {e}")
-
-    @staticmethod
-    def _resolve_dev(name):
-        """Find an IMMDevice for the given friendly name.
-
-        Tries in order:
-        1. Exact match against GetAllDevices() FriendlyName.
-        2. Substring match — handles PortAudio vs WASAPI naming differences
-           e.g. "Speakers (Realtek)" vs "Speakers (Realtek(R) Audio)".
-        3. First available render device.
-        4. GetSpeakers() — default output endpoint.
+        Tries pycaw first (real IMMDevice objects = reliable volume control).
+        Falls back to sounddevice if pycaw finds nothing usable.
         """
+        # Level 1: pycaw — enumerate named devices, prefer render (flow=0)
         try:
-            all_devs = [d for d in AudioUtilities.GetAllDevices()
-                        if d._dev is not None and d.FriendlyName]
-            nl = name.lower()
-            # Pass 1: exact match
-            for d in all_devs:
-                if d.FriendlyName == name:
-                    return d._dev
-            # Pass 2: substring — one is contained in the other
-            for d in all_devs:
-                fl = d.FriendlyName.lower()
-                if nl in fl or fl in nl:
-                    log.debug(f"WinAudio: fuzzy matched '{name}' → '{d.FriendlyName}'")
-                    return d._dev
-            # Pass 3: prefix match — sounddevice truncates names at ~31 chars
-            prefix = nl[:31]
-            for d in all_devs:
-                if d.FriendlyName.lower().startswith(prefix):
-                    log.debug(f"WinAudio: prefix matched '{name}' → '{d.FriendlyName}'")
-                    return d._dev
-            # Pass 4: first render device
-            render = [d for d in all_devs if _pycaw_flow(d) == 0]
-            if render:
-                log.debug(f"WinAudio: no name match, using first render device '{render[0].FriendlyName}'")
-                return render[0]._dev
+            all_devs = AudioUtilities.GetAllDevices()
+            named = [d for d in all_devs if d._dev is not None and d.FriendlyName]
+            render = [d for d in named if _pycaw_flow(d) == 0]
+            result = render if render else named   # if flow is broken, show all named
+            if result:
+                log.info(f"WinAudio: pycaw found {len(result)} device(s) "
+                         f"({'render-only' if render else 'flow unavailable, all named'})")
+                return result
         except Exception as e:
-            log.debug(f"WinAudio: _resolve_dev enumeration error: {e}")
-        # Pass 4: default speakers
-        try:
-            return AudioUtilities.GetSpeakers()
-        except Exception:
-            return None
+            log.error(f"WinAudio: GetAllDevices failed: {e}")
 
-    @property
-    def connected(self):
-        return self._volume_interface is not None
-
-    def get_volume(self):
+        # Level 2: sounddevice (names only — _resolve_dev fuzzy-matches to pycaw for control)
         try:
-            return self._volume_interface.GetMasterVolumeLevelScalar()
-        except Exception:
-            return None
-
-    def set_volume(self, vol, floor=0.0, ceiling=1.0):
-        vol = max(floor, min(ceiling, vol))
-        try:
-            self._volume_interface.SetMasterVolumeLevelScalar(vol, None)
+            import sounddevice as sd
+            devs = [_SounddeviceAudioDevice(d['name'])
+                    for d in sd.query_devices()
+                    if d['max_output_channels'] > 0]
+            if devs:
+                log.info(f"WinAudio: sounddevice found {len(devs)} output device(s)")
+                return devs
         except Exception as e:
-            log.warning(f"WinAudio: set_volume failed: {e}")
+            log.error(f"WinAudio: sounddevice failed: {e}")
 
-    def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
-        cur = self.get_volume()
-        if cur is None:
-            return
-        self.set_volume(cur + delta, floor=floor, ceiling=ceiling)
-
-
-def check_for_update(on_update_available):
-    """Runs in a background thread. Calls on_update_available(latest_version, url) if a newer release exists."""
-    try:
-        resp = requests.get(
-            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-            timeout=5,
-            headers={"Accept": "application/vnd.github+json"}
-        )
-        if resp.status_code != 200:
-            return
-        data = resp.json()
-        latest = data.get("tag_name", "").lstrip("v")
-        url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
+        # Level 3: default speakers only
         try:
-            # Guard against pre-release tags like "1.2.0-beta.1"
-            latest_tuple  = tuple(int(x) for x in latest.split(".")[:3] if x.isdigit())
-            current_tuple = tuple(int(x) for x in VERSION.split(".")[:3] if x.isdigit())
-            if latest_tuple and latest_tuple > current_tuple:
-                on_update_available(latest, url)
+            default = AudioUtilities.GetSpeakers()
+            if default:
+                log.info("WinAudio: using default speakers fallback")
+                return [_DefaultAudioDevice(default)]
+        except Exception as e:
+            log.error(f"WinAudio: GetSpeakers fallback also failed: {e}")
+
+        return []
+
+
+    class WindowsAudioClient:
+        def __init__(self, device):
+            self._volume_interface = None
+            dev = device._dev
+
+            # _dev is None when we came via the sounddevice fallback path.
+            # Try to find the matching IMMDevice by name; fall back to default speakers.
+            if dev is None:
+                dev = self._resolve_dev(device.FriendlyName)
+
+            if dev is None:
+                log.error(f"WinAudio: could not resolve IMMDevice for '{device.FriendlyName}'")
+                return
+            try:
+                interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                self._volume_interface = interface.QueryInterface(IAudioEndpointVolume)
+                log.info(f"WinAudio: connected to {device.FriendlyName}")
+            except Exception as e:
+                log.error(f"WinAudio: failed to activate device: {e}")
+
+        @staticmethod
+        def _resolve_dev(name):
+            """Find an IMMDevice for the given friendly name.
+
+            Tries in order:
+            1. Exact match against GetAllDevices() FriendlyName.
+            2. Substring match — handles PortAudio vs WASAPI naming differences
+               e.g. "Speakers (Realtek)" vs "Speakers (Realtek(R) Audio)".
+            3. First available render device.
+            4. GetSpeakers() — default output endpoint.
+            """
+            try:
+                all_devs = [d for d in AudioUtilities.GetAllDevices()
+                            if d._dev is not None and d.FriendlyName]
+                nl = name.lower()
+                # Pass 1: exact match
+                for d in all_devs:
+                    if d.FriendlyName == name:
+                        return d._dev
+                # Pass 2: substring — one is contained in the other
+                for d in all_devs:
+                    fl = d.FriendlyName.lower()
+                    if nl in fl or fl in nl:
+                        log.debug(f"WinAudio: fuzzy matched '{name}' → '{d.FriendlyName}'")
+                        return d._dev
+                # Pass 3: prefix match — sounddevice truncates names at ~31 chars
+                prefix = nl[:31]
+                for d in all_devs:
+                    if d.FriendlyName.lower().startswith(prefix):
+                        log.debug(f"WinAudio: prefix matched '{name}' → '{d.FriendlyName}'")
+                        return d._dev
+                # Pass 4: first render device
+                render = [d for d in all_devs if _pycaw_flow(d) == 0]
+                if render:
+                    log.debug(f"WinAudio: no name match, using first render device '{render[0].FriendlyName}'")
+                    return render[0]._dev
+            except Exception as e:
+                log.debug(f"WinAudio: _resolve_dev enumeration error: {e}")
+            # Pass 4: default speakers
+            try:
+                return AudioUtilities.GetSpeakers()
+            except Exception:
+                return None
+
+        @property
+        def connected(self):
+            return self._volume_interface is not None
+
+        def get_volume(self):
+            try:
+                return self._volume_interface.GetMasterVolumeLevelScalar()
+            except Exception:
+                return None
+
+        def set_volume(self, vol, floor=0.0, ceiling=1.0):
+            vol = max(floor, min(ceiling, vol))
+            try:
+                self._volume_interface.SetMasterVolumeLevelScalar(vol, None)
+            except Exception as e:
+                log.warning(f"WinAudio: set_volume failed: {e}")
+
+        def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
+            cur = self.get_volume()
+            if cur is None:
+                return
+            self.set_volume(cur + delta, floor=floor, ceiling=ceiling)
+
+
+    def check_for_update(on_update_available):
+        """Runs in a background thread. Calls on_update_available(latest_version, url) if a newer release exists."""
+        try:
+            resp = requests.get(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                timeout=5,
+                headers={"Accept": "application/vnd.github+json"}
+            )
+            if resp.status_code != 200:
+                return
+            data = resp.json()
+            latest = data.get("tag_name", "").lstrip("v")
+            url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
+            try:
+                # Guard against pre-release tags like "1.2.0-beta.1"
+                latest_tuple  = tuple(int(x) for x in latest.split(".")[:3] if x.isdigit())
+                current_tuple = tuple(int(x) for x in VERSION.split(".")[:3] if x.isdigit())
+                if latest_tuple and latest_tuple > current_tuple:
+                    on_update_available(latest, url)
+            except Exception:
+                pass
         except Exception:
-            pass
-    except Exception:
-        pass  # silently ignore — no internet, rate limit, etc.
+            pass  # silently ignore — no internet, rate limit, etc.
 
 
-# ── OBS overlay WebSocket server ──────────────────────────────────────────────
-import asyncio, struct, hashlib, base64, socket as _socket
+    # ── OBS overlay WebSocket server ──────────────────────────────────────────────
+    import asyncio, struct, hashlib, base64, socket as _socket
 
-class OverlayServer:
-    """Tiny WebSocket server that broadcasts JSON state to OBS browser sources."""
-    PORT = 12347
+    class OverlayServer:
+        """Tiny WebSocket server that broadcasts JSON state to OBS browser sources."""
+        PORT = 12347
 
-    def __init__(self):
-        self._clients: list = []
-        self._lock = threading.Lock()
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
+        def __init__(self):
+            self._clients: list = []
+            self._lock = threading.Lock()
+            self._loop: asyncio.AbstractEventLoop | None = None
+            self._thread: threading.Thread | None = None
 
-    def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        def start(self):
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
 
-    def _run(self):
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+        def _run(self):
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._serve())
 
-    async def _serve(self):
-        try:
-            server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
-        except OSError as e:
-            log.error(f"Overlay: cannot bind port {self.PORT} ({e}) — OBS overlay disabled")
-            return
-        log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
-        async with server:
-            await server.serve_forever()
+        async def _serve(self):
+            try:
+                server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
+            except OSError as e:
+                log.error(f"Overlay: cannot bind port {self.PORT} ({e}) — OBS overlay disabled")
+                return
+            log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
+            async with server:
+                await server.serve_forever()
 
-    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        try:
-            request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5)
-            headers = request.decode(errors='ignore')
-            key = None
-            for line in headers.split('\r\n'):
-                if line.lower().startswith('sec-websocket-key:'):
-                    key = line.split(':', 1)[1].strip()
+        async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+            try:
+                request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5)
+                headers = request.decode(errors='ignore')
+                key = None
+                for line in headers.split('\r\n'):
+                    if line.lower().startswith('sec-websocket-key:'):
+                        key = line.split(':', 1)[1].strip()
 
-            if not key:
-                # Regular HTTP request — serve overlay.html
-                html_path = os.path.join(os.path.dirname(__file__), "overlay.html")
-                try:
-                    with open(html_path, 'rb') as f:
-                        body = f.read()
-                    writer.write(
-                        b'HTTP/1.1 200 OK\r\n'
-                        b'Content-Type: text/html; charset=utf-8\r\n'
-                        b'Access-Control-Allow-Origin: *\r\n'
-                        b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
-                        b'Connection: close\r\n\r\n' + body
-                    )
-                except FileNotFoundError:
-                    writer.write(b'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+                if not key:
+                    # Regular HTTP request — serve overlay.html
+                    html_path = os.path.join(os.path.dirname(__file__), "overlay.html")
+                    try:
+                        with open(html_path, 'rb') as f:
+                            body = f.read()
+                        writer.write(
+                            b'HTTP/1.1 200 OK\r\n'
+                            b'Content-Type: text/html; charset=utf-8\r\n'
+                            b'Access-Control-Allow-Origin: *\r\n'
+                            b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
+                            b'Connection: close\r\n\r\n' + body
+                        )
+                    except FileNotFoundError:
+                        writer.write(b'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+                    await writer.drain()
+                    writer.close()
+                    return
+
+                # WebSocket upgrade
+                accept = base64.b64encode(
+                    hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
+                ).decode()
+                writer.write(
+                    f'HTTP/1.1 101 Switching Protocols\r\n'
+                    f'Upgrade: websocket\r\n'
+                    f'Connection: Upgrade\r\n'
+                    f'Sec-WebSocket-Accept: {accept}\r\n\r\n'.encode()
+                )
                 await writer.drain()
+            except Exception:
                 writer.close()
                 return
 
-            # WebSocket upgrade
-            accept = base64.b64encode(
-                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
-            ).decode()
-            writer.write(
-                f'HTTP/1.1 101 Switching Protocols\r\n'
-                f'Upgrade: websocket\r\n'
-                f'Connection: Upgrade\r\n'
-                f'Sec-WebSocket-Accept: {accept}\r\n\r\n'.encode()
-            )
-            await writer.drain()
-        except Exception:
-            writer.close()
-            return
-
-        with self._lock:
-            self._clients.append(writer)
-        try:
-            # Keep connection alive — read and discard client frames
-            while True:
-                data = await reader.read(1024)
-                if not data:
-                    break
-        except Exception:
-            pass
-        finally:
             with self._lock:
-                if writer in self._clients:
-                    self._clients.remove(writer)
+                self._clients.append(writer)
             try:
-                writer.close()
+                # Keep connection alive — read and discard client frames
+                while True:
+                    data = await reader.read(1024)
+                    if not data:
+                        break
             except Exception:
                 pass
-
-    def broadcast(self, payload: str):
-        """Send a text WebSocket frame to all connected clients."""
-        if not self._loop:
-            return
-        frame = self._ws_text_frame(payload)
-
-        async def _send():
-            # Snapshot the client list under the lock, then do all async I/O
-            # outside it — awaiting drain() while holding a threading.Lock can
-            # stall other threads trying to acquire the lock.
-            with self._lock:
-                clients = list(self._clients)
-            dead = []
-            for w in clients:
-                try:
-                    w.write(frame)
-                    await w.drain()
-                except Exception:
-                    dead.append(w)
-            if dead:
+            finally:
                 with self._lock:
-                    for w in dead:
-                        if w in self._clients:
-                            self._clients.remove(w)
+                    if writer in self._clients:
+                        self._clients.remove(writer)
+                try:
+                    writer.close()
+                except Exception:
+                    pass
 
-        asyncio.run_coroutine_threadsafe(_send(), self._loop)
+        def broadcast(self, payload: str):
+            """Send a text WebSocket frame to all connected clients."""
+            if not self._loop:
+                return
+            frame = self._ws_text_frame(payload)
 
-    @staticmethod
-    def _ws_text_frame(text: str) -> bytes:
-        data = text.encode()
-        length = len(data)
-        if length < 126:
-            header = struct.pack('!BB', 0x81, length)
-        elif length < 65536:
-            header = struct.pack('!BBH', 0x81, 126, length)
-        else:
-            header = struct.pack('!BBQ', 0x81, 127, length)
-        return header + data
+            async def _send():
+                # Snapshot the client list under the lock, then do all async I/O
+                # outside it — awaiting drain() while holding a threading.Lock can
+                # stall other threads trying to acquire the lock.
+                with self._lock:
+                    clients = list(self._clients)
+                dead = []
+                for w in clients:
+                    try:
+                        w.write(frame)
+                        await w.drain()
+                    except Exception:
+                        dead.append(w)
+                if dead:
+                    with self._lock:
+                        for w in dead:
+                            if w in self._clients:
+                                self._clients.remove(w)
 
-    def stop(self):
-        if self._loop:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            asyncio.run_coroutine_threadsafe(_send(), self._loop)
+
+        @staticmethod
+        def _ws_text_frame(text: str) -> bytes:
+            data = text.encode()
+            length = len(data)
+            if length < 126:
+                header = struct.pack('!BB', 0x81, length)
+            elif length < 65536:
+                header = struct.pack('!BBH', 0x81, 126, length)
+            else:
+                header = struct.pack('!BBQ', 0x81, 127, length)
+            return header + data
+
+        def stop(self):
+            if self._loop:
+                self._loop.call_soon_threadsafe(self._loop.stop)
 
 
-# ── MP3 player ────────────────────────────────────────────────────────────────
-try:
-    import miniaudio as _miniaudio
-    _MINIAUDIO_OK = True
-except ImportError:
-    _miniaudio = None
-    _MINIAUDIO_OK = False
-    log.warning("miniaudio not installed — MP3 mode unavailable")
+    # ── MP3 player ────────────────────────────────────────────────────────────────
+    try:
+        import miniaudio as _miniaudio
+        _MINIAUDIO_OK = True
+    except ImportError:
+        _miniaudio = None
+        _MINIAUDIO_OK = False
+        log.warning("miniaudio not installed — MP3 mode unavailable")
 
+
+else:
+    def list_audio_devices():
+        return []
+
+    class WindowsAudioClient:
+        def __init__(self, device):
+            self._connected = False
+        @property
+        def connected(self):
+            return False
+        def get_volume(self):
+            return None
+        def set_volume(self, vol, floor=0.0, ceiling=1.0):
+            pass
+        def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
+            pass
 
 class MusicPlayer:
     """Streams audio files with per-chunk volume control via miniaudio."""
@@ -6953,6 +7022,8 @@ _SINGLE_INSTANCE_MUTEX = None  # held for process lifetime
 def _acquire_single_instance() -> bool:
     """Create a named Windows mutex so only one VSE can run at once.
     Returns True if we got the lock, False if another instance owns it."""
+    if not WINDOWS:
+        return True
     global _SINGLE_INSTANCE_MUTEX
     try:
         import ctypes
@@ -7009,31 +7080,95 @@ def main():
 
     if not _acquire_single_instance():
         log.warning("Another VisualStimEdger instance is already running — exiting")
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(
-                None,
-                "VisualStimEdger is already running.\n\nClose the existing window first.",
-                "VisualStimEdger",
-                0x40,  # MB_ICONINFORMATION
-            )
-        except Exception:
-            pass
+        if WINDOWS:
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    None,
+                    "VisualStimEdger is already running.\n\nClose the existing window first.",
+                    "VisualStimEdger",
+                    0x40,  # MB_ICONINFORMATION
+                )
+            except Exception:
+                pass
         return
 
-    if not show_splash():
-        log.info("Splash closed without starting — exiting")
-        return
+    if WINDOWS:
+        if not show_splash():
+            log.info("Splash closed without starting — exiting")
+            return
+        hwnd, rel_box = select_region()
+        if not hwnd or rel_box['width'] <= 10 or rel_box['height'] <= 10:
+            log.warning("Invalid region selected — exiting")
+            return
+        initial_frame = capture_window_region(hwnd, rel_box)
+        if initial_frame is None:
+            log.error("Failed to capture window — ensure it is not fully minimised")
+            return
+    else:
+        # macOS: pick monitor, screenshot it, draw region with cv2.selectROI
+        import tkinter as _tk
+        _root = _tk.Tk()
+        _root.withdraw()
+        with mss() as _sct:
+            monitors = _sct.monitors[1:]  # skip monitors[0] (virtual combined)
+        if not monitors:
+            log.error("No monitors found via mss")
+            return
+        chosen_mon = monitors[0]
+        if len(monitors) > 1:
+            # Simple Tk dialog to pick monitor
+            _sel = [0]
+            _dlg = _tk.Toplevel(_root)
+            _dlg.title("Select Monitor")
+            _tk.Label(_dlg, text="Which monitor is your video feed on?",
+                      font=("Arial", 14)).pack(padx=20, pady=10)
+            for _i, _m in enumerate(monitors):
+                _tk.Button(
+                    _dlg, text=f"Monitor {_i+1}  ({_m['width']}×{_m['height']})",
+                    font=("Arial", 12),
+                    command=lambda idx=_i: (_sel.__setitem__(0, idx), _dlg.destroy())
+                ).pack(fill="x", padx=20, pady=3)
+            _root.wait_window(_dlg)
+            chosen_mon = monitors[_sel[0]]
+        _root.destroy()
 
-    hwnd, rel_box = select_region()
-    if not hwnd or rel_box['width'] <= 10 or rel_box['height'] <= 10:
-        log.warning("Invalid region selected — exiting")
-        return
+        log.info(f"macOS: screenshotting monitor {chosen_mon}")
+        with mss() as _sct:
+            _grab = _sct.grab(chosen_mon)
+        _ss = cv2.cvtColor(np.array(_grab), cv2.COLOR_BGRA2BGR)
+        _h, _w = _ss.shape[:2]
 
-    initial_frame = capture_window_region(hwnd, rel_box)
-    if initial_frame is None:
-        log.error("Failed to capture window — ensure it is not fully minimised")
-        return
+        # Draw capture region
+        _display = _ss.copy()
+        cv2.putText(_display, "Step 1: Draw box around your video feed. ENTER/SPACE to confirm.",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        _win = "Step 1: Select Region"
+        cv2.namedWindow(_win, cv2.WINDOW_AUTOSIZE)
+        _roi = cv2.selectROI(_win, _display, fromCenter=False, showCrosshair=False)
+        cv2.destroyWindow(_win)
+        cv2.waitKey(1)
+
+        _rx, _ry, _rw, _rh = _roi
+        if _rw < 10 or _rh < 10:
+            log.warning("Invalid region selected — exiting")
+            return
+        # Handle Retina 2× scaling
+        if _rx + _rw > _w * 1.1 or _ry + _rh > _h * 1.1:
+            _rx, _ry, _rw, _rh = int(_rx*0.5), int(_ry*0.5), int(_rw*0.5), int(_rh*0.5)
+
+        rel_box = {
+            'x1': chosen_mon['left'] + _rx,
+            'y1': chosen_mon['top']  + _ry,
+            'x2': chosen_mon['left'] + _rx + _rw,
+            'y2': chosen_mon['top']  + _ry + _rh,
+            'width': _rw, 'height': _rh,
+        }
+        hwnd = None
+        initial_frame = _ss[_ry:_ry+_rh, _rx:_rx+_rw].copy()
+        if initial_frame is None or initial_frame.size == 0:
+            log.error("Failed to capture region from screenshot")
+            return
 
     bbox = select_head(initial_frame)
     if bbox[2] == 0 or bbox[3] == 0:

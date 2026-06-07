@@ -25,7 +25,7 @@ for pkg in ('pycaw', 'sounddevice', 'customtkinter', 'miniaudio', 'bleak'):
     hiddenimports += tmp[2]
 
 a = Analysis(
-    ['main.py'],
+    ['VSE.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
