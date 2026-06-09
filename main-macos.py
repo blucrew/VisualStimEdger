@@ -182,7 +182,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1042,11 +1042,12 @@ class VoiceEngine:
         "find head", "set lines",
         "switch source", "resume session",
         "clear exclude",
+        "let me cum",
     ]
     _WORDS = [
         "came", "cumming", "pause", "resume",
         "select", "here", "confirm", "cancel", "again", "back",
-        "exclude",
+        "exclude", "please",
         "up", "down", "left", "right",
         "one", "two", "three", "four", "five",
         "six", "seven", "eight", "nine",
@@ -3490,6 +3491,9 @@ class App:
         cooldown_left = self._letmecum_cooldown_until - time.time()
         if cooldown_left > 0:
             self._letmecum_btn.configure(text=f"Wait {int(cooldown_left)}s...")
+            # Voice users can't see the button — give them the snark too
+            self._snark_label.configure(text=f"Not yet. Wait {int(cooldown_left)}s.",
+                                        text_color="#F5A623")
             return
 
         aggr = self.aggr_var.get()
@@ -3624,23 +3628,13 @@ class App:
         self._letmecum_btn.configure(text="RUINED 😈", fg_color="#6600cc",
                                      hover_color="#440088")
 
-        # t=0: 88%
-        self._ruin_set_volume(0.88)
+        # Longer, crueler 5-pulse climb (85 → 90 → 94 → 97 → 100) with the
+        # final 100% held ~1.3s before the hard cut. ~5.7s total.
+        # t=0: 85%
+        self._ruin_set_volume(0.85)
 
-        def _step2():
-            # t=600ms: cut to 0%
-            self._ruin_set_volume(0.0)
-        def _step3():
-            # t=1000ms: 94%
-            self._ruin_set_volume(0.94)
-        def _step4():
-            # t=1600ms: cut to 0%
-            self._ruin_set_volume(0.0)
-        def _step5():
-            # t=2100ms: 100%
-            self._ruin_set_volume(1.0)
-        def _step6():
-            # t=2700ms: HARD CUT to 0, lock, show ruin phrase, start cooldown
+        def _final():
+            # HARD CUT to 0, lock, show ruin phrase, start cooldown
             self._ruin_set_volume(0.0)
             cooldown = self._RUIN_COOLDOWN.get(aggr, 90)
             self._letmecum_cooldown_until = time.time() + cooldown
@@ -3651,11 +3645,23 @@ class App:
             # Transition button into cooldown state
             self.root.after(1000, lambda: self._tick_letmecum_cooldown())
 
-        self.root.after(600,  _step2)
-        self.root.after(1000, _step3)
-        self.root.after(1600, _step4)
-        self.root.after(2100, _step5)
-        self.root.after(2700, _step6)
+        # (delay_ms, volume) — None volume marks the terminal hard cut
+        ruin_steps = [
+            ( 700, 0.0),
+            (1200, 0.90),
+            (1900, 0.0),
+            (2400, 0.94),
+            (3100, 0.0),
+            (3600, 0.97),
+            (4300, 0.0),
+            (4800, 1.00),
+            (6100, None),   # held 100% for ~1.3s, then hard cut
+        ]
+        for delay, vol in ruin_steps:
+            if vol is None:
+                self.root.after(delay, _final)
+            else:
+                self.root.after(delay, lambda v=vol: self._ruin_set_volume(v))
 
     def _on_cum(self, source="click"):
         """Hard stop — volume to 0; refractory countdown then auto-resume.
@@ -6301,6 +6307,7 @@ class App:
             ctk.CTkFrame(f, height=1, fg_color="#2d1a40").pack(fill=tk.X, padx=10, pady=(6, 8))
 
         _section("🎬  Session", [
+            ('"let me cum" / "please"', "beg — rolls the dice (grant / deny / ruin)"),
             ('"came" / "cumming"',      "log that you came"),
             ('"pause"',                 "freeze tracking"),
             ('"resume"',                "unfreeze tracking"),
@@ -6415,6 +6422,11 @@ class App:
         # ── regular session commands ──────────────────────────────────────────
         if kw in ("came", "cumming"):
             self._on_cum(source="voice")
+            return
+        if kw in ("let me cum", "please"):
+            # Beg for permission — fires the same roll as the button
+            # (grant / denial / Evil-Mode ruin all apply). Cooldown is respected.
+            self._on_letmecum()
             return
         if kw == "pause":
             if not self.tracking_paused:
@@ -6835,6 +6847,14 @@ def show_splash() -> bool:
     def _start():
         nonlocal started
         started = True
+        # Cancel the splash blink timer before teardown so its pending
+        # after() callback doesn't fire on a destroyed interp ("invalid
+        # command name ..._blink" on stderr).
+        try:
+            if _blink_id[0]:
+                root.after_cancel(_blink_id[0])
+        except Exception:
+            pass
         root.destroy()
 
     # ── PNG path (bundled resource) ────────────────────────────────────────────
@@ -6908,6 +6928,14 @@ def show_splash() -> bool:
             _blink_id = [None]
             blink_state = [False]
             def _blink():
+                # Bail if the splash was torn down (Start button / X) before
+                # this pending after() fired — avoids "invalid command name
+                # ..._blink" noise on stderr.
+                try:
+                    if not lbl.winfo_exists():
+                        return
+                except Exception:
+                    return
                 blink_state[0] = not blink_state[0]
                 lbl.configure(image=photo_bright if blink_state[0] else photo)
                 _blink_id[0] = root.after(700, _blink)
@@ -7077,6 +7105,23 @@ def main():
 
     log.info(f"VisualStimEdger v{VERSION} starting")
     log.info(f"Log file: {log_path}")
+
+    # Native-crash tracer. A segfault in a C extension (OpenCV, Tk, pycaw)
+    # kills the process below Python's level — no traceback in vse.log. faulthandler
+    # installs OS-level fault handlers (SIGSEGV/SIGFPE/SIGABRT/SIGILL) that dump the
+    # current Python stack of every thread to this file at the moment of the fault.
+    # The file is kept OPEN for the whole process lifetime (handler writes to the fd).
+    try:
+        import faulthandler
+        crash_path = CONFIG_PATH.parent / "vse_crash.log"
+        # Keep a module-level ref so the file isn't GC'd / closed.
+        main._crash_fp = open(crash_path, "a", encoding="utf-8", buffering=1)
+        main._crash_fp.write(f"\n===== session start v{VERSION} =====\n")
+        main._crash_fp.flush()
+        faulthandler.enable(file=main._crash_fp, all_threads=True)
+        log.info(f"faulthandler armed → {crash_path}")
+    except Exception as e:
+        log.warning(f"faulthandler setup failed: {e}")
 
     if not _acquire_single_instance():
         log.warning("Another VisualStimEdger instance is already running — exiting")
