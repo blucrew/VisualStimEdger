@@ -28,9 +28,28 @@ if WINDOWS:
     _comtypes_gen.__path__ = [_cache]
 
 import cv2
+# OpenCV shares one internal parallel_for thread pool across the whole process.
+# VSE calls cv2 from two threads at once — cv2.cvtColor on the background capture
+# thread (capture_window_region) and cv2.dnn/TrackerCSRT on the main thread. That
+# concurrency corrupts the shared pool's internals and crashes with an access
+# violation in MSVCP140.dll (no Python traceback). Disabling OpenCV's internal
+# threading makes every cv2 call run synchronously on its calling thread with no
+# shared mutable pool — eliminating the race. Negligible perf cost at our frame sizes.
+try:
+    cv2.setNumThreads(0)
+except Exception:
+    pass
 import numpy as np
 import time
 import threading
+
+# All OpenCV calls funnel through this lock. cv2 shares process-global state (memory
+# allocator, error state) that is NOT safe for concurrent calls from different threads.
+# VSE calls cv2 from the background capture thread (cv2.cvtColor in capture_window_region)
+# AND the main thread (dnn/TrackerCSRT/drawing) at ~30fps each — the overlap corrupts the
+# shared allocator and crashes with an access violation in MSVCP140.dll (no Python trace).
+# Holding this lock around every cv2 call makes capture and processing mutually exclusive.
+_CV2_LOCK = threading.Lock()
 import webbrowser
 import requests
 import ssl
@@ -182,7 +201,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -364,7 +383,7 @@ def capture_window_region(hwnd, rel_box):
         # ── PrintWindow (works for occluded windows) ──────────────────────────
         # GDI objects are cleaned up in finally so they never leak, even when
         # GetBitmapBits / reshape / cvtColor throw on bad GPU-window bitmaps.
-        hwndDC = saveDC = mfcDC = saveBitMap = None
+        hwndDC = saveDC = mfcDC = saveBitMap = oldBitMap = None
         frame = None
         try:
             hwndDC    = win32gui.GetWindowDC(hwnd)
@@ -372,7 +391,12 @@ def capture_window_region(hwnd, rel_box):
             saveDC    = mfcDC.CreateCompatibleDC()
             saveBitMap = win32ui.CreateBitmap()
             saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-            saveDC.SelectObject(saveBitMap)
+            # Keep the DC's original bitmap so we can deselect saveBitMap before
+            # deleting it — DeleteObject on a STILL-SELECTED bitmap silently fails
+            # and leaks the GDI handle. At 30 fps that exhausts the per-process GDI
+            # limit in minutes, after which DWM throws wil::ResultException storms
+            # and the process dies. (Prior "fix" 9b2dc74 missed the deselect.)
+            oldBitMap = saveDC.SelectObject(saveBitMap)
 
             result = ctypes.windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
             if result == 1:
@@ -380,15 +404,29 @@ def capture_window_region(hwnd, rel_box):
                 bmpstr  = saveBitMap.GetBitmapBits(True)
                 img     = np.frombuffer(bmpstr, dtype=np.uint8).reshape(
                               (bmpinfo['bmHeight'], bmpinfo['bmWidth'], 4))
-                frame   = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                with _CV2_LOCK:
+                    frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         except Exception as e:
             log.debug(f"PrintWindow failed: {e}")
             frame = None
         finally:
-            if saveBitMap: win32gui.DeleteObject(saveBitMap.GetHandle())
-            if saveDC:     saveDC.DeleteDC()
-            if mfcDC:      mfcDC.DeleteDC()
-            if hwndDC:     win32gui.ReleaseDC(hwnd, hwndDC)
+            # Deselect saveBitMap (restore original) BEFORE deleting it, then tear
+            # down in reverse order of creation so every GDI object actually frees.
+            if saveDC and oldBitMap:
+                try: saveDC.SelectObject(oldBitMap)
+                except Exception: pass
+            if saveBitMap:
+                try: win32gui.DeleteObject(saveBitMap.GetHandle())
+                except Exception: pass
+            if saveDC:
+                try: saveDC.DeleteDC()
+                except Exception: pass
+            if mfcDC:
+                try: mfcDC.DeleteDC()
+                except Exception: pass
+            if hwndDC:
+                try: win32gui.ReleaseDC(hwnd, hwndDC)
+                except Exception: pass
 
         # ── Crop the PrintWindow result ───────────────────────────────────────
         if frame is not None and frame.size > 0 and frame.any():
@@ -409,7 +447,8 @@ def capture_window_region(hwnd, rel_box):
             "height": rel_box['height'],
         }
         grab = _get_sct().grab(monitor)
-        return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
+        with _CV2_LOCK:
+            return cv2.cvtColor(np.array(grab), cv2.COLOR_BGRA2BGR)
 
     except Exception as e:
         log.debug(f"capture_window_region: {e}")
@@ -5086,8 +5125,9 @@ class App:
             heavy = (self.aggr_var.get() == "Expert" or self._proc_frame_count % 2 == 1)
 
             if heavy:
-                self._maybe_yolo_reanchor(frame)
-                self._run_tracker(frame)
+                with _CV2_LOCK:
+                    self._maybe_yolo_reanchor(frame)
+                    self._run_tracker(frame)
                 if self._auto_mode and self.tracking_ok:
                     self._auto_feed(self.head_y)
 
@@ -5109,9 +5149,10 @@ class App:
 
             # Video display — throttled to _DISPLAY_INTERVAL_MS
             if now - self._last_display_time >= self._DISPLAY_INTERVAL_MS / 1000:
-                self._draw_height_lines(frame)
-                self._draw_tracking_overlay(frame)
-                self._display_frame(frame)
+                with _CV2_LOCK:
+                    self._draw_height_lines(frame)
+                    self._draw_tracking_overlay(frame)
+                    self._display_frame(frame)
                 self._last_display_time = now
 
         except Exception:
@@ -6262,16 +6303,16 @@ class App:
         self._show_voice_cheatsheet()
 
     def _show_voice_cheatsheet(self):
-        """Pop a closeable reference window listing all voice commands."""
+        """Pop a closeable reference window listing all voice commands (2-col grid)."""
         ref = ctk.CTkToplevel(self.root)
         ref.title("🎙 Voice Commands")
         ref.configure(fg_color="#0d0012")
         ref.attributes("-topmost", True)
-        ref.resizable(False, True)
-        ref.geometry("400x920")
+        ref.resizable(False, False)
+        ref.geometry("780x600")
 
         _head = ctk.CTkFont(size=13, weight="bold")
-        _body = ctk.CTkFont(size=13)
+        _body = ctk.CTkFont(size=12)
         _dim  = ctk.CTkFont(size=11)
         P = 12
 
@@ -6279,74 +6320,88 @@ class App:
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#c080ff").pack(pady=(P, 6))
 
-        # ── Safeword — extra-large ────────────────────────────────────────────
+        # ── Safeword — full-width banner ──────────────────────────────────────
         sw_card = ctk.CTkFrame(ref, fg_color="#2a0008", corner_radius=8,
                                border_width=2, border_color="#cc0000")
         sw_card.pack(fill=tk.X, padx=P, pady=(0, 8))
-        ctk.CTkLabel(sw_card, text="🛑  SAFEWORD",
-                     font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color="#ff6060").pack(pady=(10, 2))
-        ctk.CTkLabel(sw_card, text=f'"{self._bondage_safeword}"',
-                     font=ctk.CTkFont(size=30, weight="bold"),
-                     text_color="#ff2020").pack(pady=(0, 4))
-        ctk.CTkLabel(sw_card, text="hard stop — mic stays on, say 'resume session' to continue",
-                     font=_dim, text_color="#ff8080", wraplength=360).pack(pady=(0, 10))
+        sw_inner = ctk.CTkFrame(sw_card, fg_color="transparent")
+        sw_inner.pack(pady=8)
+        ctk.CTkLabel(sw_inner, text="🛑 SAFEWORD",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color="#ff6060").pack(side=tk.LEFT, padx=(0, 12))
+        ctk.CTkLabel(sw_inner, text=f'"{self._bondage_safeword}"',
+                     font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color="#ff2020").pack(side=tk.LEFT, padx=(0, 12))
+        ctk.CTkLabel(sw_inner,
+                     text="hard stop — mic stays on.\nsay \"resume session\" to continue",
+                     font=_dim, text_color="#ff8080", justify="left").pack(side=tk.LEFT)
 
-        def _section(title, rows, title_color="#c080ff"):
-            f = ctk.CTkFrame(ref, fg_color="#1e002c", corner_radius=6)
-            f.pack(fill=tk.X, padx=P, pady=3)
+        # ── 2-column grid of sections ─────────────────────────────────────────
+        grid = ctk.CTkFrame(ref, fg_color="transparent")
+        grid.pack(fill=tk.BOTH, expand=True, padx=P, pady=(0, 4))
+        grid.grid_columnconfigure(0, weight=1, uniform="col")
+        grid.grid_columnconfigure(1, weight=1, uniform="col")
+
+        def _section(r, c, title, rows, title_color="#c080ff"):
+            f = ctk.CTkFrame(grid, fg_color="#1e002c", corner_radius=6)
+            f.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
             ctk.CTkLabel(f, text=title, font=_head,
-                         text_color=title_color).pack(anchor="w", padx=10, pady=(8, 2))
+                         text_color=title_color).pack(anchor="w", padx=10, pady=(8, 4))
             for cmd, desc in rows:
                 row = ctk.CTkFrame(f, fg_color="transparent")
-                row.pack(fill=tk.X, padx=10, pady=2)
+                row.pack(fill=tk.X, padx=10, pady=1)
                 ctk.CTkLabel(row, text=cmd, font=_body, text_color="#e0d0ff",
-                             width=200, anchor="w").pack(side=tk.LEFT)
+                             width=170, anchor="w").pack(side=tk.LEFT)
                 ctk.CTkLabel(row, text=desc, font=_dim, text_color="#9a8aaa",
-                             anchor="w").pack(side=tk.LEFT)
+                             anchor="w", justify="left").pack(side=tk.LEFT)
             ctk.CTkFrame(f, height=1, fg_color="#2d1a40").pack(fill=tk.X, padx=10, pady=(6, 8))
 
-        _section("🎬  Session", [
-            ('"let me cum" / "please"', "beg — rolls the dice (grant / deny / ruin)"),
+        _section(0, 0, "🎬  Session", [
+            ('"let me cum" / "please"', "beg — rolls the dice"),
             ('"came" / "cumming"',      "log that you came"),
             ('"pause"',                 "freeze tracking"),
             ('"resume"',                "unfreeze tracking"),
         ])
 
-        _section("📏  Height lines", [
-            ('"erect up" / "erect down"',     "±3% frame height"),
-            ('"flaccid up" / "flaccid down"', "±3% frame height"),
-            ('"edging up" / "edging down"',   "±3% frame height"),
-            ('"set lines"',                   "auto-place all three"),
+        _section(0, 1, "📏  Height lines", [
+            ('"erect up / down"',       "±3% frame height"),
+            ('"flaccid up / down"',     "±3% frame height"),
+            ('"edging up / down"',      "±3% frame height"),
+            ('"set lines"',             "auto-place all three"),
         ])
 
-        _section("🎯  Head tracking", [
-            ('"find head"',                       "open grid navigator"),
-            ('"one" – "nine"',                    "zoom into that cell"),
-            ('"here" / "select" / "confirm"',     "lock on & reanchor"),
-            ('"back" / "cancel" / "again"',       "reset grid / exit"),
+        _section(1, 0, "🎯  Head tracking", [
+            ('"find head"',             "open grid navigator"),
+            ('"one" – "nine"',          "zoom into that cell"),
+            ('"here" / "select"',       "lock on & reanchor"),
+            ('"back" / "cancel"',       "reset grid / exit"),
         ])
 
-        _section("🚫  Exclusion zones", [
-            ('"exclude"',                         "open grid to mark a zone to ignore"),
-            ('"one" – "nine"',                    "zoom into that cell"),
-            ('"exclude" / "here"',                "add that region as exclusion zone"),
-            ('"back" / "cancel"',                 "exit without adding"),
-            ('"clear exclude"',                   "remove all exclusion zones"),
+        _section(1, 1, "🚫  Exclusion zones", [
+            ('"exclude"',               "open grid to mark a zone"),
+            ('"one" – "nine"',          "zoom into that cell"),
+            ('"exclude" / "here"',      "add that region"),
+            ('"back" / "cancel"',       "exit without adding"),
+            ('"clear exclude"',         "remove all zones"),
         ], title_color="#ff8800")
 
-        _section("🖥️  Feed source", [
+        _section(2, 0, "🖥️  Feed source", [
             ('"switch source"',         "list open windows 1–9"),
             ('"one" – "nine"',          "switch to that window"),
             ('"cancel" / "again"',      "abort picker"),
         ])
 
+        _section(2, 1, "🛑  Standby", [
+            ('safeword (above)',        "hard stop into standby"),
+            ('"resume session"',        "leave standby, continue"),
+        ], title_color="#ff6060")
+
         ctk.CTkButton(ref, text="Got it — close",
                       command=ref.destroy,
-                      font=ctk.CTkFont(size=13, weight="bold"), height=36,
+                      font=ctk.CTkFont(size=13, weight="bold"), height=34,
                       fg_color="#2d1a40", hover_color="#4a0a6a",
                       text_color="#c080ff", corner_radius=6,
-                      ).pack(pady=(6, P), padx=P, fill=tk.X)
+                      ).pack(pady=(2, P), padx=P, fill=tk.X)
 
     def _stop_bondage_mode(self):
         """Deactivate bondage mode cleanly (full stop, including engine)."""
@@ -7122,6 +7177,80 @@ def main():
         log.info(f"faulthandler armed → {crash_path}")
     except Exception as e:
         log.warning(f"faulthandler setup failed: {e}")
+
+    # Windows native minidump on unhandled SEH (e.g. access violation in cv2 /
+    # vosk / portaudio). faulthandler is signal()-based and does NOT catch SEH,
+    # which is why our crashes leave no trace. SetUnhandledExceptionFilter +
+    # MiniDumpWriteDump runs on the faulting thread and writes a .dmp containing
+    # every thread's stack — enough for `!analyze -v` to name the faulting module.
+    # No admin / registry needed. Defensive: any failure just logs and continues.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            dump_dir = CONFIG_PATH.parent / "crashdumps"
+            dump_dir.mkdir(parents=True, exist_ok=True)
+
+            kernel32 = ctypes.windll.kernel32
+            dbghelp  = ctypes.windll.dbghelp
+
+            class _MEI(ctypes.Structure):
+                _fields_ = [
+                    ("ThreadId",          wintypes.DWORD),
+                    ("ExceptionPointers", ctypes.c_void_p),
+                    ("ClientPointers",    wintypes.BOOL),
+                ]
+
+            _FILTER = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)
+
+            kernel32.GetCurrentProcess.restype   = wintypes.HANDLE
+            kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+            kernel32.GetCurrentThreadId.restype  = wintypes.DWORD
+            kernel32.CreateFileW.restype  = wintypes.HANDLE
+            kernel32.CreateFileW.argtypes = [
+                wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+            dbghelp.MiniDumpWriteDump.restype  = wintypes.BOOL
+            dbghelp.MiniDumpWriteDump.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD, wintypes.HANDLE, wintypes.DWORD,
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+
+            GENERIC_WRITE         = 0x40000000
+            CREATE_ALWAYS         = 2
+            FILE_ATTRIBUTE_NORMAL = 0x80
+            INVALID_HANDLE_VALUE  = ctypes.c_void_p(-1).value
+            DUMP_TYPE             = 0x00000000 | 0x00001000  # Normal | WithThreadInfo
+            EXCEPTION_CONTINUE_SEARCH = 0
+
+            _pid       = kernel32.GetCurrentProcessId()
+            _dump_path = str(dump_dir / f"vse-crash-{_pid}.dmp")
+
+            @_FILTER
+            def _on_unhandled(exc_ptrs):
+                try:
+                    h = kernel32.CreateFileW(_dump_path, GENERIC_WRITE, 0, None,
+                                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, None)
+                    if h and h != INVALID_HANDLE_VALUE:
+                        mei = _MEI()
+                        mei.ThreadId          = kernel32.GetCurrentThreadId()
+                        mei.ExceptionPointers = exc_ptrs
+                        mei.ClientPointers    = False
+                        dbghelp.MiniDumpWriteDump(
+                            kernel32.GetCurrentProcess(), _pid, h,
+                            DUMP_TYPE, ctypes.byref(mei), None, None)
+                        kernel32.CloseHandle(h)
+                except Exception:
+                    pass
+                return EXCEPTION_CONTINUE_SEARCH  # let WER/normal teardown proceed
+
+            kernel32.SetUnhandledExceptionFilter(_on_unhandled)
+            # Keep refs alive for the whole process lifetime.
+            main._mdump_cb   = _on_unhandled
+            main._mdump_path = _dump_path
+            log.info(f"minidump handler armed → {_dump_path}")
+        except Exception as e:
+            log.warning(f"minidump handler setup failed: {e}")
 
     if not _acquire_single_instance():
         log.warning("Another VisualStimEdger instance is already running — exiting")
