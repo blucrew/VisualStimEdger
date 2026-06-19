@@ -1429,154 +1429,6 @@ if WINDOWS:
             pass  # silently ignore — no internet, rate limit, etc.
 
 
-    # ── OBS overlay WebSocket server ──────────────────────────────────────────────
-    import asyncio, struct, hashlib, base64, socket as _socket
-
-    class OverlayServer:
-        """Tiny WebSocket server that broadcasts JSON state to OBS browser sources."""
-        PORT = 12347
-
-        def __init__(self):
-            self._clients: list = []
-            self._lock = threading.Lock()
-            self._loop: asyncio.AbstractEventLoop | None = None
-            self._thread: threading.Thread | None = None
-
-        def start(self):
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
-
-        def _run(self):
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self._serve())
-
-        async def _serve(self):
-            try:
-                server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
-            except OSError as e:
-                log.error(f"Overlay: cannot bind port {self.PORT} ({e}) — OBS overlay disabled")
-                return
-            log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
-            async with server:
-                await server.serve_forever()
-
-        async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-            try:
-                request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5)
-                headers = request.decode(errors='ignore')
-                key = None
-                for line in headers.split('\r\n'):
-                    if line.lower().startswith('sec-websocket-key:'):
-                        key = line.split(':', 1)[1].strip()
-
-                if not key:
-                    # Regular HTTP request — serve overlay.html
-                    html_path = os.path.join(os.path.dirname(__file__), "overlay.html")
-                    try:
-                        with open(html_path, 'rb') as f:
-                            body = f.read()
-                        writer.write(
-                            b'HTTP/1.1 200 OK\r\n'
-                            b'Content-Type: text/html; charset=utf-8\r\n'
-                            b'Access-Control-Allow-Origin: *\r\n'
-                            b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
-                            b'Connection: close\r\n\r\n' + body
-                        )
-                    except FileNotFoundError:
-                        writer.write(b'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
-                    await writer.drain()
-                    writer.close()
-                    return
-
-                # WebSocket upgrade
-                accept = base64.b64encode(
-                    hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
-                ).decode()
-                writer.write(
-                    f'HTTP/1.1 101 Switching Protocols\r\n'
-                    f'Upgrade: websocket\r\n'
-                    f'Connection: Upgrade\r\n'
-                    f'Sec-WebSocket-Accept: {accept}\r\n\r\n'.encode()
-                )
-                await writer.drain()
-            except Exception:
-                writer.close()
-                return
-
-            with self._lock:
-                self._clients.append(writer)
-            try:
-                # Keep connection alive — read and discard client frames
-                while True:
-                    data = await reader.read(1024)
-                    if not data:
-                        break
-            except Exception:
-                pass
-            finally:
-                with self._lock:
-                    if writer in self._clients:
-                        self._clients.remove(writer)
-                try:
-                    writer.close()
-                except Exception:
-                    pass
-
-        def broadcast(self, payload: str):
-            """Send a text WebSocket frame to all connected clients."""
-            if not self._loop:
-                return
-            frame = self._ws_text_frame(payload)
-
-            async def _send():
-                # Snapshot the client list under the lock, then do all async I/O
-                # outside it — awaiting drain() while holding a threading.Lock can
-                # stall other threads trying to acquire the lock.
-                with self._lock:
-                    clients = list(self._clients)
-                dead = []
-                for w in clients:
-                    try:
-                        w.write(frame)
-                        await w.drain()
-                    except Exception:
-                        dead.append(w)
-                if dead:
-                    with self._lock:
-                        for w in dead:
-                            if w in self._clients:
-                                self._clients.remove(w)
-
-            asyncio.run_coroutine_threadsafe(_send(), self._loop)
-
-        @staticmethod
-        def _ws_text_frame(text: str) -> bytes:
-            data = text.encode()
-            length = len(data)
-            if length < 126:
-                header = struct.pack('!BB', 0x81, length)
-            elif length < 65536:
-                header = struct.pack('!BBH', 0x81, 126, length)
-            else:
-                header = struct.pack('!BBQ', 0x81, 127, length)
-            return header + data
-
-        def stop(self):
-            if self._loop:
-                self._loop.call_soon_threadsafe(self._loop.stop)
-
-
-    # ── MP3 player ────────────────────────────────────────────────────────────────
-    try:
-        import miniaudio as _miniaudio
-        _MINIAUDIO_OK = True
-    except ImportError:
-        _miniaudio = None
-        _MINIAUDIO_OK = False
-        log.warning("miniaudio not installed — MP3 mode unavailable")
-
-
 else:
     def list_audio_devices():
         return []
@@ -1593,6 +1445,154 @@ else:
             pass
         def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
             pass
+
+# ── OBS overlay WebSocket server ──────────────────────────────────────────────
+import asyncio, struct, hashlib, base64, socket as _socket
+
+class OverlayServer:
+    """Tiny WebSocket server that broadcasts JSON state to OBS browser sources."""
+    PORT = 12347
+
+    def __init__(self):
+        self._clients: list = []
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self):
+        try:
+            server = await asyncio.start_server(self._handle, '127.0.0.1', self.PORT)
+        except OSError as e:
+            log.error(f"Overlay: cannot bind port {self.PORT} ({e}) — OBS overlay disabled")
+            return
+        log.info(f"Overlay WS server listening on ws://127.0.0.1:{self.PORT}")
+        async with server:
+            await server.serve_forever()
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        try:
+            request = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=5)
+            headers = request.decode(errors='ignore')
+            key = None
+            for line in headers.split('\r\n'):
+                if line.lower().startswith('sec-websocket-key:'):
+                    key = line.split(':', 1)[1].strip()
+
+            if not key:
+                # Regular HTTP request — serve overlay.html
+                html_path = os.path.join(os.path.dirname(__file__), "overlay.html")
+                try:
+                    with open(html_path, 'rb') as f:
+                        body = f.read()
+                    writer.write(
+                        b'HTTP/1.1 200 OK\r\n'
+                        b'Content-Type: text/html; charset=utf-8\r\n'
+                        b'Access-Control-Allow-Origin: *\r\n'
+                        b'Content-Length: ' + str(len(body)).encode() + b'\r\n'
+                        b'Connection: close\r\n\r\n' + body
+                    )
+                except FileNotFoundError:
+                    writer.write(b'HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+                await writer.drain()
+                writer.close()
+                return
+
+            # WebSocket upgrade
+            accept = base64.b64encode(
+                hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
+            ).decode()
+            writer.write(
+                f'HTTP/1.1 101 Switching Protocols\r\n'
+                f'Upgrade: websocket\r\n'
+                f'Connection: Upgrade\r\n'
+                f'Sec-WebSocket-Accept: {accept}\r\n\r\n'.encode()
+            )
+            await writer.drain()
+        except Exception:
+            writer.close()
+            return
+
+        with self._lock:
+            self._clients.append(writer)
+        try:
+            # Keep connection alive — read and discard client frames
+            while True:
+                data = await reader.read(1024)
+                if not data:
+                    break
+        except Exception:
+            pass
+        finally:
+            with self._lock:
+                if writer in self._clients:
+                    self._clients.remove(writer)
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    def broadcast(self, payload: str):
+        """Send a text WebSocket frame to all connected clients."""
+        if not self._loop:
+            return
+        frame = self._ws_text_frame(payload)
+
+        async def _send():
+            # Snapshot the client list under the lock, then do all async I/O
+            # outside it — awaiting drain() while holding a threading.Lock can
+            # stall other threads trying to acquire the lock.
+            with self._lock:
+                clients = list(self._clients)
+            dead = []
+            for w in clients:
+                try:
+                    w.write(frame)
+                    await w.drain()
+                except Exception:
+                    dead.append(w)
+            if dead:
+                with self._lock:
+                    for w in dead:
+                        if w in self._clients:
+                            self._clients.remove(w)
+
+        asyncio.run_coroutine_threadsafe(_send(), self._loop)
+
+    @staticmethod
+    def _ws_text_frame(text: str) -> bytes:
+        data = text.encode()
+        length = len(data)
+        if length < 126:
+            header = struct.pack('!BB', 0x81, length)
+        elif length < 65536:
+            header = struct.pack('!BBH', 0x81, 126, length)
+        else:
+            header = struct.pack('!BBQ', 0x81, 127, length)
+        return header + data
+
+    def stop(self):
+        if self._loop:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
+
+# ── MP3 player ────────────────────────────────────────────────────────────────
+try:
+    import miniaudio as _miniaudio
+    _MINIAUDIO_OK = True
+except ImportError:
+    _miniaudio = None
+    _MINIAUDIO_OK = False
+    log.warning("miniaudio not installed — MP3 mode unavailable")
+
 
 class MusicPlayer:
     """Streams audio files with per-chunk volume control via miniaudio."""
