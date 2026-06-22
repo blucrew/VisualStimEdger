@@ -195,7 +195,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.3"
+VERSION = "1.8.4"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -1962,6 +1962,7 @@ class App:
         self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
         self._ruin_count     = 0
         self._exclusion_zones: list[tuple[int,int,int,int]] = []   # (x,y,w,h) in frame px
+        self._reanchor_lock = False   # True = freeze tracker on user's target, no YOLO reanchor
         self._ez_drawing    = False   # True while user is dragging a new zone
         self._ez_disp_start = None   # (x,y) display coords of drag start
         self._ez_disp_end   = None   # (x,y) display coords of current drag end
@@ -2165,6 +2166,22 @@ class App:
                       **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         ctk.CTkButton(_vbr, text="Re-Select Head", command=self._reselect_head,
                       **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+        # Lock toggle — freeze the tracker on the user's target (no auto-reanchor).
+        # Best with a high-contrast target like a plug/electrode that the tracker
+        # would otherwise get pulled toward; keeps it from "skipping" off the box.
+        self._lock_track_var = tk.BooleanVar(value=self._reanchor_lock)
+        _lock_sw = ctk.CTkSwitch(
+            vid_col, text="🔒 Lock on target (no auto-reanchor)",
+            variable=self._lock_track_var, command=self._on_lock_track_toggle,
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            switch_width=28, switch_height=14,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+            progress_color=self._C_ACCENT)
+        _lock_sw.pack(anchor="w", pady=(4, 0))
+        Tooltip(_lock_sw, "Stop YOLO from re-anchoring the tracker. Draw your box on a "
+                          "stable, high-contrast spot (a plug/electrode is ideal) and it "
+                          "stays put. Turn off to let auto-reacquire find the head again.")
 
         # height buttons — stacked right of video
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent", width=180, height=260)
@@ -2866,6 +2883,7 @@ class App:
                 "ruin_odds": self._ruin_odds,
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
+                "reanchor_lock":        self._reanchor_lock,
                 "auto_cum_enabled":     self._auto_cum_enabled,
                 "auto_cum_delay":       self._auto_cum_delay,
                 "auto_cum_sensitivity": self._auto_cum_sensitivity,
@@ -3006,6 +3024,10 @@ class App:
                 self._ruin_phrases = data["ruin_phrases"]
             if "exclusion_zones" in data and isinstance(data["exclusion_zones"], list):
                 self._exclusion_zones = [tuple(z) for z in data["exclusion_zones"]]
+            if "reanchor_lock" in data:
+                self._reanchor_lock = bool(data["reanchor_lock"])
+                if hasattr(self, "_lock_track_var"):
+                    self._lock_track_var.set(self._reanchor_lock)
             if "auto_cum_enabled" in data:
                 self._auto_cum_enabled = bool(data["auto_cum_enabled"])
             if "auto_cum_delay" in data:
@@ -5092,7 +5114,26 @@ class App:
             interval = 100 if self.tracking_paused else 33  # ~30fps poll
             self.root.after(interval, self._update_frame)
 
+    def _on_lock_track_toggle(self):
+        """Freeze/unfreeze YOLO reanchoring (the 'Lock on target' switch)."""
+        self._reanchor_lock = bool(self._lock_track_var.get())
+        self._save_config()
+        if self._reanchor_lock:
+            self.yolo_candidate = None   # drop any pending reanchor candidate
+            self._snark_label.configure(
+                text="🔒 Locked on target — won't auto-reanchor",
+                text_color="#F5A623")
+            log.info("Tracking lock ON — YOLO reanchoring disabled")
+        else:
+            self._snark_label.configure(
+                text="🔓 Auto-reanchor back on", text_color="#F5A623")
+            log.info("Tracking lock OFF — YOLO reanchoring enabled")
+
     def _maybe_yolo_reanchor(self, frame):
+        # Lock mode: user has a stable target (e.g. a metal plug/electrode) and
+        # wants it left alone — skip all YOLO reanchoring so it can't be stolen.
+        if self._reanchor_lock:
+            return
         interval = self._YOLO_INTERVAL_LOST if not self.tracking_ok else self._YOLO_INTERVAL_LOCKED
         self.yolo_frame_counter += 1
         if not self.detector.available or self.yolo_frame_counter < interval:
