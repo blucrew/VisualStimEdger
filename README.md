@@ -25,6 +25,31 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+> **Windows** uses `requirements.txt` + `VSE.py` (above). That manifest includes
+> `pywin32`/`pycaw`, which are Windows-only — so it will **not** install on macOS or
+> Linux, and `VSE.py` itself imports Windows COM at startup. Use the cross-platform
+> source instead:
+
+### macOS / Linux (run from source)
+
+`VSE.py` is the Windows build. On macOS and Linux, run **`main-macos.py`** (the same
+code with every Windows-only import guarded) and install the non-Windows deps:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-linux.txt    # macOS: requirements-macos.txt
+python main-macos.py
+```
+
+- **Restim, xToys, and the MP3 player work.** "Windows Audio" volume control (pycaw)
+  is Windows-only — on macOS/Linux use Restim/xToys/MP3 or your system mixer.
+- **Linux screen capture needs X11.** Under Wayland the feed may come up black; run an
+  Xorg session (or XWayland).
+- macOS users can also grab the pre-packaged source zip from
+  [Releases](https://github.com/blucrew/VisualStimEdger/releases/latest) and just
+  double-click `VisualStimEdger.command`.
+
 ---
 
 ## Setup

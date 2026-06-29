@@ -1,0 +1,20 @@
+# VisualStimEdger — Linux dependencies.
+#
+# Linux uses the same non-Windows dependency set as macOS (no pywin32 / pycaw /
+# comtypes — those are Windows-only and have no Linux wheels, which is what makes
+# `requirements.txt` fail on Linux). This file just points at the macOS set so the
+# two can never drift apart.
+#
+# Run the cross-platform source, NOT VSE.py (that's the Windows build and imports
+# comtypes at module level):
+#     python3 -m venv .venv
+#     source .venv/bin/activate
+#     pip install -r requirements-linux.txt
+#     python main-macos.py
+#
+# Notes:
+#   • Restim, xToys, and the MP3 player work on Linux. "Windows Audio" volume
+#     control (pycaw) does not — use Restim/xToys/MP3, or your system mixer.
+#   • Screen capture needs X11. Under Wayland the grab may fail; run an Xorg
+#     session (or XWayland) if the video feed comes up black.
+-r requirements-macos.txt
