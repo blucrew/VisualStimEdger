@@ -3,6 +3,16 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+
+# Release scripts hold a GitHub token — NEVER commit them
+release_*.py
+# Large / local-only artifacts
+models/vosk-*/
+tools/
+*.log
+myeasylog.log
+DEVLOG-*.md
+SETUP-GUIDE.md
 build/
 dist/
 dist_nuitka/
