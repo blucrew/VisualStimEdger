@@ -77,15 +77,31 @@ import atexit
 
 log = logging.getLogger("VisualStimEdger")
 
-_sct = None
+_sct_tls = threading.local()
 
 def _get_sct():
-    """Lazy singleton mss instance, closed cleanly on process exit."""
-    global _sct
-    if _sct is None:
-        _sct = mss()
-        atexit.register(_sct.close)
-    return _sct
+    """Per-THREAD mss instance.
+
+    mss is NOT thread-safe — it stashes its GDI bitmap/DC handles in thread-local
+    storage. A single shared instance used from both the capture thread (the mss
+    fallback in capture_window_region, hit every frame for GPU-composited source
+    windows where PrintWindow returns black) and the main thread (region select,
+    re-select, grid) corrupts those handles cross-thread, which can hard-kill the
+    process below Python — no traceback, no WER. Giving each thread its own mss
+    keeps the handles thread-confined.
+    """
+    sct = getattr(_sct_tls, "sct", None)
+    if sct is None:
+        sct = mss()
+        _sct_tls.sct = sct
+        atexit.register(_close_sct, sct)
+    return sct
+
+def _close_sct(sct):
+    try:
+        sct.close()
+    except Exception:
+        pass
 
 
 def resource_path(relative):
@@ -202,6 +218,20 @@ RESTIM_PORT = 12346
 TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
+
+# Erect-zone recovery: without this the sweet-zone only nudges volume UP in
+# proportion to how fast you're drifting toward flaccid, so holding steady near
+# the erect line parks the volume forever. This is a flat, gentle per-tick climb
+# (≈1.6%/s at a 0.5s tick) scaled by distance from the edge — 0 at the edge line,
+# full at the erect line — so it recovers when you hold off the edge but never
+# fights you while you're actually edging.
+# Per-difficulty recovery/ramp tuning. "Relentless" scaling: harder difficulty
+# works you harder — faster recovery, shorter holds, faster ramp = more edges
+# per minute. Recovery and ramp are in %/second (recovery measured at the erect
+# line, tapering to 0 at the edge); hold is in seconds.
+RECOVERY_PCT_DEFAULT = {"Easy": 0.8, "Middle": 1.6, "Hard": 3.0,  "Expert": 5.0}
+AE_HOLD_SECS_DEFAULT = {"Easy": 25,  "Middle": 15,  "Hard": 8,    "Expert": 4}
+AE_RAMP_PCT_DEFAULT  = {"Easy": 4.0, "Middle": 8.0, "Hard": 14.0, "Expert": 22.0}
 
 
 # Aggressiveness levels: name → delta multiplier
@@ -622,8 +652,10 @@ class XToysClient:
                     self._last_error = f"HTTP {r.status_code}"
                     log.warning(f"xToys: SEND failed — {self._last_error}")
             except Exception as e:
-                self._last_error = str(e)
-                log.warning(f"xToys: SEND failed — {e}")
+                # Log only the exception type — the full requests error text embeds
+                # the webhook URL (with the id in the query string).
+                self._last_error = type(e).__name__
+                log.warning(f"xToys: SEND failed — {type(e).__name__}")
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
@@ -829,8 +861,11 @@ class HRClient:
                     on_close=lambda ws, c, m: log.info("HRClient WS closed"),
                 )
                 self._ws = ws
+                # Verify TLS. The Pulsoid token rides in the wss URL query string,
+                # so a MITM with a self-signed cert could otherwise read it (and
+                # feed fake BPM, which drives the denial multiplier). websocket-client
+                # verifies by default; do NOT pass cert_reqs=CERT_NONE.
                 ws.run_forever(
-                    sslopt={"cert_reqs": ssl.CERT_NONE},
                     ping_interval=20,
                     ping_timeout=10,
                 )
@@ -1905,6 +1940,14 @@ class App:
         self._refractory_mins = 5        # cooldown duration (0 = no timer, manual resume)
         self._refractory_until: float = 0.0  # epoch time when refractory ends
 
+        # ── Volume recovery (fixes "parks forever after an edge") ──────────────
+        self._erect_recovery = True      # passive gentle climb when held in erect zone
+        self._active_edging  = False     # aggressive auto-ramp cycle after holding off edge
+        self._recovery_pct = dict(RECOVERY_PCT_DEFAULT)  # per-level passive climb %/s
+        self._ae_hold_secs = dict(AE_HOLD_SECS_DEFAULT)  # per-level hold before ramp (s)
+        self._ae_ramp_pct  = dict(AE_RAMP_PCT_DEFAULT)   # per-level ramp %/s
+        self._ae_below_since: float | None = None  # when we last backed off the edge
+
         # ── Auto-cum detection ────────────────────────────────────────────────
         self._auto_cum_enabled     = False
         self._auto_cum_delay       = 5      # seconds before _on_cum fires (0-10)
@@ -1961,6 +2004,8 @@ class App:
         self._ruin_odds      = dict(self._RUIN_ODDS_DEFAULT)
         self._ruin_phrases   = list(self._RUIN_PHRASES_DEFAULT)
         self._ruin_count     = 0
+        self._ruin_active    = False   # True while a ruin pulse sequence is running
+        self._ruin_jobs: list = []     # pending root.after ids for the ruin, cancellable
         self._exclusion_zones: list[tuple[int,int,int,int]] = []   # (x,y,w,h) in frame px
         self._reanchor_lock = False   # True = freeze tracker on user's target, no YOLO reanchor
         self._ez_drawing    = False   # True while user is dragging a new zone
@@ -2183,6 +2228,21 @@ class App:
                           "stable, high-contrast spot (a plug/electrode is ideal) and it "
                           "stays put. Turn off to let auto-reacquire find the head again.")
 
+        # Active Edging — auto-ramp the volume back up after you hold off the edge,
+        # then deny again on the next edge. The aggressive auto-edging loop.
+        self._active_edging_var = tk.BooleanVar(value=self._active_edging)
+        _ae_sw = ctk.CTkSwitch(
+            vid_col, text="🔁 Active Edging (auto-ramp)",
+            variable=self._active_edging_var, command=self._on_active_edging_toggle,
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            switch_width=28, switch_height=14,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+            progress_color=self._C_ACCENT)
+        _ae_sw.pack(anchor="w", pady=(2, 0))
+        Tooltip(_ae_sw, "After you back off the edge and hold for the configured time "
+                        "(Settings → Edging behaviour), volume ramps back toward your max "
+                        "until you edge again — then the cycle repeats. Off = normal reactive mode.")
+
         # height buttons — stacked right of video
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent", width=180, height=260)
         hbf.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0))
@@ -2269,8 +2329,8 @@ class App:
 
         # ── Vertical volume range slider — right of hbf ───────────────────────
         _tiny = ctk.CTkFont(size=9)
-        vol_col = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE, corner_radius=8, width=50)
-        vol_col.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 0))
+        vol_col = ctk.CTkFrame(top_frame, fg_color=self._C_SURFACE, corner_radius=8, width=40)
+        vol_col.pack(side=tk.LEFT, fill=tk.Y, padx=(4, 0))
         vol_col.pack_propagate(False)
 
         ctk.CTkLabel(vol_col, text="VOL\nRANGE", font=_tiny,
@@ -2288,7 +2348,7 @@ class App:
         ctk.CTkLabel(vol_col, text="floor", font=_tiny,
                      text_color=self._C_TEXT_DIM).pack(pady=(0, 2))
         self._range_lbl = ctk.CTkLabel(vol_col, text="0%\n–\n100%", font=_tiny,
-                                       text_color=self._C_YELLOW, wraplength=48, justify="center")
+                                       text_color=self._C_YELLOW, wraplength=40, justify="center")
         self._range_lbl.pack(pady=(0, 6))
 
         self._range_drag = None  # 'lo' or 'hi'
@@ -2884,6 +2944,11 @@ class App:
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
                 "reanchor_lock":        self._reanchor_lock,
+                "erect_recovery":       self._erect_recovery,
+                "active_edging":        self._active_edging,
+                "recovery_pct":         self._recovery_pct,
+                "ae_hold_secs":         self._ae_hold_secs,
+                "ae_ramp_pct":          self._ae_ramp_pct,
                 "auto_cum_enabled":     self._auto_cum_enabled,
                 "auto_cum_delay":       self._auto_cum_delay,
                 "auto_cum_sensitivity": self._auto_cum_sensitivity,
@@ -2893,7 +2958,12 @@ class App:
                 "bondage_safeword":     self._bondage_safeword,
                 "bondage_mic_device":   self._bondage_mic_device,
             }
-            CONFIG_PATH.write_text(json.dumps(data, indent=2))
+            # Atomic write: a crash mid-write (this app has hard-killed before)
+            # must not truncate config.json and wipe every setting. Write a temp
+            # file then os.replace (atomic on Windows and POSIX).
+            tmp = CONFIG_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, CONFIG_PATH)
         except Exception as e:
             log.warning(f"Config: save failed: {e}")
 
@@ -3028,6 +3098,21 @@ class App:
                 self._reanchor_lock = bool(data["reanchor_lock"])
                 if hasattr(self, "_lock_track_var"):
                     self._lock_track_var.set(self._reanchor_lock)
+            if "erect_recovery" in data:
+                self._erect_recovery = bool(data["erect_recovery"])
+            if "active_edging" in data:
+                self._active_edging = bool(data["active_edging"])
+                if hasattr(self, "_active_edging_var"):
+                    self._active_edging_var.set(self._active_edging)
+            if isinstance(data.get("recovery_pct"), dict):
+                self._recovery_pct.update({k: max(0.0, float(v))
+                    for k, v in data["recovery_pct"].items() if k in self._recovery_pct})
+            if isinstance(data.get("ae_hold_secs"), dict):
+                self._ae_hold_secs.update({k: max(1, min(120, int(v)))
+                    for k, v in data["ae_hold_secs"].items() if k in self._ae_hold_secs})
+            if isinstance(data.get("ae_ramp_pct"), dict):
+                self._ae_ramp_pct.update({k: max(0.0, float(v))
+                    for k, v in data["ae_ramp_pct"].items() if k in self._ae_ramp_pct})
             if "auto_cum_enabled" in data:
                 self._auto_cum_enabled = bool(data["auto_cum_enabled"])
             if "auto_cum_delay" in data:
@@ -3086,6 +3171,14 @@ class App:
         # Zero out Restim before closing socket
         try:
             self.restim.set_volume(0.0, instant=True)
+        except Exception:
+            pass
+
+        # Zero xToys too — otherwise the toy keeps running at its last level
+        # after the app closes. Short timeout so shutdown can't hang.
+        try:
+            if getattr(self, "xtoys", None):
+                self.xtoys.set_volume(0.0, instant=True)
         except Exception:
             pass
 
@@ -3479,6 +3572,13 @@ class App:
 
     def _on_letmecum(self):
         """Roll the dice — grant or deny permission to cum."""
+        # Guard against re-entry from states where a roll is unsafe/nonsensical.
+        # The button is disabled in these states, but the VOICE path ("let me cum"
+        # / "please") bypasses the widget, and pressing the green "CUM NOW!" button
+        # during an active grant would otherwise re-roll and could REVOKE the grant
+        # (or trigger a ruin). Refuse to roll while stopped/granted/counting down.
+        if self._cum_stopped or self._cum_allowed or self._cum_cd_active:
+            return
         # Check denial cooldown
         cooldown_left = self._letmecum_cooldown_until - time.time()
         if cooldown_left > 0:
@@ -3608,13 +3708,31 @@ class App:
 
     def _ruin_set_volume(self, vol: float):
         """Set all active outputs instantly (used by the ruin pulse sequence)."""
+        # If a cum/safeword landed mid-ruin, the session is stopped — never drive
+        # output from a stale pulse (belt-and-suspenders alongside _cancel_ruin).
+        if self._cum_stopped:
+            return
         self._set_all_outputs(vol, instant=True)
+
+    def _cancel_ruin(self):
+        """Abort an in-progress ruin pulse sequence — its after() jobs would
+        otherwise keep firing (up to 6s out, driving to 100%) into a stopped/
+        post-orgasm session. Called by _cum_confirm and _voice_safeword."""
+        self._ruin_active = False
+        for j in getattr(self, "_ruin_jobs", []):
+            try:
+                self.root.after_cancel(j)
+            except Exception:
+                pass
+        self._ruin_jobs = []
 
     def _do_ruin(self, aggr: str):
         """Execute the ruin pulse sequence using root.after() — no blocking."""
         self._last_letmecum_result = "ruin"
         self._last_letmecum_time = time.time()
         self._ruin_count += 1
+        self._ruin_active = True
+        self._ruin_jobs = []
         log.info(f"RUIN triggered on {aggr}")
 
         self._letmecum_btn.configure(text="RUINED 😈", fg_color="#6600cc",
@@ -3627,6 +3745,8 @@ class App:
 
         def _final():
             # HARD CUT to 0, lock, show ruin phrase, start cooldown
+            self._ruin_active = False
+            self._ruin_jobs = []
             self._ruin_set_volume(0.0)
             cooldown = self._RUIN_COOLDOWN.get(aggr, 90)
             self._letmecum_cooldown_until = time.time() + cooldown
@@ -3651,9 +3771,10 @@ class App:
         ]
         for delay, vol in ruin_steps:
             if vol is None:
-                self.root.after(delay, _final)
+                self._ruin_jobs.append(self.root.after(delay, _final))
             else:
-                self.root.after(delay, lambda v=vol: self._ruin_set_volume(v))
+                self._ruin_jobs.append(
+                    self.root.after(delay, lambda v=vol: self._ruin_set_volume(v)))
 
     def _on_cum(self, source="click"):
         """Hard stop — volume to 0; refractory countdown then auto-resume.
@@ -3662,9 +3783,19 @@ class App:
         source="voice"  → immediate (no undo window).
         Internal calls (auto-cum, safeword) pass source="voice" to skip undo.
         """
-        # UX-1: if undo window is active, clicking the button cancels instead
+        # UX-1: if the undo window is active, a repeat *click* cancels the cum.
+        # But voice/internal sources (safeword, auto-cum, "came") must COMMIT, not
+        # cancel — otherwise saying the safeword during the 3s window silently
+        # aborts the stop and leaves the toy running. Cancel the pending timer and
+        # confirm immediately for those.
         if self._cum_undo_active:
-            self._cum_undo()
+            if source == "click":
+                self._cum_undo()
+                return
+            if self._cum_undo_job:
+                self.root.after_cancel(self._cum_undo_job)
+                self._cum_undo_job = None
+            self._cum_confirm()
             return
 
         if source == "click" and not self._cum_stopped:
@@ -3718,6 +3849,8 @@ class App:
                 self.root.after_cancel(self._cum_cd_job)
             self._cum_cd_job    = None
             self._cum_cd_active = False
+        # Kill any in-progress ruin pulses so they can't drive to 100% after this stop
+        self._cancel_ruin()
         self._cum_score = 0.0
         self._cum_count += 1
         self.session_logger.log_cum()
@@ -4046,6 +4179,10 @@ class App:
             "ruin_phrases":      list(self._ruin_phrases),
             "cum_override_range":self._cum_override_range,
             "refractory_mins":   self._refractory_mins,
+            "erect_recovery":    self._erect_recovery,
+            "recovery_pct":      dict(self._recovery_pct),
+            "ae_hold_secs":      dict(self._ae_hold_secs),
+            "ae_ramp_pct":       dict(self._ae_ramp_pct),
             "auto_cum_delay":    self._auto_cum_delay,
             "auto_cum_sensitivity": self._auto_cum_sensitivity,
             "bondage_safeword":  self._bondage_safeword,
@@ -4353,6 +4490,54 @@ class App:
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
+        # ── Edging behaviour (volume recovery) ────────────────────────────────
+        ctk.CTkLabel(sf, text="Edging behaviour",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
+        edge_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
+        edge_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+        recover_var = tk.BooleanVar(value=self._erect_recovery)
+        ctk.CTkSwitch(
+            edge_frame, text="Recover volume when held in the erect zone",
+            variable=recover_var,
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            switch_width=36, switch_height=16,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+            progress_color=self._C_ACCENT,
+        ).pack(anchor="w", padx=12, pady=(8, 2))
+        ctk.CTkLabel(
+            edge_frame,
+            text="Per-difficulty tuning below. Recovery = how fast volume climbs back "
+                 "while you hold in the erect zone (%/sec). Hold = seconds off the edge "
+                 "before Active Edging ramps. Ramp = how fast it climbs to max (%/sec). "
+                 "Defaults get more relentless on harder levels.",
+            font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
+            wraplength=420, justify="left", anchor="w",
+        ).pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        # Column header
+        _hdr = ctk.CTkFrame(edge_frame, fg_color="transparent")
+        _hdr.pack(fill=tk.X, padx=12, pady=(0, 0))
+        ctk.CTkLabel(_hdr, text="", width=64, anchor="w").pack(side=tk.LEFT)
+        for _c in ("Recover %/s", "Hold s", "Ramp %/s"):
+            ctk.CTkLabel(_hdr, text=_c, font=ctk.CTkFont(size=9),
+                         text_color=self._C_TEXT_DIM, width=72,
+                         anchor="center").pack(side=tk.LEFT, padx=4)
+
+        rec_vars, hold_vars, ramp_vars = {}, {}, {}
+        for level in ("Easy", "Middle", "Hard", "Expert"):
+            row = ctk.CTkFrame(edge_frame, fg_color="transparent")
+            row.pack(fill=tk.X, padx=12, pady=2)
+            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+                         width=64, anchor="w").pack(side=tk.LEFT)
+            rec_vars[level]  = tk.DoubleVar(value=self._recovery_pct.get(level, 1.6))
+            hold_vars[level] = tk.IntVar(value=self._ae_hold_secs.get(level, 10))
+            ramp_vars[level] = tk.DoubleVar(value=self._ae_ramp_pct.get(level, 8.0))
+            for _v in (rec_vars[level], hold_vars[level], ramp_vars[level]):
+                ctk.CTkEntry(row, textvariable=_v, width=72, justify="center",
+                             fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
+                             text_color=self._C_TEXT).pack(side=tk.LEFT, padx=4)
+
         # ── Auto-Cum Detection ────────────────────────────────────────────────
         ctk.CTkLabel(sf, text="Auto-Cum Detection",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
@@ -4576,6 +4761,10 @@ class App:
             self._ruin_phrases      = _orig["ruin_phrases"]
             self._cum_override_range   = _orig["cum_override_range"]
             self._refractory_mins      = _orig["refractory_mins"]
+            self._erect_recovery       = _orig["erect_recovery"]
+            self._recovery_pct         = _orig["recovery_pct"]
+            self._ae_hold_secs         = _orig["ae_hold_secs"]
+            self._ae_ramp_pct          = _orig["ae_ramp_pct"]
             self._auto_cum_delay       = _orig["auto_cum_delay"]
             self._auto_cum_sensitivity = _orig["auto_cum_sensitivity"]
             self._bondage_safeword     = _orig["bondage_safeword"]
@@ -4601,6 +4790,14 @@ class App:
             self._ruin_phrases = [l.strip() for l in ruin_text.split("\n") if l.strip()]
             self._cum_override_range   = override_var.get()
             self._refractory_mins      = int(refrac_var.get())
+            self._erect_recovery       = bool(recover_var.get())
+            for _lvl in ("Easy", "Middle", "Hard", "Expert"):
+                try: self._recovery_pct[_lvl] = max(0.0, float(rec_vars[_lvl].get()))
+                except Exception: pass
+                try: self._ae_hold_secs[_lvl] = max(1, min(120, int(hold_vars[_lvl].get())))
+                except Exception: pass
+                try: self._ae_ramp_pct[_lvl]  = max(0.0, float(ramp_vars[_lvl].get()))
+                except Exception: pass
             self._auto_cum_delay       = int(acd_delay_var.get())
             self._auto_cum_sensitivity = int(acd_sens_var.get())
             # bondage defaults
@@ -4724,7 +4921,10 @@ class App:
         if new_id != self.xtoys.webhook_id:
             self.xtoys.disconnect()
             self.xtoys.webhook_id = new_id
-            log.info(f"xToys: webhook ID={new_id!r}")
+            # Mask — the webhook ID is a device-control capability; vse.log is the
+            # file users paste into bug reports.
+            _masked = f"…{new_id[-4:]}" if len(new_id) >= 4 else "(set)"
+            log.info(f"xToys: webhook ID updated ({_masked})")
         self._save_config()
 
     def _on_hr_source_change(self, value: str):
@@ -5129,6 +5329,23 @@ class App:
                 text="🔓 Auto-reanchor back on", text_color="#F5A623")
             log.info("Tracking lock OFF — YOLO reanchoring enabled")
 
+    def _on_active_edging_toggle(self):
+        """Toggle the Active Edging auto-ramp cycle."""
+        self._active_edging = bool(self._active_edging_var.get())
+        self._ae_below_since = None   # reset the hold timer either way
+        self._save_config()
+        if self._active_edging:
+            _lvl  = self.aggr_var.get()
+            _hold = self._ae_hold_secs.get(_lvl, 10)
+            self._snark_label.configure(
+                text=f"🔁 Active Edging on — ramps up after {_hold}s off the edge ({_lvl})",
+                text_color="#F5A623")
+            log.info(f"Active Edging ON — {_lvl}: hold {_hold}s, "
+                     f"ramp {self._ae_ramp_pct.get(_lvl, 8.0)}%/s")
+        else:
+            self._snark_label.configure(text="🔁 Active Edging off", text_color="#F5A623")
+            log.info("Active Edging OFF")
+
     def _maybe_yolo_reanchor(self, frame):
         # Lock mode: user has a stable target (e.g. a metal plug/electrode) and
         # wants it left alone — skip all YOLO reanchoring so it can't be stolen.
@@ -5408,6 +5625,13 @@ class App:
     def _compute_volume_delta(self):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
             return 0.0
+        # SAFETY: when tracking is lost/frozen the head_y is stale — never climb on
+        # dead data. Both passive recovery and Active Edging would otherwise ramp to
+        # the ceiling on a frozen position (occlusion, lock-on drift) with the user
+        # potentially restrained. Hold volume steady and reset the AE hold timer.
+        if not self.tracking_ok:
+            self._ae_below_since = None
+            return 0.0
         # Volume math uses the RAW calibrated Edging line, not the sensitivity-
         # adjusted one. The sensitivity slider is purely an OBS / state-display
         # knob so the overlay can light up earlier without also making the
@@ -5432,7 +5656,26 @@ class App:
         else:
             velocity = 0.0
 
+        # ── Active Edging timer: track how long we've held off the edge. ──────
+        # position 0 = edge line, erect_norm = erect line. "near_edge" = in the
+        # half of the sweet zone closest to the edge (or past it). Reset the hold
+        # timer whenever we're near the edge; start it the moment we back off.
+        if self._active_edging:
+            if position < erect_norm * 0.5:
+                self._ae_below_since = None
+            elif self._ae_below_since is None:
+                self._ae_below_since = time.time()
+
         if 0.0 <= position <= erect_norm:
+            # Active Edging: once we've held off the edge long enough, ramp
+            # aggressively back toward max until the next edge resets the cycle.
+            # Hold + ramp scale per difficulty (relentless: harder = sooner/faster).
+            if (self._active_edging and self._ae_below_since is not None
+                    and time.time() - self._ae_below_since
+                        >= self._ae_hold_secs.get(aggr_level, 10)):
+                ramp_pct = self._ae_ramp_pct.get(aggr_level, 8.0)
+                return (ramp_pct / 100.0) * VOLUME_UPDATE_INTERVAL
+
             # Sweet zone: drift flaccid → nudge volume up;
             # climb fast toward edge → pre-emptive denial, but only once the
             # session's edge count has crossed the per-level unlock threshold.
@@ -5443,7 +5686,17 @@ class App:
             # tightens progressively across the session.
             if velocity >= 0.0:
                 vel_nudge = velocity * 0.4
-                return VOLUME_STEP * vel_nudge * aggr_mult
+                # Passive recovery: a flat climb so holding steady in the erect
+                # zone recovers instead of parking. Scaled by distance from the
+                # edge (0 at edge → full at erect line) so it never fights an
+                # active edge, and per-difficulty (relentless: harder = faster).
+                if self._erect_recovery:
+                    rec_per_tick = (self._recovery_pct.get(aggr_level, 1.6) / 100.0) \
+                                   * VOLUME_UPDATE_INTERVAL
+                    recovery = rec_per_tick * (position / max(erect_norm, 1e-3))
+                else:
+                    recovery = 0.0
+                return VOLUME_STEP * vel_nudge * aggr_mult + recovery
             unlock = PREEMPT_UNLOCK.get(aggr_level)
             if unlock is not None and self.edge_count >= unlock:
                 # 1.0 at the unlock point, +0.1 per edge past it, caps at 2.0
@@ -5469,6 +5722,12 @@ class App:
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
             return
         self.last_vol_time = cur_time
+
+        # ── Ruin in progress — the pulse sequence owns the output entirely ───
+        # Don't let position-driven deltas (esp. the new recovery) climb back out
+        # of the ruin's deliberate 0% gaps between pulses.
+        if self._ruin_active:
+            return
 
         # ── Cum allowed — volume locked at 100% until "I've CUM" ─────────────
         if self._cum_allowed:
@@ -6495,6 +6754,14 @@ class App:
 
     def _voice_safeword(self):
         """Safeword — pause everything but keep mic alive for 'resume session'."""
+        # EMERGENCY STOP FIRST: kill all output immediately and unconditionally,
+        # before touching any state — a safeword must never depend on state logic
+        # to cut the stim (e.g. mid-grant, mid-ruin, or during the undo window).
+        try:
+            self._set_all_outputs(0.0, instant=True)
+        except Exception:
+            pass
+        self._cancel_ruin()   # stop any ruin pulses immediately
         # Partial stop: don't kill the engine
         self._bondage_active  = False
         self._bondage_standby = True
@@ -7143,8 +7410,14 @@ def main():
         main._crash_fp = open(crash_path, "a", encoding="utf-8", buffering=1)
         main._crash_fp.write(f"\n===== session start v{VERSION} =====\n")
         main._crash_fp.flush()
-        faulthandler.enable(file=main._crash_fp, all_threads=True)
-        log.info(f"faulthandler armed → {crash_path}")
+        # OFF by default: the in-process traps (faulthandler + the SEH minidump
+        # filter below) intercept the fault on the crashing thread and can stop the
+        # process from ever reaching WER LocalDumps — the one external tool that
+        # reliably captures these. With WER armed, leave these off so the crash
+        # propagates cleanly. Set VSE_INPROC_TRAP=1 to re-enable them.
+        if os.environ.get("VSE_INPROC_TRAP"):
+            faulthandler.enable(file=main._crash_fp, all_threads=True)
+            log.info(f"faulthandler armed → {crash_path}")
     except Exception as e:
         log.warning(f"faulthandler setup failed: {e}")
 
@@ -7154,7 +7427,9 @@ def main():
     # MiniDumpWriteDump runs on the faulting thread and writes a .dmp containing
     # every thread's stack — enough for `!analyze -v` to name the faulting module.
     # No admin / registry needed. Defensive: any failure just logs and continues.
-    if sys.platform == "win32":
+    # OFF by default (see note above) — this filter can block WER LocalDumps from
+    # capturing the crash. Enable with VSE_INPROC_TRAP=1 only if WER is unavailable.
+    if sys.platform == "win32" and os.environ.get("VSE_INPROC_TRAP"):
         try:
             import ctypes
             from ctypes import wintypes
