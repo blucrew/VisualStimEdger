@@ -66,10 +66,15 @@ files = [
 with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     z.writestr("README.md", README)
 
-    # Launcher — write with the executable bit set so double-click works on macOS
+    # Launcher — write with the executable bit set so double-click works on macOS.
+    # MUST include the S_IFREG (0o100000) file-type bits, not just the 0o755 perms:
+    # macOS's Archive Utility reads external_attr>>16 as the full unix st_mode, and
+    # a mode with no file-type bits is invalid → it falls back to 0o644 (not
+    # executable) → "could not be executed because you do not have appropriate
+    # access privileges" on double-click.
     launcher = (BASE / "macos-launcher.command").read_text(encoding="utf-8")
     info = zipfile.ZipInfo("VisualStimEdger.command")
-    info.external_attr = (0o755 & 0xFFFF) << 16   # -rwxr-xr-x
+    info.external_attr = (0o100755) << 16   # S_IFREG | rwxr-xr-x
     info.compress_type = zipfile.ZIP_DEFLATED
     z.writestr(info, launcher)
 

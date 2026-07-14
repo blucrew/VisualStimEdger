@@ -211,7 +211,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -6777,16 +6777,20 @@ class App:
                 self._on_cum(source="voice")
         except Exception:
             pass
-        # UI
+        # UI — repurpose the bondage button as a bright, unmissable RESUME control.
+        # Standby pauses tracking (the video freezes), so voice is no longer the
+        # only way out — if the mic doesn't catch "resume session", this button does
+        # the same thing. Restored to the normal BONDAGE button by _voice_resume_session.
         try:
-            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="transparent",
-                                        hover_color="#1a0000",
-                                        border_color="#aa0000", text_color="#ff8080")
+            self._bondage_btn.configure(text="▶ RESUME SESSION",
+                                        command=self._voice_resume_session,
+                                        fg_color="#3EC941", hover_color="#32a435",
+                                        border_color="#3EC941", text_color="white")
         except Exception:
             pass
         try:
             self._snark_label.configure(
-                text='🛑 SAFEWORD — say "resume session" to continue',
+                text='🛑 SAFEWORD — say "resume session" or click ▶ RESUME',
                 text_color="#FF4444")
         except Exception:
             pass
@@ -6798,8 +6802,10 @@ class App:
         self._bondage_active  = True
         self.tracking_paused  = False
         try:
-            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="#6a1a8a",
-                                        hover_color="#4a0a6a",
+            # Restore the button's normal command too — safeword had repointed it
+            # at _voice_resume_session.
+            self._bondage_btn.configure(text="🎙 BONDAGE", command=self._open_bondage_splash,
+                                        fg_color="#6a1a8a", hover_color="#4a0a6a",
                                         border_color="#9a3aaa", text_color="white")
         except Exception:
             pass
