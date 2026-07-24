@@ -211,7 +211,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -2253,7 +2253,7 @@ class App:
             row.pack(fill=tk.X, pady=1)
             row.columnconfigure(0, weight=1, uniform="hbtn")
             row.columnconfigure(1, weight=1, uniform="hbtn")
-            ctk.CTkButton(row, text=f"\ud83d\udcf7 {text}", command=set_cmd, font=btn, height=28,
+            ctk.CTkButton(row, text=f"📷 {text}", command=set_cmd, font=btn, height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
                           ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
@@ -3338,7 +3338,7 @@ class App:
             self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
             if self._auto_btn_state != "active":
                 self._auto_btn_state = "active"
-                self._auto_btn.configure(text="\ud83d\udcf7 AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
+                self._auto_btn.configure(text="📷 AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
