@@ -61,12 +61,12 @@
   @keyframes edge-flash {
     0%   {
       color: var(--t-edging);
-      text-shadow: 0 0 20px currentColor, 0 0 45px currentColor, 0 0 90px currentColor;
+      text-shadow: 0 0 6px currentColor, 0 0 18px currentColor, 0 0 30px currentColor;
       transform: scale(1);
     }
     50%  {
       color: #ffffff;
-      text-shadow: 0 0 30px currentColor, 0 0 70px currentColor;
+      text-shadow: 0 0 8px currentColor, 0 0 22px currentColor;
       transform: scale(1.04);
     }
   }
@@ -412,7 +412,6 @@ const THEMES = {
       '--t-border': 'rgba(255,255,255,0.15)', '--t-text': '#ffffff',
     },
     stateColor: { Flaccid: '#aaddff', Erect: '#aaffcc', Edging: '#ffffff' },
-    hrBase: [255, 255, 255],
   },
   crimson: {
     vars: {
@@ -422,7 +421,6 @@ const THEMES = {
       '--t-border': 'rgba(224,64,251,0.15)', '--t-text': '#cccccc',
     },
     stateColor: { Flaccid: '#4fc3f7', Erect: '#4caf50', Edging: '#ff1744' },
-    hrBase: [233, 30, 99],
   },
   neon: {
     vars: {
@@ -432,7 +430,6 @@ const THEMES = {
       '--t-border': 'rgba(0,255,255,0.25)', '--t-text': '#f0f0f0',
     },
     stateColor: { Flaccid: '#00bfff', Erect: '#39ff14', Edging: '#00ffff' },
-    hrBase: [255, 0, 255],
   },
   amber: {
     vars: {
@@ -442,7 +439,6 @@ const THEMES = {
       '--t-border': 'rgba(255,179,0,0.2)', '--t-text': '#fff3e0',
     },
     stateColor: { Flaccid: '#40c4ff', Erect: '#76ff03', Edging: '#ffb300' },
-    hrBase: [255, 179, 0],
   },
 };
 
@@ -455,7 +451,6 @@ const root = document.documentElement.style;
 Object.entries(theme.vars).forEach(([k, v]) => root.setProperty(k, v));
 
 let STATE_COLOR = theme.stateColor;
-let hrBase      = theme.hrBase;   // [r, g, b] at resting BPM
 
 // ── Build volume bars ─────────────────────────────────────────────────────────
 const barsEl = document.getElementById('bars');
@@ -597,19 +592,16 @@ function onMsg(e) {
   stateValEl.textContent = d.state || '-';
   stateValEl.style.color = STATE_COLOR[d.state] || theme.vars['--t-accent'];
 
-  // HR pill — tint hotter as modifier climbs
+  // HR pill — tint hotter as modifier climbs (CSS color-mix, no manual RGB math)
   if (d.hr && d.hr.connected && d.hr.bpm != null) {
     hrBpm.textContent = d.hr.bpm + ' bpm';
     const beatMs = Math.round(60000 / Math.max(30, Math.min(220, d.hr.bpm)));
     hrHeart.style.animationDuration = beatMs + 'ms';
-    const mod = d.hr.modifier || 1.0;
-    const t   = Math.min(1, mod - 1.0);  // 0..1
-    // Interpolate from hrBase toward red (#ff1010) as modifier climbs
-    const r = Math.round(hrBase[0] + t * (255 - hrBase[0]));
-    const g = Math.round(hrBase[1] + t * (16  - hrBase[1]));
-    const b = Math.round(hrBase[2] + t * (16  - hrBase[2]));
-    hrPill.style.color       = `rgb(${r},${g},${b})`;
-    hrPill.style.borderColor = `rgba(${r},${g},${b},0.45)`;
+    const heat = Math.min(1.0, (d.hr.modifier || 1.0) - 1.0);  // 0..1
+    hrPill.style.color = heat > 0
+      ? `color-mix(in srgb, #ff1010 ${Math.round(heat * 100)}%, var(--t-hr))`
+      : '';
+    hrPill.style.borderColor = '';  // CSS var(--t-border) via stylesheet
     hrPill.className = 'hr-pill on';
   } else {
     hrPill.style.color = hrPill.style.borderColor = '';
