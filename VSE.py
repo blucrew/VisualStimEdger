@@ -599,9 +599,10 @@ class RestimClient:
 
 
 class XToysClient:
-    """Sends intensity to xToys via the Private Webhook HTTP endpoint.
+    """Sends intensity to xToys via the script's Local Webhook HTTP endpoint.
     Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=setIntensity&intensity=<0-100>
-    The webhook_id is shown in xToys → https://xtoys.app/me → Private Webhook.
+    The webhook_id comes from the VisualStimEdger script's Local Webhook card
+    (enable Local Webhook → Save → click the satellite-dish Connect icon → copy the ID).
     Stateless HTTP GET — no persistent connection needed.
     """
     _WEBHOOK_URL = "https://xtoys.app/webhook"
@@ -2595,7 +2596,7 @@ class App:
                      text_color=self._C_TEXT,
                      placeholder_text="e.g. 8hR5acKTCx2s").pack(side=tk.LEFT, padx=(0, 8))
         ctk.CTkLabel(self._xtoys_opts,
-                     text="Get your Webhook ID at xtoys.app/me \u2192 Private Webhook. In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy \u2192 enable Private Webhook.",
+                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output \u2192 enable Local Webhook \u2192 Save \u2192 click the satellite-dish (Connect) icon \u2192 copy the Webhook ID here.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
@@ -4415,10 +4416,10 @@ class App:
                      "1. Open xtoys.app in a browser and sign in\n"
                      "2. Scripts \u2192 search \u201cVisualStimEdger\u201d \u2192 Load Script\n"
                      "3. Connections \u2192 add your toy under Generic Output\n"
-                     "4. Go to xtoys.app/me \u2192 Private Webhook\n"
-                     "5. Copy the Webhook ID \u2192 paste it into VSE\n"
-                     "6. In xToys Connections \u2192 enable Private Webhook \u2192 Save\n"
-                     "7. Keep the xToys tab open while using VSE",
+                     "4. Enable Local Webhook \u2192 Save\n"
+                     "5. Click the satellite-dish icon \u2192 Connect\n"
+                     "6. Copy the Webhook ID \u2192 paste it into VSE\n"
+                     "7. Keep the xToys tab & script running while using VSE",
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
