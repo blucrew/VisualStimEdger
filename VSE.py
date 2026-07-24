@@ -211,7 +211,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.6"
+VERSION = "1.8.7"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -223,6 +223,10 @@ VOLUME_UPDATE_INTERVAL = 0.5
 # The visible content fits ~656px wide; reqwidth over-reports because a widget
 # below over-requests, which used to boot the window too wide. See _fit_window.
 _DEFAULT_WIN_W = 660
+# Hard cap on the remembered window width. Content only needs ~560px across, so a
+# stored width wider than this is the old over-request artifact (or dead empty
+# space) — refuse to load or persist it, and fall back to the skinny default.
+_MAX_WIN_W = 900
 
 # Erect-zone recovery: without this the sweet-zone only nudges volume UP in
 # proportion to how fast you're drifting toward flaccid, so holding steady near
@@ -1455,7 +1459,10 @@ class OverlayServer:
     def _run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+        try:
+            self._loop.run_until_complete(self._serve())
+        except RuntimeError:
+            pass  # loop stopped mid-serve during shutdown — expected teardown, not a crash
 
     async def _serve(self):
         try:
@@ -3054,8 +3061,10 @@ class App:
                     self.heights[key] = data["heights"][key]
             # Remembered window width — restore whatever the user last sized it to.
             _ww = data.get("win_w")
-            if isinstance(_ww, (int, float)) and _ww > 100:
+            if isinstance(_ww, (int, float)) and 100 < _ww <= _MAX_WIN_W:
                 self._win_w = int(_ww)
+            # else: junk or an absurdly wide legacy value -> ignore it, so
+            # _fit_window falls back to the skinny _DEFAULT_WIN_W instead of huge.
             # Sliders / controls
             if "min_vol"        in data: self.min_vol_var.set(data["min_vol"])
             if "max_vol"        in data: self.max_vol_var.set(data["max_vol"])
@@ -3323,8 +3332,9 @@ class App:
         # window is briefly at its over-wide natural size.
         try:
             _w = self.root.winfo_width()
-            if _w > 200:
+            if 200 < _w <= _MAX_WIN_W:
                 self._win_w = _w
+            # else: don't persist an over-wide width, or it boots huge next time.
         except Exception:
             pass
         self._save_config()
