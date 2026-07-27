@@ -217,13 +217,22 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.6"
+VERSION = "1.8.8"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
 TCODE_AXIS = 'L0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
+
+# Default main-window client width on first boot (before the user resizes it).
+# The visible content fits ~656px wide; reqwidth over-reports because a widget
+# below over-requests, which used to boot the window too wide. See _fit_window.
+_DEFAULT_WIN_W = 660
+# Hard cap on the remembered window width. Content only needs ~560px across, so a
+# stored width wider than this is the old over-request artifact (or dead empty
+# space) — refuse to load or persist it, and fall back to the skinny default.
+_MAX_WIN_W = 900
 
 # Erect-zone recovery: without this the sweet-zone only nudges volume UP in
 # proportion to how fast you're drifting toward flaccid, so holding steady near
@@ -650,12 +659,15 @@ class RestimClient:
 
 
 class XToysClient:
-    """Sends intensity to xToys via the Private Webhook HTTP endpoint.
+    """Sends intensity to xToys via the account Private Webhook HTTP endpoint.
     Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=setIntensity&intensity=<0-100>
-    The webhook_id is shown in xToys → https://xtoys.app/me → Private Webhook.
+    The webhook_id is your Private Webhook ID from xtoys.app/me → Private Webhook.
     Stateless HTTP GET — no persistent connection needed.
     """
     _WEBHOOK_URL = "https://xtoys.app/webhook"
+    _KEEPALIVE_SECS = 10.0   # re-send an unchanged level at least this often so the
+                             # webhook connection stays warm (status stays "OK") and
+                             # the toy keeps being driven while the user holds steady
 
     def __init__(self, webhook_id="", port=None):
         self.webhook_id      = webhook_id
@@ -664,6 +676,7 @@ class XToysClient:
         self._last_sent_int  = None
         self._last_error     = None
         self._last_success_t = 0.0
+        self._last_send_t    = 0.0
         self._session        = requests.Session()
 
     @property
@@ -685,8 +698,14 @@ class XToysClient:
             if not self.enabled:
                 return
             val_int = int(round(self.volume * 100))
-            if not instant and val_int == self._last_sent_int:
+            now = time.time()
+            # Dedupe identical values, but re-send every _KEEPALIVE_SECS anyway so
+            # the connection doesn't decay to "Connecting..." on a volume plateau
+            # and the toy keeps being driven while the user holds steady.
+            if (not instant and val_int == self._last_sent_int
+                    and (now - self._last_send_t) < self._KEEPALIVE_SECS):
                 return
+            self._last_send_t = now
             params = {
                 "id":        self.webhook_id.strip(),
                 "action":    "setIntensity",
@@ -710,6 +729,13 @@ class XToysClient:
 
     def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
         self.set_volume(self.volume + delta, floor=floor, ceiling=ceiling)
+
+    def keepalive(self, floor=0.0, ceiling=1.0):
+        # Re-assert the current level. set_volume only re-sends if the value is
+        # unchanged AND _KEEPALIVE_SECS has elapsed, so calling this every tick is
+        # cheap: it fires about once per interval on a plateau, keeping the webhook
+        # warm (status stays OK) and the toy driven while the user holds steady.
+        self.set_volume(self.volume, floor=floor, ceiling=ceiling)
 
     def disconnect(self):
         with self._lock:
@@ -1501,7 +1527,10 @@ class OverlayServer:
     def _run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+        try:
+            self._loop.run_until_complete(self._serve())
+        except RuntimeError:
+            pass  # loop stopped mid-serve during shutdown — expected teardown, not a crash
 
     async def _serve(self):
         try:
@@ -1967,7 +1996,14 @@ class App:
 
         # Tracking state
         self.head_y          = bbox[1] + bbox[3] // 2
-        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None}
+        self.heights         = {"Edging": None, "Erect": None, "Flaccid": None, "PONR": None}
+        # Point of No Return: optional yellow panic line. Crossing ABOVE it hard-
+        # cuts volume to the floor. Edge-triggered — True while the head is past
+        # the line so we send one instant cut, then hold. Nothing depends on it.
+        self._ponr_triggered = False
+        # Remembered window width (persisted). None = use the default on first
+        # boot. Height always auto-fits to content, so only width is sticky.
+        self._win_w          = None
 
         self.last_vol_time   = time.time()
         self.tracking_paused    = False
@@ -2361,6 +2397,45 @@ class App:
             width=60).pack(side=tk.LEFT)
         Tooltip(ez_row, "Remove all exclusion zones")
 
+        # ── Point of No Return (optional yellow panic line) ──────────────────
+        # On screen this line sits ABOVE the red edging line, so its button sits
+        # just above the red Edging button here too. Unlike the three calibration
+        # lines below it is OPTIONAL — nothing depends on it being set. Crossing
+        # ABOVE it instantly cuts volume to the floor: a hard "don't let me finish"
+        # stop for when the reactive ramp is too slow.
+        ctk.CTkLabel(hbf, text="Optional cut-off", anchor="w",
+                     font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM
+                     ).pack(fill=tk.X, pady=(1, 0))
+        ponr_row = ctk.CTkFrame(hbf, fg_color="transparent")
+        ponr_row.pack(fill=tk.X, pady=(0, 1))
+        ponr_row.columnconfigure(0, weight=3, uniform="ponr")
+        ponr_row.columnconfigure(1, weight=2, uniform="ponr")
+        ponr_row.columnconfigure(2, weight=1, uniform="ponr")
+        ctk.CTkButton(ponr_row, text="⚡ P.O.N.R.", command=self._set_ponr,
+                      font=btn, height=28, fg_color=self._C_YELLOW, hover_color=self._C_YELLOW_H,
+                      text_color="black", corner_radius=4
+                      ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        ctk.CTkButton(ponr_row, text="Manual ✚", command=lambda: self._start_pick("PONR"),
+                      font=ctk.CTkFont(size=10), height=28,
+                      fg_color=self._C_YELLOW, hover_color=self._C_YELLOW_H,
+                      text_color="black", corner_radius=4
+                      ).grid(row=0, column=1, sticky="ew", padx=(0, 2))
+        ctk.CTkButton(ponr_row, text="✕", command=self._clear_ponr,
+                      font=ctk.CTkFont(size=12), height=28,
+                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                      corner_radius=4
+                      ).grid(row=0, column=2, sticky="ew")
+        Tooltip(ponr_row,
+                "OPTIONAL hard cut-off — you don't need this set. Place a yellow line "
+                "above the red edging line; cross ABOVE it and volume instantly drops to "
+                "your floor, so a sudden spike can't finish you before the normal ramp "
+                "reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it.")
+
+        # ── The three calibration lines — ALL REQUIRED for the tool to run ───
+        ctk.CTkLabel(hbf, text="Calibration — set all 3 (required)", anchor="w",
+                     font=ctk.CTkFont(size=9, weight="bold"), text_color=self._C_TEXT_DIM
+                     ).pack(fill=tk.X, pady=(4, 0))
         _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,    self._C_RED_HOV)
         _hbtn_row(hbf, "Erect",   self._set_erect,   lambda: self._start_pick("Erect"),   self._C_GREEN,  self._C_GREEN_H)
         _hbtn_row(hbf, "Flaccid", self._set_flaccid, lambda: self._start_pick("Flaccid"), self._C_BLUE,   self._C_BLUE_H)
@@ -2659,14 +2734,19 @@ class App:
         xo.pack(fill=tk.X, padx=12, pady=(7, 2))
         ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=240,
+        self._xtoys_entry = ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=240,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT,
-                     placeholder_text="e.g. 8hR5acKTCx2s").pack(side=tk.LEFT, padx=(0, 8))
+                     placeholder_text="e.g. 8hR5acKTCx2s")
+        self._xtoys_entry.pack(side=tk.LEFT, padx=(0, 8))
         ctk.CTkLabel(self._xtoys_opts,
-                     text="Get your Webhook ID at xtoys.app/me \u2192 Private Webhook. In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy \u2192 enable Private Webhook.",
+                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output. Get your Webhook ID at xtoys.app/me \u2192 Private Webhook and paste it here.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
+        self._xtoys_warn = ctk.CTkLabel(self._xtoys_opts, text="",
+                     font=ctk.CTkFont(size=9, weight="bold"), text_color="#ff5555",
+                     wraplength=380, justify="left")
+        self._xtoys_warn_shown = False   # shown by _on_xtoys_id_change when the ID looks wrong
         self.xtoys_id_var.trace_add("write", self._on_xtoys_id_change)
 
         # ── Heart Rate (Pulsoid) options panel ────────────────────────────────
@@ -2979,6 +3059,7 @@ class App:
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "heights":     self.heights,
+                "win_w":       self._win_w,
                 "min_vol":     self.min_vol_var.get(),
                 "max_vol":     self.max_vol_var.get(),
                 "aggressiveness": self.aggr_var.get(),
@@ -3043,9 +3124,15 @@ class App:
                 return
             data = json.loads(CONFIG_PATH.read_text())
             # Heights
-            for key in ("Edging", "Erect", "Flaccid"):
+            for key in ("Edging", "Erect", "Flaccid", "PONR"):
                 if key in data.get("heights", {}):
                     self.heights[key] = data["heights"][key]
+            # Remembered window width — restore whatever the user last sized it to.
+            _ww = data.get("win_w")
+            if isinstance(_ww, (int, float)) and 100 < _ww <= _MAX_WIN_W:
+                self._win_w = int(_ww)
+            # else: junk or an absurdly wide legacy value -> ignore it, so
+            # _fit_window falls back to the skinny _DEFAULT_WIN_W instead of huge.
             # Sliders / controls
             if "min_vol"        in data: self.min_vol_var.set(data["min_vol"])
             if "max_vol"        in data: self.max_vol_var.set(data["max_vol"])
@@ -3307,6 +3394,17 @@ class App:
                 pass
 
     def _on_close(self):
+        # Remember the width the user is leaving the window at, so it re-opens
+        # the same next time. Captured here (a stable, post-boot moment) rather
+        # than in _save_config, which also fires during construction when the
+        # window is briefly at its over-wide natural size.
+        try:
+            _w = self.root.winfo_width()
+            if 200 < _w <= _MAX_WIN_W:
+                self._win_w = _w
+            # else: don't persist an over-wide width, or it boots huge next time.
+        except Exception:
+            pass
         self._save_config()
         self._cleanup()
         self.root.destroy()
@@ -3509,6 +3607,23 @@ class App:
         log.info(f"Flaccid height set at Y={self.head_y}")
         self._save_config()
 
+    def _set_ponr(self):
+        # NOTE: deliberately does NOT call _disable_auto() — the Point of No
+        # Return is independent of the auto-calibrated edge/erect/flaccid lines,
+        # so you can keep auto running and still drop a manual panic line on top.
+        self._cancel_pick()
+        self.heights["PONR"] = self.head_y
+        self._ponr_triggered = False
+        log.info(f"Point of No Return set at Y={self.head_y}")
+        self._save_config()
+
+    def _clear_ponr(self):
+        self._cancel_pick()
+        self.heights["PONR"] = None
+        self._ponr_triggered = False
+        log.info("Point of No Return cleared")
+        self._save_config()
+
     def _start_pick(self, which: str):
         """Enter click-to-set mode: next click on video sets that height."""
         self._disable_auto()
@@ -3545,7 +3660,8 @@ class App:
 
     def _reset_heights(self):
         """Clear calibrated heights — called whenever the feed changes."""
-        self.heights = {"Edging": None, "Erect": None, "Flaccid": None}
+        self.heights = {"Edging": None, "Erect": None, "Flaccid": None, "PONR": None}
+        self._ponr_triggered = False
         self._auto_min_y = None
         self._auto_max_y = None
         self._auto_obs_start = None
@@ -4486,8 +4602,7 @@ class App:
                      "3. Connections \u2192 add your toy under Generic Output\n"
                      "4. Go to xtoys.app/me \u2192 Private Webhook\n"
                      "5. Copy the Webhook ID \u2192 paste it into VSE\n"
-                     "6. In xToys Connections \u2192 enable Private Webhook \u2192 Save\n"
-                     "7. Keep the xToys tab open while using VSE",
+                     "6. Keep the xToys tab & script running while using VSE",
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
@@ -4994,7 +5109,46 @@ class App:
             # file users paste into bug reports.
             _masked = f"…{new_id[-4:]}" if len(new_id) >= 4 else "(set)"
             log.info(f"xToys: webhook ID updated ({_masked})")
+        self._update_xtoys_id_warning(new_id)
         self._save_config()
+
+    def _xtoys_id_looks_wrong(self, s):
+        """Heuristic: does this look like a pasted URL / host:port instead of a
+        Webhook ID? A real ID is a short alphanumeric token, e.g. 8hR5acKTCx2s.
+        Returns a warning string, or None if it looks fine (or is empty)."""
+        s = (s or "").strip()
+        if not s:
+            return None
+        low = s.lower()
+        if any(b in low for b in ("http", "://", "localhost", "127.0.0.1", "xtoys.app")):
+            return ("That's a URL / address, not a Webhook ID. Get the short "
+                    "code from xtoys.app/me → Private Webhook (e.g. 8hR5acKTCx2s).")
+        if "/" in s or ":" in s or " " in s:
+            return ("That doesn't look like a Webhook ID — paste just the short "
+                    "code from xtoys.app/me → Private Webhook (e.g. 8hR5acKTCx2s), no URL or slashes.")
+        return None
+
+    def _update_xtoys_id_warning(self, new_id):
+        lbl = getattr(self, "_xtoys_warn", None)
+        if lbl is None:
+            return   # panel not built yet (e.g. during initial config load)
+        warn = self._xtoys_id_looks_wrong(new_id)
+        ent = getattr(self, "_xtoys_entry", None)
+        if warn:
+            lbl.configure(text="⚠ " + warn)
+            if not getattr(self, "_xtoys_warn_shown", False):
+                lbl.pack(anchor="w", padx=12, pady=(0, 6))
+                self._xtoys_warn_shown = True
+            if ent is not None:
+                try: ent.configure(border_color="#ff5555")
+                except Exception: pass
+        else:
+            if getattr(self, "_xtoys_warn_shown", False):
+                lbl.pack_forget()
+                self._xtoys_warn_shown = False
+            if ent is not None:
+                try: ent.configure(border_color=self._C_BORDER)
+                except Exception: pass
 
     def _on_hr_source_change(self, value: str):
         self._hr_source = "ble" if value == "BLE Direct" else "pulsoid"
@@ -5170,11 +5324,17 @@ class App:
                                               fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _fit_window(self):
-        """Resize root height to exactly fit its current content."""
+        """Fit root HEIGHT to content; WIDTH honours the user's remembered size.
+
+        The content only needs ~560px across, but a widget below over-requests
+        width, so letting reqwidth drive it booted the window too wide. Instead
+        we pin width to the persisted value (or a sensible default that fits the
+        status line) and only auto-fit height — which also drops the empty gap
+        at the bottom. The window stays resizable, and any resize is remembered."""
         self.root.update_idletasks()
-        w = self.root.winfo_reqwidth()
         h = self.root.winfo_reqheight()
-        self.root.geometry(f"{max(w, 540)}x{h + 24}")
+        w = self._win_w or _DEFAULT_WIN_W
+        self.root.geometry(f"{w}x{h + 24}")
 
     def _toggle_play_mode(self):
         self._play_mode = not self._play_mode
@@ -5352,6 +5512,9 @@ class App:
                     self._run_tracker(frame)
                 if self._auto_mode and self.tracking_ok:
                     self._auto_feed(self.head_y)
+                # Panic cut runs on the fresh (unsmoothed) head_y every heavy
+                # frame — ~15 fps — so it beats the 0.5s volume tick to the punch.
+                self._check_ponr()
 
             state = self._determine_state(self.head_y)
 
@@ -5690,6 +5853,14 @@ class App:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1, cv2.LINE_AA)
         if self.heights["Erect"]   is not None: cv2.line(frame, (0, int(self.heights["Erect"])),   (fw, int(self.heights["Erect"])),   (0, 255, 0), 2)
         if self.heights["Flaccid"] is not None: cv2.line(frame, (0, int(self.heights["Flaccid"])), (fw, int(self.heights["Flaccid"])), (255, 0, 0), 2)
+        # Point of No Return — yellow (BGR 0,215,255). Cross ABOVE it → instant cut.
+        ponr_y = self.heights.get("PONR")
+        if ponr_y is not None:
+            py = int(ponr_y)
+            cv2.line(frame, (0, py), (fw, py), (0, 215, 255), 2)
+            label_y = py + 16 if py < 16 else py - 5
+            cv2.putText(frame, "POINT OF NO RETURN", (4, label_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 215, 255), 1, cv2.LINE_AA)
 
     def _compute_volume_delta(self):
         if any(self.heights.get(k) is None for k in ("Edging", "Erect", "Flaccid")):
@@ -5786,6 +5957,44 @@ class App:
         return VOLUME_STEP * (min(dist, 1.0) + vel_boost) * aggr_mult
 
 
+    def _check_ponr(self):
+        """Point of No Return — the instant the head crosses ABOVE the optional
+        yellow line, hard-cut every output to the floor.
+
+        Edge-triggered: one instant cut fires on the crossing, then _ponr_triggered
+        latches so _tick_volume pins the floor until the head drops back below.
+        Uses the RAW head_y (not the smoothed history the reactive ramp uses) so
+        it responds to a last-second spike immediately instead of lagging.
+
+        Optional by design: an unset (None) line makes this a no-op, and it never
+        touches the state machine or volume curve — nothing else depends on it."""
+        ponr_y = self.heights.get("PONR")
+        if ponr_y is None:
+            self._ponr_triggered = False
+            return
+        # Never trip on a lost/frozen head_y (stale data would latch the cut, or
+        # fire it while the tracker is drifting). Same safety gate the recovery
+        # ramp uses.
+        if not self.tracking_ok:
+            return
+        # Deliberate flows that own the outputs get to keep them.
+        if self._cum_stopped or self._cum_allowed or self._ruin_active:
+            return
+        above = self.head_y < ponr_y   # smaller Y = higher on screen = past the line
+        if above and not self._ponr_triggered:
+            self._ponr_triggered = True
+            floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+            self._set_all_outputs(floor_val, instant=True)
+            log.info(f"Point of No Return crossed (head_y={self.head_y} < {int(ponr_y)}) "
+                     f"— output cut to floor {floor_val*100:.0f}%")
+            try:
+                self._snark_label.configure(
+                    text="⚡ Point of No Return — cut", text_color=self._C_YELLOW)
+            except Exception:
+                pass
+        elif not above:
+            self._ponr_triggered = False
+
     def _tick_volume(self):
         cur_time = time.time()
         if cur_time - self.last_vol_time < VOLUME_UPDATE_INTERVAL:
@@ -5807,6 +6016,16 @@ class App:
         # in case something else nudged it.)
         if self._cum_stopped:
             self._set_all_outputs(0.0)
+            return
+
+        # ── Point of No Return active — head is past the yellow line ─────────
+        # _check_ponr already fired the instant cut on the crossing; keep the
+        # floor pinned every tick so position-driven deltas (and recovery/AE)
+        # can't climb back out until the head drops below the line. Overrides
+        # hold, since a frozen-high volume is exactly what this line prevents.
+        if self._ponr_triggered and self.heights.get("PONR") is not None:
+            floor_val = min(self.min_vol_var.get(), self.max_vol_var.get()) / 100.0
+            self._set_all_outputs(floor_val)
             return
 
         if self.hold_active:
@@ -5835,6 +6054,8 @@ class App:
         if self.xtoys_on.get():
             if delta != 0.0:
                 self.xtoys.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
+            else:
+                self.xtoys.keepalive(floor=floor_val, ceiling=ceil_val)
             self.xtoys.maybe_reconnect()
         if self.audio_on.get() and self.win_audio and self.win_audio.connected and delta != 0.0:
             self.win_audio.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
