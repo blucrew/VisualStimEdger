@@ -211,7 +211,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.7"
+VERSION = "1.8.8"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -608,10 +608,9 @@ class RestimClient:
 
 
 class XToysClient:
-    """Sends intensity to xToys via the script's Local Webhook HTTP endpoint.
+    """Sends intensity to xToys via the account Private Webhook HTTP endpoint.
     Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=setIntensity&intensity=<0-100>
-    The webhook_id comes from the VisualStimEdger script's Local Webhook card
-    (enable Local Webhook → Save → click the satellite-dish Connect icon → copy the ID).
+    The webhook_id is your Private Webhook ID from xtoys.app/me → Private Webhook.
     Stateless HTTP GET — no persistent connection needed.
     """
     _WEBHOOK_URL = "https://xtoys.app/webhook"
@@ -2672,7 +2671,7 @@ class App:
                      placeholder_text="e.g. 8hR5acKTCx2s")
         self._xtoys_entry.pack(side=tk.LEFT, padx=(0, 8))
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output \u2192 enable Local Webhook \u2192 Save \u2192 click the satellite-dish (Connect) icon \u2192 copy the Webhook ID here.",
+                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output. Get your Webhook ID at xtoys.app/me \u2192 Private Webhook and paste it here.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self._xtoys_warn = ctk.CTkLabel(self._xtoys_opts, text="",
@@ -4532,10 +4531,9 @@ class App:
                      "1. Open xtoys.app in a browser and sign in\n"
                      "2. Scripts \u2192 search \u201cVisualStimEdger\u201d \u2192 Load Script\n"
                      "3. Connections \u2192 add your toy under Generic Output\n"
-                     "4. Enable Local Webhook \u2192 Save\n"
-                     "5. Click the satellite-dish icon \u2192 Connect\n"
-                     "6. Copy the Webhook ID \u2192 paste it into VSE\n"
-                     "7. Keep the xToys tab & script running while using VSE",
+                     "4. Go to xtoys.app/me \u2192 Private Webhook\n"
+                     "5. Copy the Webhook ID \u2192 paste it into VSE\n"
+                     "6. Keep the xToys tab & script running while using VSE",
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
@@ -5054,11 +5052,11 @@ class App:
             return None
         low = s.lower()
         if any(b in low for b in ("http", "://", "localhost", "127.0.0.1", "xtoys.app")):
-            return ("That's a URL / address, not a Webhook ID. Click the "
-                    "satellite-dish → Connect and copy the short code (e.g. 8hR5acKTCx2s).")
+            return ("That's a URL / address, not a Webhook ID. Get the short "
+                    "code from xtoys.app/me → Private Webhook (e.g. 8hR5acKTCx2s).")
         if "/" in s or ":" in s or " " in s:
             return ("That doesn't look like a Webhook ID — paste just the short "
-                    "code from Connect (e.g. 8hR5acKTCx2s), no URL, port or slashes.")
+                    "code from xtoys.app/me → Private Webhook (e.g. 8hR5acKTCx2s), no URL or slashes.")
         return None
 
     def _update_xtoys_id_warning(self, new_id):
