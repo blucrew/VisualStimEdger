@@ -253,7 +253,7 @@ if WINDOWS:
 # it does `self._overlay = OverlayServer()`. (Was: marker_end="\nclass MusicPlayer:",
 # which swept OverlayServer into the if-WINDOWS block.)
 marker_start = "\ndef list_audio_devices():\n"
-marker_end   = "\n# ── OBS overlay WebSocket server"
+marker_end   = "\ndef check_for_update(on_update_available):"
 
 idx_start = src.find(marker_start)
 idx_end   = src.find(marker_end)

@@ -1465,31 +1465,6 @@ if WINDOWS:
             self.set_volume(cur + delta, floor=floor, ceiling=ceiling)
 
 
-    def check_for_update(on_update_available):
-        """Runs in a background thread. Calls on_update_available(latest_version, url) if a newer release exists."""
-        try:
-            resp = requests.get(
-                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                timeout=5,
-                headers={"Accept": "application/vnd.github+json"}
-            )
-            if resp.status_code != 200:
-                return
-            data = resp.json()
-            latest = data.get("tag_name", "").lstrip("v")
-            url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
-            try:
-                # Guard against pre-release tags like "1.2.0-beta.1"
-                latest_tuple  = tuple(int(x) for x in latest.split(".")[:3] if x.isdigit())
-                current_tuple = tuple(int(x) for x in VERSION.split(".")[:3] if x.isdigit())
-                if latest_tuple and latest_tuple > current_tuple:
-                    on_update_available(latest, url)
-            except Exception:
-                pass
-        except Exception:
-            pass  # silently ignore — no internet, rate limit, etc.
-
-
 else:
     def list_audio_devices():
         return []
@@ -1506,6 +1481,31 @@ else:
             pass
         def adjust_volume(self, delta, floor=0.0, ceiling=1.0):
             pass
+
+def check_for_update(on_update_available):
+    """Runs in a background thread. Calls on_update_available(latest_version, url) if a newer release exists."""
+    try:
+        resp = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+            timeout=5,
+            headers={"Accept": "application/vnd.github+json"}
+        )
+        if resp.status_code != 200:
+            return
+        data = resp.json()
+        latest = data.get("tag_name", "").lstrip("v")
+        url = data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases/latest")
+        try:
+            # Guard against pre-release tags like "1.2.0-beta.1"
+            latest_tuple  = tuple(int(x) for x in latest.split(".")[:3] if x.isdigit())
+            current_tuple = tuple(int(x) for x in VERSION.split(".")[:3] if x.isdigit())
+            if latest_tuple and latest_tuple > current_tuple:
+                on_update_available(latest, url)
+        except Exception:
+            pass
+    except Exception:
+        pass  # silently ignore — no internet, rate limit, etc.
+
 
 # ── OBS overlay WebSocket server ──────────────────────────────────────────────
 import asyncio, struct, hashlib, base64, socket as _socket
