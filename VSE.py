@@ -2350,6 +2350,15 @@ class App:
         self._snark_label = ctk.CTkLabel(vid_shell, text="", font=ctk.CTkFont(size=11, slant="italic"),
                                           text_color="#ff4444", height=20)
         self._snark_label.pack(padx=3, pady=(0, 3))
+        # #2 — tribute button, shown ONLY during the cum-grant countdown; skippable,
+        # never blocks the count. Created hidden; _grant_cum packs it, the cum-window
+        # end (_tick_cum_grant expiry / cum-stopped) hides it again.
+        self._tribute_btn = ctk.CTkButton(
+            vid_shell, text="😈 tribute your dom before you're allowed → ☕", height=24,
+            fg_color="#8a1a1a", hover_color="#6a0a0a", text_color="#F5A623",
+            border_width=1, border_color="#F5A623",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=lambda: webbrowser.open("https://ko-fi.com/stimstation"))
         # Re-select buttons live directly under the video preview
         _vbr = ctk.CTkFrame(vid_col, fg_color="transparent")
         _vbr.pack(fill=tk.X, pady=(4, 0))
@@ -3172,6 +3181,8 @@ class App:
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
                 "reanchor_lock":        self._reanchor_lock,
+                "tribute_last_shown":    getattr(self, '_tribute_last_shown', 0.0),
+                "tribute_session_count": getattr(self, '_tribute_session_count', 0),
                 "erect_recovery":       self._erect_recovery,
                 "active_edging":        self._active_edging,
                 "recovery_pct":         self._recovery_pct,
@@ -3230,6 +3241,8 @@ class App:
             if "xtoys_id" in data:
                 self.xtoys_id_var.set(str(data.get("xtoys_id", "")))
                 self.xtoys.webhook_id = self.xtoys_id_var.get()
+            self._tribute_last_shown    = float(data.get("tribute_last_shown", 0) or 0)
+            self._tribute_session_count = int(data.get("tribute_session_count", 0) or 0)
             if "tcode_axis" in data:
                 try:
                     ax = str(data["tcode_axis"]).strip().upper()
@@ -3897,6 +3910,7 @@ class App:
             text_color="#3EC941")
         self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#3EC941",
                                      hover_color="#32a435")
+        self._tribute_btn.pack(padx=3, pady=(0, 3))   # #2: nudge at peak, never blocks
         if self._cum_override_range:
             target_vol = 1.0
         else:
@@ -3942,6 +3956,7 @@ class App:
             # Time's up — revoke permission
             self._cum_allowed = False
             self._last_letmecum_result = "expired"
+            self._tribute_btn.pack_forget()
             self._letmecum_btn.configure(text="Too slow!",
                                          fg_color="#FF4444", hover_color="#cc3636")
             self._snark_label.configure(text="Time's up. Back to edging.",
@@ -4120,6 +4135,7 @@ class App:
         self._cum_time = time.time()
         self._cum_stopped = True
         self._cum_allowed = False
+        self._tribute_btn.pack_forget()
         self._cum_grant_expires = 0
         self._letmecum_btn.configure(text="Let me cum?", fg_color="#3EC941",
                                      hover_color="#32a435", state="disabled")
@@ -6243,6 +6259,7 @@ class App:
         )
         if hasattr(self, '_help_label'):
             self._help_label.configure(text=help_msg)
+        self._maybe_tribute()      # #1: milestone tribute nudge (self-gated, ~once/session)
 
         # UX-4: calibration hint — show when all three heights are unset and session is live
         if hasattr(self, '_snark_label'):
@@ -6270,6 +6287,54 @@ class App:
                 self._play_hr_lbl.configure(text="")
             self._play_snark_lbl.configure(
                 text=self._snark_label.cget("text") if hasattr(self, '_snark_label') else "")
+
+    def _maybe_tribute(self):
+        """#1 — once per session, after a genuinely real session (>25 min AND >=5
+        edges), nudge for a tribute. Gated: only after 2 prior qualifying sessions,
+        and at most once a week. A show (or the user's dismiss) buys a week of quiet."""
+        if getattr(self, '_tribute_handled_session', False) or not self._running:
+            return
+        if (time.time() - self.session_start) < 25 * 60 or self.edge_count < 5:
+            return
+        self._tribute_handled_session = True   # handled once per session (shown or not)
+        self._tribute_session_count = getattr(self, '_tribute_session_count', 0) + 1
+        now = time.time()
+        due = (now - getattr(self, '_tribute_last_shown', 0.0)) > 7 * 24 * 3600
+        if self._tribute_session_count > 2 and due:
+            self._tribute_last_shown = now
+            self._show_tribute_toast()
+        self._save_config()
+
+    def _show_tribute_toast(self):
+        """Small non-modal, non-focus-stealing toast. Never blocks the session."""
+        try:
+            t = tk.Toplevel(self.root)
+            t.overrideredirect(True)
+            t.attributes("-topmost", True)
+            self.root.update_idletasks()
+            x = self.root.winfo_x() + self.root.winfo_width() // 2 - 200
+            y = self.root.winfo_y() + 70
+            t.geometry(f"400x120+{max(0, x)}+{max(0, y)}")
+            fr = ctk.CTkFrame(t, fg_color="#141414", border_width=2,
+                              border_color="#F5A623", corner_radius=10)
+            fr.pack(fill=tk.BOTH, expand=True)
+            ctk.CTkLabel(fr, text=f"You've been edging {self.edge_count}+ times, hands-free.",
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=self._C_TEXT).pack(pady=(12, 2), padx=14)
+            ctk.CTkLabel(fr, text="Free tool. One guy made it. Tribute your dev? 😈",
+                         font=ctk.CTkFont(size=11), text_color=self._C_TEXT_DIM).pack(pady=(0, 8), padx=14)
+            br = ctk.CTkFrame(fr, fg_color="transparent"); br.pack(pady=(0, 10))
+            ctk.CTkButton(br, text="☕ Tribute", width=120, fg_color="#F5A623",
+                          hover_color="#d68f14", text_color="#000000",
+                          font=ctk.CTkFont(weight="bold"),
+                          command=lambda: (webbrowser.open("https://ko-fi.com/stimstation"),
+                                           t.destroy())).pack(side=tk.LEFT, padx=8)
+            ctk.CTkButton(br, text="Not now", width=90, fg_color=self._C_SURFACE,
+                          hover_color="#4a4a4a", border_width=1, border_color=self._C_BORDER,
+                          command=t.destroy).pack(side=tk.LEFT, padx=8)
+            t.after(25000, lambda: t.winfo_exists() and t.destroy())
+        except Exception as e:
+            log.debug(f"tribute toast failed: {type(e).__name__}")
 
     def _broadcast_overlay(self, state):
         # Use highest active volume so OBS reflects what's actually happening
