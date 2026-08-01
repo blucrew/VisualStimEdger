@@ -2783,8 +2783,15 @@ class App:
                      text_color=self._C_TEXT,
                      placeholder_text="e.g. 8hR5acKTCx2s")
         self._xtoys_entry.pack(side=tk.LEFT, padx=(0, 8))
+        # One-click shortcut straight to the Private Webhook page \u2014 saves users hunting
+        # for xtoys.app/me. Mirrors the About-menu link buttons (webbrowser.open).
+        ctk.CTkButton(xo, text="Get ID \u2197", width=64, height=24,
+                      command=lambda: webbrowser.open("https://xtoys.app/me"),
+                      fg_color=self._C_SURFACE, hover_color="#4a4a4a",
+                      text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
+                      font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output. Get your Webhook ID at xtoys.app/me \u2192 Private Webhook and paste it here.",
+                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output. Or tap \u201cGet ID\u201d to open xtoys.app/me \u2192 Private Webhook, then paste the ID here.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self._xtoys_warn = ctk.CTkLabel(self._xtoys_opts, text="",
@@ -6177,8 +6184,14 @@ class App:
 
         ft = self._frame_times
         fps = (len(ft) - 1) / max(ft[-1] - ft[0], 1e-9) if len(ft) >= 2 else 0.0
-        yolo_str = (f"YOLO: {self.detector.last_conf:.0%}"
-                    if self.detector.available and self.detector.last_conf > 0 else "YOLO: --")
+        if not self.detector.available:
+            yolo_str = "YOLO: n/a"            # model failed to load
+        elif self._reanchor_lock:
+            yolo_str = "YOLO: off"            # "Lock on target" is on — reanchoring disabled
+        elif self.detector.last_conf > 0:
+            yolo_str = f"YOLO: {self.detector.last_conf:.0%}"
+        else:
+            yolo_str = "YOLO: --"             # enabled but hasn't detected the head yet
 
         status_text = (f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
                        f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}")
