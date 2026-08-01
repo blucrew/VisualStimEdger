@@ -85,6 +85,8 @@ Set your **Vol Floor** and **Vol Ceiling** sliders to define the range the progr
 6. Paste it into the **Webhook ID** field in VSE — the status bar will show `xToys: OK`
 
 > **Note:** This uses the account **Private Webhook** (stateless HTTP), so it works on **Windows and macOS** with no local port or helper app. The Private Webhook ID is stable — it doesn't change between sessions. Keep the xToys browser tab open while using VSE.
+>
+> **Run the script:** after loading it and binding your toy, press the green **▶** (play) on the script panel so it is *running*. The webhook only drives your toy while the script is running — a merely-loaded script won't respond.
 
 ### 4. Draw a box around your video feed
 

@@ -609,11 +609,13 @@ class RestimClient:
 
 class XToysClient:
     """Sends intensity to xToys via the account Private Webhook HTTP endpoint.
-    Endpoint : https://xtoys.app/webhook?id=<webhook_id>&action=setIntensity&intensity=<0-100>
+    Endpoint : POST https://webhook.xtoys.app/<webhook_id>
+    Body     : {"action": "setintensity", "intensity": <0-100>}   (JSON)
     The webhook_id is your Private Webhook ID from xtoys.app/me → Private Webhook.
-    Stateless HTTP GET — no persistent connection needed.
+    Cloud-relayed, so it works cross-device (VSE and the xToys tab can be on
+    different machines) with no local port or helper app. Stateless HTTP POST.
     """
-    _WEBHOOK_URL = "https://xtoys.app/webhook"
+    _WEBHOOK_BASE = "https://webhook.xtoys.app/"
     _KEEPALIVE_SECS = 10.0   # re-send an unchanged level at least this often so the
                              # webhook connection stays warm (status stays "OK") and
                              # the toy keeps being driven while the user holds steady
@@ -655,13 +657,10 @@ class XToysClient:
                     and (now - self._last_send_t) < self._KEEPALIVE_SECS):
                 return
             self._last_send_t = now
-            params = {
-                "id":        self.webhook_id.strip(),
-                "action":    "setIntensity",
-                "intensity": val_int,
-            }
+            url  = self._WEBHOOK_BASE + self.webhook_id.strip()
+            body = {"action": "setintensity", "intensity": val_int}
             try:
-                r = self._session.get(self._WEBHOOK_URL, params=params, timeout=5.0)
+                r = self._session.post(url, json=body, timeout=5.0)
                 if r.status_code == 200:
                     self._last_sent_int  = val_int
                     self._last_error     = None
