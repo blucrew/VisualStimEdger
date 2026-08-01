@@ -211,7 +211,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.8.9"
+VERSION = "1.9.0"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -616,6 +616,10 @@ class XToysClient:
     different machines) with no local port or helper app. Stateless HTTP POST.
     """
     _WEBHOOK_BASE = "https://webhook.xtoys.app/"
+    _WS_BASE      = "wss://webhook.xtoys.app/"   # VSE listens here for the script's ack
+                                                 # (proof it is running + which toys are
+                                                 # bound) so the status can be truthful
+    _WS_STALE_S   = 20.0     # script counts as "responding" if heard from within this
     _KEEPALIVE_SECS = 10.0   # re-send an unchanged level at least this often so the
                              # webhook connection stays warm (status stays "OK") and
                              # the toy keeps being driven while the user holds steady
@@ -629,6 +633,13 @@ class XToysClient:
         self._last_success_t = 0.0
         self._last_send_t    = 0.0
         self._session        = requests.Session()
+        # ── WSS return channel (script → VSE): ack + bound-toy list ─────────────
+        self._toys           = []      # toy/channel names bound under Generic Output
+        self._last_ws_rx     = 0.0     # last time the script answered over the socket
+        self._ws             = None
+        self._ws_thread      = None
+        self._ws_stop        = threading.Event()
+        self._ws_id          = ""      # webhook id the current listener is bound to
 
     @property
     def enabled(self):
@@ -640,8 +651,23 @@ class XToysClient:
         with self._lock:
             return (time.time() - self._last_success_t) < 30.0
 
+    @property
+    def listening(self):
+        """True if the script answered over the socket recently — i.e. it is actually
+        running and receiving our commands, not merely that the cloud returned 200."""
+        with self._lock:
+            return (time.time() - self._last_ws_rx) < self._WS_STALE_S
+
+    @property
+    def toys(self):
+        """Names of the toys/channels bound under the script's Generic Output, as the
+        script reports them over the socket. Empty until the script answers."""
+        with self._lock:
+            return list(self._toys)
+
     def maybe_reconnect(self):
-        pass  # HTTP is stateless — nothing to reconnect
+        # HTTP send is stateless; this keeps the WSS return-channel listener alive.
+        self.start_listener()
 
     def set_volume(self, vol, instant=False, floor=0.0, ceiling=1.0):
         with self._lock:
@@ -685,10 +711,98 @@ class XToysClient:
         # warm (status stays OK) and the toy driven while the user holds steady.
         self.set_volume(self.volume, floor=floor, ceiling=ceiling)
 
+    # ── WSS return channel ─────────────────────────────────────────────────────
+    def start_listener(self):
+        """Open (or re-open) the WSS listener for the current webhook id. The script
+        answers commands here with an ack + its bound-toy list, which is how VSE knows
+        it is genuinely connected rather than the cloud simply returning 200."""
+        if not self.enabled:
+            return
+        wid = self.webhook_id.strip()
+        if self._ws_thread and self._ws_thread.is_alive() and self._ws_id == wid:
+            return
+        self._stop_listener()
+        self._ws_id = wid
+        self._ws_stop.clear()
+        with self._lock:
+            self._last_ws_rx = 0.0
+            self._toys = []
+        self._ws_thread = threading.Thread(target=self._ws_run, daemon=True, name="XToysWS")
+        self._ws_thread.start()
+
+    def _stop_listener(self):
+        self._ws_stop.set()
+        ws = self._ws
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
+        self._ws = None
+
+    def _ws_run(self):
+        while not self._ws_stop.is_set():
+            wid = self._ws_id
+            if not wid:
+                time.sleep(2.0)
+                continue
+            try:
+                ws = websocket.WebSocketApp(
+                    self._WS_BASE + wid,
+                    on_open=self._ws_on_open,
+                    on_message=self._ws_on_message,
+                    on_error=lambda ws, e: log.debug(f"xToys WS: {type(e).__name__}"),
+                    on_close=lambda ws, c, m: None,
+                )
+                self._ws = ws
+                # TLS verified by default (the webhook id is a device-control
+                # capability in the URL) — do NOT pass cert_reqs=CERT_NONE.
+                ws.run_forever(ping_interval=20, ping_timeout=10)
+            except Exception as e:
+                log.debug(f"xToys WS connect: {type(e).__name__}")
+            finally:
+                self._ws = None
+            if not self._ws_stop.is_set():
+                time.sleep(5.0)
+
+    def _ws_on_open(self, ws):
+        log.info("xToys: return-channel connected — waiting for the script to ack")
+        # Ask which toys are bound; the script answers over this same socket.
+        try:
+            ws.send(json.dumps({"action": "getToys"}))
+        except Exception:
+            pass
+
+    def _ws_on_message(self, ws, raw):
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        # Only the SCRIPT's own frames prove it is running — its ack/reply carries an
+        # "action" and/or a "toys" list. xToys' relay frames ({"success":true},
+        # {"event":"join",...}) arrive on every connect and must NOT be mistaken for
+        # the script responding, or "listening" would be true with no script at all.
+        if "action" not in data and "toys" not in data:
+            return
+        now  = time.time()
+        toys = data.get("toys")
+        with self._lock:
+            was_listening = (now - self._last_ws_rx) < self._WS_STALE_S
+            self._last_ws_rx = now
+            if isinstance(toys, list):
+                self._toys = [str(t) for t in toys]
+        if not was_listening:
+            log.info("xToys: script confirmed running (ack received)")
+
     def disconnect(self):
+        self._stop_listener()
         with self._lock:
             self._last_sent_int  = None
             self._last_success_t = 0.0
+            self._last_ws_rx     = 0.0
+            self._toys           = []
             try:
                 self._session.close()
             except Exception:
@@ -5039,6 +5153,7 @@ class App:
             # file users paste into bug reports.
             _masked = f"…{new_id[-4:]}" if len(new_id) >= 4 else "(set)"
             log.info(f"xToys: webhook ID updated ({_masked})")
+            self.xtoys.start_listener()
         self._update_xtoys_id_warning(new_id)
         self._save_config()
 
@@ -6003,11 +6118,26 @@ class App:
             elif conn_color != "#00ff00": conn_color = "#ff0000"
             parts.append(f"WS: {'OK' if ok else 'Disconnected'}")
         if self.xtoys_on.get():
-            ok = self.xtoys.connected
-            if ok: conn_color = "#00ff00"
-            elif conn_color != "#00ff00":
-                conn_color = "#ffaa00" if not self.xtoys.enabled else "#ff0000"
-            parts.append(f"xToys: {'OK' if ok else ('No ID' if not self.xtoys.enabled else 'Connecting...')}")
+            if not self.xtoys.enabled:
+                if conn_color != "#00ff00": conn_color = "#ffaa00"
+                parts.append("xToys: No ID")
+            elif self.xtoys.listening:
+                # Script answered over the socket → genuinely connected. Show the toy.
+                conn_color = "#00ff00"
+                toys = self.xtoys.toys
+                if toys:
+                    _t = toys[0] if len(toys) == 1 else f"{toys[0]} +{len(toys) - 1}"
+                    parts.append(f"xToys: OK ({_t})")
+                else:
+                    parts.append("xToys: OK")
+            elif self.xtoys.connected:
+                # Cloud is accepting our POSTs but the script hasn't answered — it may
+                # not be running (or not reloaded to the echo-capable script version).
+                if conn_color != "#00ff00": conn_color = "#ffaa00"
+                parts.append("xToys: sending...")
+            else:
+                if conn_color != "#00ff00": conn_color = "#ff0000"
+                parts.append("xToys: Connecting...")
         if self.audio_on.get():
             if self.win_audio and self.win_audio.connected:
                 conn_color = "#00ff00"
