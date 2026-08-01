@@ -2960,6 +2960,15 @@ class App:
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
+        # Soft promo: users on audio output (electro) are exactly who'd want the pattern packs.
+        _js_btn = ctk.CTkButton(wo, text="⚡ Free stim patterns ↗", width=168, height=24,
+                      fg_color=self._C_SURFACE, hover_color="#4a4a4a",
+                      text_color="#F5A623", border_width=1, border_color="#F5A623",
+                      font=ctk.CTkFont(size=10, weight="bold"),
+                      command=lambda: webbrowser.open("https://ko-fi.com/s/db90a470a9"))
+        _js_btn.pack(side=tk.RIGHT)
+        Tooltip(_js_btn, "Sir Thorn's Sunday Drive sessions as JSON stim patterns — free / "
+                         "pay-what-you-want. Made for electro over your audio output. Opens Ko-fi.")
 
         self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))  # default; _on_output_change re-packs after load
 
@@ -2982,6 +2991,15 @@ class App:
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_folder).pack(side=tk.LEFT, padx=(0, 10))
+            # Soft promo: they're sat here looking for something to load.
+            _pv_btn = ctk.CTkButton(load_row, text="🎧 21 tracks to edge to ↗", width=190, height=28,
+                          fg_color=self._C_SURFACE, hover_color="#4a4a4a",
+                          text_color="#F5A623", border_width=1, border_color="#F5A623",
+                          font=ctk.CTkFont(size=10, weight="bold"),
+                          command=lambda: webbrowser.open("https://ko-fi.com/s/ab28a9a250"))
+            _pv_btn.pack(side=tk.RIGHT)
+            Tooltip(_pv_btn, "Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. "
+                             "Load them straight into this player. Opens Ko-fi.")
             self._mp3_track_lbl = ctk.CTkLabel(load_row, text="No file loaded",
                                                font=ctk.CTkFont(size=10),
                                                text_color=self._C_TEXT_DIM,
