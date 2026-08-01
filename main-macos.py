@@ -3075,6 +3075,15 @@ class App:
         )
         self.info_label.pack(pady=(4, 1))
 
+        # Contextual "what to do" line — blank when healthy, speaks up on a connection
+        # problem (populated in _update_status_label). Kept separate from the busy
+        # italic snark line below the video so the two don't fight over one widget.
+        self._help_label = ctk.CTkLabel(
+            sf, text="", font=ctk.CTkFont(size=11), text_color="#F5A623",
+            wraplength=560, justify="center",
+        )
+        self._help_label.pack(pady=(0, 1))
+
         self.stats_label = ctk.CTkLabel(
             sf, text="Session: 00:00  |  Edges: 0",
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
@@ -6187,33 +6196,45 @@ class App:
         quality_str = "Track: OK" if self.tracking_ok else "Track: LOST"
         parts = []
         conn_color = "#ffaa00"
+        help_msg = ""   # contextual fix-it line under the status; blank when healthy
 
         if self.restim_on.get():
             ok = bool(self.restim.ws)
             if ok: conn_color = "#00ff00"
             elif conn_color != "#00ff00": conn_color = "#ff0000"
             parts.append(f"WS: {'OK' if ok else 'Disconnected'}")
+            if not ok and not help_msg:
+                help_msg = "Restim disconnected — enable its WebSocket server and check the port matches."
         if self.xtoys_on.get():
             if not self.xtoys.enabled:
                 if conn_color != "#00ff00": conn_color = "#ffaa00"
                 parts.append("xToys: No ID")
+                if not help_msg:
+                    help_msg = "xToys: paste your Webhook ID from xtoys.app/me → Private Webhook (or tap Get ID)."
             elif self.xtoys.listening:
-                # Script answered over the socket → genuinely connected. Show the toy.
+                # Script acked over the socket → genuinely running and receiving us.
                 conn_color = "#00ff00"
                 toys = self.xtoys.toys
                 if toys:
                     _t = toys[0] if len(toys) == 1 else f"{toys[0]} +{len(toys) - 1}"
-                    parts.append(f"xToys: OK ({_t})")
+                    parts.append(f"xToys: Live ({_t})")
                 else:
-                    parts.append("xToys: OK")
+                    parts.append("xToys: Live")
             elif self.xtoys.connected:
-                # Cloud is accepting our POSTs but the script hasn't answered — it may
-                # not be running (or not reloaded to the echo-capable script version).
+                # Cloud accepts our POSTs but the script hasn't acked — most likely the
+                # block was stopped (lookalikes: an old copy without the ack, or a wrong
+                # ID). Hence the honest "block STOPPED?" with the "?" + a fuller hint.
                 if conn_color != "#00ff00": conn_color = "#ffaa00"
-                parts.append("xToys: sending...")
+                parts.append("xToys: block STOPPED?")
+                if not help_msg:
+                    help_msg = ("xToys reached the cloud but the block didn't answer — press ▶ to run the "
+                                "VisualStimEdger block in your xToys tab (reload it if it's an old copy, or "
+                                "re-check your Webhook ID).")
             else:
                 if conn_color != "#00ff00": conn_color = "#ff0000"
-                parts.append("xToys: Connecting...")
+                parts.append("xToys: Offline")
+                if not help_msg:
+                    help_msg = "Can't reach xToys — check your internet connection and Webhook ID."
         if self.audio_on.get():
             if self.win_audio and self.win_audio.connected:
                 conn_color = "#00ff00"
@@ -6271,6 +6292,8 @@ class App:
             text=status_text,
             text_color=conn_color,
         )
+        if hasattr(self, '_help_label'):
+            self._help_label.configure(text=help_msg)
 
         # UX-4: calibration hint — show when all three heights are unset and session is live
         if hasattr(self, '_snark_label'):
