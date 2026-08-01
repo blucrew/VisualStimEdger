@@ -226,7 +226,7 @@ print("PATCH 9 OK — select_head macOS OpenCV")
 # ─────────────────────────────────────────────────────────────────────────────
 # PATCHES 10-13 — XToysClient already HTTP; skip if already converted
 # ─────────────────────────────────────────────────────────────────────────────
-if "_WEBHOOK_URL = \"https://xtoys.app/webhook\"" in src:
+if "_WEBHOOK_BASE = \"https://webhook.xtoys.app/\"" in src:
     print("PATCH 10-13 SKIP — XToysClient already HTTP Private Webhook")
 else:
     print("PATCH 10-13 WARNING — XToysClient may need manual check")
