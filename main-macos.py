@@ -2869,7 +2869,7 @@ class App:
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script \u2192 Connections \u2192 add your toy under Generic Output. Or tap \u201cGet ID\u201d to open xtoys.app/me \u2192 Private Webhook, then paste the ID here.",
+                     text="In xToys: load the VisualStimEdger script \u2192 add your toy under Connections \u2192 Generic Output, then press \u25b6 to run it (nothing moves until it runs). Tap \u201cGet ID\u201d to open xtoys.app/me \u2192 Private Webhook, then paste the ID here.",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self._xtoys_warn = ctk.CTkLabel(self._xtoys_opts, text="",
@@ -4755,7 +4755,7 @@ class App:
         def _show_xtoys_help():
             hw = ctk.CTkToplevel(win)
             hw.title("xToys Setup")
-            hw.geometry("420x280")
+            hw.geometry("420x320")
             hw.resizable(False, False)
             hw.grab_set()
             ctk.CTkLabel(hw,
@@ -4765,7 +4765,8 @@ class App:
                      "3. Connections \u2192 add your toy under Generic Output\n"
                      "4. Go to xtoys.app/me \u2192 Private Webhook\n"
                      "5. Copy the Webhook ID \u2192 paste it into VSE\n"
-                     "6. Keep the xToys tab & script running while using VSE",
+                     "6. Press the green \u25b6 to RUN the script \u2014 nothing moves until you do\n"
+                     "7. Keep the xToys tab open while you use VSE",
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
