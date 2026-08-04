@@ -2182,9 +2182,12 @@ class App:
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-        # CV
+        # CV — processing-resolution downscale keeps CSRT off full-res frames on
+        # slow machines (see _downscale / _tracker_init). 0 = native (default).
+        self._proc_width  = 0
+        self._track_scale = 1.0
         self.tracker  = cv2.TrackerCSRT_create()
-        self.tracker.init(initial_frame, bbox)
+        self._tracker_init(initial_frame, bbox)
         self.detector = DickDetector()
 
         # Output clients
@@ -2229,6 +2232,7 @@ class App:
         self.min_vol_var = tk.DoubleVar(value=0.0)
         self.max_vol_var = tk.DoubleVar(value=100.0)
         self.aggr_var    = tk.StringVar(value="Middle")
+        self.proc_res_var = tk.StringVar(value="Full")   # tracking-resolution preset
         self.restim_on   = tk.BooleanVar(value=True)
         self.xtoys_on    = tk.BooleanVar(value=False)
         self.audio_on    = tk.BooleanVar(value=False)
@@ -3181,6 +3185,7 @@ class App:
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
                 "reanchor_lock":        self._reanchor_lock,
+                "proc_width":           self._proc_width,
                 "tribute_last_shown":    getattr(self, '_tribute_last_shown', 0.0),
                 "tribute_session_count": getattr(self, '_tribute_session_count', 0),
                 "erect_recovery":       self._erect_recovery,
@@ -3243,6 +3248,14 @@ class App:
                 self.xtoys.webhook_id = self.xtoys_id_var.get()
             self._tribute_last_shown    = float(data.get("tribute_last_shown", 0) or 0)
             self._tribute_session_count = int(data.get("tribute_session_count", 0) or 0)
+            if "proc_width" in data:
+                try:
+                    pw = int(data.get("proc_width", 0) or 0)
+                    self._proc_width = pw if pw in self._PROC_PRESETS.values() else 0
+                    self.proc_res_var.set(next(
+                        (k for k, v in self._PROC_PRESETS.items() if v == self._proc_width), "Full"))
+                except Exception:
+                    pass
             if "tcode_axis" in data:
                 try:
                     ax = str(data["tcode_axis"]).strip().upper()
@@ -3789,7 +3802,7 @@ class App:
                 return
             new_bbox = select_head(pause_frame, parent=self.root)
             if new_bbox[2] > 0 and new_bbox[3] > 0:
-                self.tracker.init(pause_frame, new_bbox)
+                self._tracker_init(pause_frame, new_bbox)
                 self.last_bbox   = new_bbox
                 self.head_y      = new_bbox[1] + new_bbox[3] // 2
                 self._head_y_history.clear()
@@ -4673,6 +4686,29 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
 
         # ── xToys ─────────────────────────────────────────────────────────────
+        # ── Performance ───────────────────────────────────────────────────────
+        ctk.CTkLabel(sf, text="Performance",
+                     font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
+        perf_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
+        perf_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+        perf_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
+        perf_row.pack(fill=tk.X, padx=12, pady=(10, 4))
+        ctk.CTkLabel(perf_row, text="Tracking resolution", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        ctk.CTkSegmentedButton(
+            perf_row, values=list(self._PROC_PRESETS.keys()),
+            variable=self.proc_res_var, command=self._on_proc_res_change,
+            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=self._C_TEXT,
+        ).pack(side=tk.RIGHT)
+        ctk.CTkLabel(
+            perf_frame,
+            text="Lower = faster on slow PCs. Downscales the frame before tracking, "
+                 "not the video you watch. If your FPS is low, try Fast or Fastest.",
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
+
         ctk.CTkLabel(sf, text="xToys",
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         xtoys_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
@@ -5582,6 +5618,10 @@ class App:
     # Throttle constants (ms)
     _DISPLAY_INTERVAL_MS  = 50   # max 20 fps for the preview panel
     _STATUS_INTERVAL_MS   = 250  # max 4 fps for the status label text
+    # Tracking-resolution presets (target width in px; 0 = native/off). Downscaling
+    # the frame before CSRT is the main FPS lever on slow CPUs — the tracker is the
+    # per-frame cost, and it scales with pixel count.
+    _PROC_PRESETS = {"Full": 0, "Balanced": 960, "Fast": 640, "Fastest": 480}
 
     def _update_frame(self):
         # Always reschedule — even if an exception occurs mid-frame the loop
@@ -5718,17 +5758,65 @@ class App:
         self.yolo_candidate = (yolo_bbox, hits)
 
         if hits >= self._YOLO_CONFIRM:
-            self.tracker.init(frame, yolo_bbox)
+            self._tracker_init(frame, yolo_bbox)
             self.last_bbox      = yolo_bbox
             self.yolo_candidate = None
             x, y, w, h = yolo_bbox
             cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 0), 1)
 
+    def _downscale(self, frame):
+        """Return (small_frame, scale) for CSRT/detector work. scale = small/orig
+        (<=1.0); full-res coords = small_coords / scale. Downscales only when the
+        frame is wider than the configured processing width — never upscales, and
+        is a no-op (scale 1.0) when Tracking resolution is 'Full'."""
+        pw = self._proc_width
+        if not pw:
+            return frame, 1.0
+        h, w = frame.shape[:2]
+        if w <= pw:
+            return frame, 1.0
+        scale = pw / float(w)
+        small = cv2.resize(frame, (pw, max(1, int(round(h * scale)))),
+                           interpolation=cv2.INTER_AREA)
+        return small, scale
+
+    def _tracker_init(self, full_frame, full_bbox):
+        """(Re)initialise the CSRT tracker at the current processing resolution.
+        full_bbox is in full-res frame pixels; it is scaled into the tracker's
+        working space and clamped in-bounds so update()s stay consistent. Records
+        the scale used so _run_tracker can detect a live change and re-anchor."""
+        small, scale = self._downscale(full_frame)
+        x, y, w, h = full_bbox
+        if scale != 1.0:
+            x, y, w, h = x * scale, y * scale, w * scale, h * scale
+        sh, sw = small.shape[:2]
+        x = max(0, min(int(round(x)), sw - 1))
+        y = max(0, min(int(round(y)), sh - 1))
+        w = max(1, min(int(round(w)), sw - x))
+        h = max(1, min(int(round(h)), sh - y))
+        self.tracker.init(small, (x, y, w, h))
+        self._track_scale = scale
+
+    def _on_proc_res_change(self, _value=None):
+        """Tracking-resolution preset changed — apply live (the tracker re-anchors
+        itself on the next frame via _run_tracker) and persist."""
+        self._proc_width = self._PROC_PRESETS.get(self.proc_res_var.get(), 0)
+        self._save_config()
+        log.info(f"Tracking resolution -> {self.proc_res_var.get()} "
+                 f"(proc_width={self._proc_width or 'native'})")
+
     def _run_tracker(self, frame):
         """Update tracker state — does NOT draw; call _draw_tracking_overlay every frame."""
-        success, new_bbox = self.tracker.update(frame)
+        small, scale = self._downscale(frame)
+        if scale != self._track_scale:
+            # Processing-resolution changed (setting toggled live, or the capture
+            # frame size shifted). CSRT was init on a different-sized image — re-anchor
+            # it on the current frame before updating, else it instantly loses lock.
+            self._tracker_init(frame, self.last_bbox)
+        success, new_bbox = self.tracker.update(small)
         if success:
-            x, y, w, h_box = [int(v) for v in new_bbox]
+            inv = 1.0 / scale
+            x, y, w, h_box = [int(v * inv) for v in new_bbox]
             px, py, pw, ph = self.last_bbox
             prev_cx, prev_cy = px + pw // 2, py + ph // 2
             new_cx,  new_cy  = x  + w  // 2, y  + h_box // 2
@@ -5754,11 +5842,11 @@ class App:
                 reason = "size" if not size_ok else "jump"
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
                 self.tracking_ok = False
-                self.tracker.init(frame, self.last_bbox)
+                self._tracker_init(frame, self.last_bbox)
         else:
             self._track_msg  = "TRACKING LOST - Frozen at last position"
             self.tracking_ok = False
-            self.tracker.init(frame, self.last_bbox)
+            self._tracker_init(frame, self.last_bbox)
 
     def _draw_tracking_overlay(self, frame):
         """Draw the current tracking bbox every frame so there is no flicker
@@ -7521,7 +7609,7 @@ class App:
         self._grid_region = None
         self._grid_depth  = 0
         if frame is not None:
-            self.tracker.init(frame, new_bbox)
+            self._tracker_init(frame, new_bbox)
             self.last_bbox   = new_bbox
             self.head_y      = cy
             self.tracking_ok = True
