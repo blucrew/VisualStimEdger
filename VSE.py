@@ -1,3 +1,7 @@
+from __future__ import annotations  # lazy annotations: PEP-604 (X | None) unions
+                                    # must not evaluate on Python 3.9 (default on
+                                    # many Macs) — see SessionLogger._log crash.
+
 import os
 import sys
 import tempfile
