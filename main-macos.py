@@ -221,7 +221,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
