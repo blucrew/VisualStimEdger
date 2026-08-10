@@ -2014,6 +2014,11 @@ class App:
     _LOCK_TPL_REFRESH_S = 1.0   # refresh the target's appearance patch this often while healthy
     _RELOCK_SEARCH      = 3.5   # re-find search window, as a multiple of the target size
     _RELOCK_MIN_SCORE   = 0.55  # min TM_CCOEFF_NORMED to accept a re-lock (keeps it off hands/skin)
+    # Colour lock — track a vividly-coloured marker by its hue (e.g. a bright clip).
+    # Cheap, rotation/scale/occlusion-proof; only works for saturated colours.
+    _COLOR_HUE_TOL       = 12      # +/- hue band accepted (OpenCV hue is 0-179)
+    _COLOR_MIN_AREA_FRAC = 0.0004  # ignore colour blobs smaller than this fraction of the frame
+    _COLOR_SEARCH        = 4.0     # prefer blobs within this * target-diagonal of the last position
 
     def _apply_theme(self, name):
         """Apply a colour theme by name."""
@@ -2068,6 +2073,12 @@ class App:
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
         self._lock_template     = None  # appearance patch of the locked target (BGR)
         self._lock_tpl_time     = 0.0   # last time the patch was refreshed
+        self._color_lock        = False # track by colour instead of CSRT
+        self._color_hue         = None  # locked hue centre (0-179); None until derived
+        self._color_tol         = self._COLOR_HUE_TOL
+        self._color_s_min       = 60    # saturation / value floors for the colour mask
+        self._color_v_min       = 50
+        self._color_needs_derive = False # re-derive colour from the box on the next frame
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
         self._frame_times       = deque(maxlen=30)  # for FPS calculation
 
@@ -2401,6 +2412,29 @@ class App:
         Tooltip(_lock_sw, "Stop YOLO from re-anchoring the tracker. Draw your box on a "
                           "stable, high-contrast spot (a plug/electrode is ideal) and it "
                           "stays put. Turn off to let auto-reacquire find the head again.")
+
+        # Colour lock — track the target by its colour instead of by shape. Derives
+        # the colour from your selection box; ideal for a vivid marker (a bright
+        # clip) that CSRT keeps losing. Survives occlusion and re-finds instantly.
+        self._color_lock_var = tk.BooleanVar(value=self._color_lock)
+        _cl_row = ctk.CTkFrame(vid_col, fg_color="transparent")
+        _cl_row.pack(anchor="w", fill=tk.X, pady=(2, 0))
+        _cl_sw = ctk.CTkSwitch(
+            _cl_row, text="🎨 Colour lock (track by colour)",
+            variable=self._color_lock_var, command=self._on_color_lock_toggle,
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            switch_width=28, switch_height=14,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+            progress_color=self._C_ACCENT)
+        _cl_sw.pack(side=tk.LEFT)
+        self._color_swatch_lbl = ctk.CTkFrame(_cl_row, width=16, height=16,
+                                              corner_radius=3, fg_color=self._C_SURFACE2)
+        self._color_swatch_lbl.pack(side=tk.LEFT, padx=(6, 0))
+        Tooltip(_cl_sw, "Track your target by its colour instead of its shape. Draw your "
+                        "box on a vividly-coloured marker (a bright clip is perfect), turn "
+                        "this on, and it locks that colour — it shrugs off a hand passing "
+                        "over it and re-finds instantly. Best for saturated colours; not "
+                        "for grey or bare metal.")
 
         # Active Edging — auto-ramp the volume back up after you hold off the edge,
         # then deny again on the next edge. The aggressive auto-edging loop.
@@ -3197,6 +3231,7 @@ class App:
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
                 "reanchor_lock":        self._reanchor_lock,
+                "color_lock":           self._color_lock,
                 "proc_width":           self._proc_width,
                 "tribute_last_shown":    getattr(self, '_tribute_last_shown', 0.0),
                 "tribute_session_count": getattr(self, '_tribute_session_count', 0),
@@ -3370,6 +3405,12 @@ class App:
                 self._reanchor_lock = bool(data["reanchor_lock"])
                 if hasattr(self, "_lock_track_var"):
                     self._lock_track_var.set(self._reanchor_lock)
+            if "color_lock" in data:
+                self._color_lock = bool(data["color_lock"])
+                if hasattr(self, "_color_lock_var"):
+                    self._color_lock_var.set(self._color_lock)
+                if self._color_lock:
+                    self._color_needs_derive = True   # re-derive from the box once tracking starts
             if "erect_recovery" in data:
                 self._erect_recovery = bool(data["erect_recovery"])
             if "active_edging" in data:
@@ -5656,8 +5697,11 @@ class App:
 
             if heavy:
                 with _CV2_LOCK:
-                    self._maybe_yolo_reanchor(frame)
-                    self._run_tracker(frame)
+                    if self._color_lock:
+                        self._run_color_lock(frame)
+                    else:
+                        self._maybe_yolo_reanchor(frame)
+                        self._run_tracker(frame)
                 if self._auto_mode and self.tracking_ok:
                     self._auto_feed(self.head_y)
                 # Panic cut runs on the fresh (unsmoothed) head_y every heavy
@@ -5710,6 +5754,117 @@ class App:
             self._snark_label.configure(
                 text="🔓 Auto-reanchor back on", text_color="#F5A623")
             log.info("Tracking lock OFF — YOLO reanchoring enabled")
+
+    def _on_color_lock_toggle(self):
+        """Toggle colour-lock tracking. On enable, derive the target's colour from
+        the current selection box on the next frame."""
+        self._color_lock = bool(self._color_lock_var.get())
+        self._save_config()
+        if self._color_lock:
+            self._color_needs_derive = True
+            self._snark_label.configure(
+                text="🎨 Colour lock on — locking your target's colour…",
+                text_color="#F5A623")
+            log.info("Colour lock ON — deriving target colour from selection box")
+        else:
+            self._color_hue = None
+            if hasattr(self, "_color_swatch_lbl"):
+                self._color_swatch_lbl.configure(fg_color=self._C_SURFACE2)
+            self._snark_label.configure(text="🎨 Colour lock off", text_color="#F5A623")
+            log.info("Colour lock OFF")
+
+    def _derive_color_lock(self, frame):
+        """Derive the tracked hue from the vivid pixels inside the selection box."""
+        x, y, w, h = self.last_bbox
+        fh, fw = frame.shape[:2]
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(fw, int(x + w)), min(fh, int(y + h))
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            return False
+        hsv = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+        H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+        vivid = (S > 80) & (V > 60)
+        if int(vivid.sum()) < 10:
+            vivid = np.ones(S.shape, bool)            # dull target: fall back to all pixels
+        hue   = int(np.median(H[vivid]))
+        s_med = int(np.median(S[vivid]))
+        v_med = int(np.median(V[vivid]))
+        self._color_hue   = hue
+        self._color_tol   = self._COLOR_HUE_TOL
+        self._color_s_min = int(max(40, min(s_med - 60, 120)))
+        self._color_v_min = int(max(40, min(v_med - 60, 120)))
+        bgr = cv2.cvtColor(np.uint8([[[hue, max(s_med, 120), max(v_med, 120)]]]),
+                           cv2.COLOR_HSV2BGR)[0, 0]
+        if hasattr(self, "_color_swatch_lbl"):
+            self._color_swatch_lbl.configure(
+                fg_color="#%02x%02x%02x" % (int(bgr[2]), int(bgr[1]), int(bgr[0])))
+        log.info(f"Colour lock: hue={hue} s_min={self._color_s_min} v_min={self._color_v_min}")
+        return True
+
+    def _color_mask(self, hsv):
+        """Binary mask of the locked hue, handling hue wrap-around (e.g. red)."""
+        h, tol = self._color_hue, self._color_tol
+        s, v = self._color_s_min, self._color_v_min
+        lo, hi = h - tol, h + tol
+        if lo < 0:
+            return (cv2.inRange(hsv, (0, s, v), (hi, 255, 255)) |
+                    cv2.inRange(hsv, (180 + lo, s, v), (179, 255, 255)))
+        if hi > 179:
+            return (cv2.inRange(hsv, (lo, s, v), (179, 255, 255)) |
+                    cv2.inRange(hsv, (0, s, v), (hi - 180, 255, 255)))
+        return cv2.inRange(hsv, (lo, s, v), (hi, 255, 255))
+
+    def _run_color_lock(self, frame):
+        """Track the target by its locked colour. Sets head_y / last_bbox from the
+        best colour blob near the last position; holds position if the colour is hidden."""
+        if self._color_needs_derive or self._color_hue is None:
+            if not self._derive_color_lock(frame):
+                self.tracking_ok = False
+                self._track_msg = "COLOUR LOCK - draw a box on the marker"
+                return
+            self._color_needs_derive = False
+        small, scale = self._downscale(frame)
+        hsv  = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        mask = self._color_mask(hsv)
+        ker  = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  ker)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, ker)
+        cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        inv  = 1.0 / scale
+        px, py, pw, ph = self.last_bbox
+        lcx, lcy = px + pw // 2, py + ph // 2
+        radius2  = (max(np.sqrt(pw ** 2 + ph ** 2), 40.0) * self._COLOR_SEARCH) ** 2
+        min_area = mask.shape[0] * mask.shape[1] * self._COLOR_MIN_AREA_FRAC
+        near = far = None
+        for c in cnts:
+            a = cv2.contourArea(c)
+            if a < min_area:
+                continue
+            bx, by, bw, bh = cv2.boundingRect(c)
+            fx, fy, fw2, fh2 = int(bx * inv), int(by * inv), int(bw * inv), int(bh * inv)
+            ccx, ccy = fx + fw2 // 2, fy + fh2 // 2
+            if any(ex <= ccx <= ex + ew and ey <= ccy <= ey + eh
+                   for ex, ey, ew, eh in self._exclusion_zones):
+                continue
+            cand = (a, fx, fy, fw2, fh2, ccy)
+            if (ccx - lcx) ** 2 + (ccy - lcy) ** 2 <= radius2:
+                if near is None or a > near[0]:
+                    near = cand
+            elif far is None or a > far[0]:
+                far = cand
+        pick = near or far
+        if pick is None:
+            self.tracking_ok = False
+            self._track_msg  = "COLOUR HIDDEN - holding"
+            return
+        _, fx, fy, fw2, fh2, ccy = pick
+        self.last_bbox   = (fx, fy, fw2, fh2)
+        self.tracking_ok = True
+        self._track_msg  = ""
+        self.head_y      = ccy
+        self._head_y_history.append(ccy)
+        if self._auto_cum_enabled and not self._cum_stopped:
+            self._tick_cum_detect(ccy, frame)
 
     def _on_active_edging_toggle(self):
         """Toggle the Active Edging auto-ramp cycle."""
@@ -6402,7 +6557,9 @@ class App:
 
         ft = self._frame_times
         fps = (len(ft) - 1) / max(ft[-1] - ft[0], 1e-9) if len(ft) >= 2 else 0.0
-        if not self.detector.available:
+        if self._color_lock:
+            yolo_str = "Track: colour"        # colour-lock supersedes the YOLO/CSRT tracker
+        elif not self.detector.available:
             yolo_str = "YOLO: n/a"            # model failed to load
         elif self._reanchor_lock:
             yolo_str = "YOLO: off"            # "Lock on target" is on — reanchoring disabled
