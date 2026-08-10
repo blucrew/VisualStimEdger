@@ -2008,6 +2008,12 @@ class App:
     # Tracker plausibility
     _SIZE_RATIO_MAX  = 2.5
     _MAX_JUMP_FACTOR = 2.5
+    # Lock-on re-find: when "Lock on target" is on and CSRT drops the target, match
+    # a saved appearance patch near the last position instead of freezing (YOLO
+    # reanchor is disabled while locked, and can't see a plug/clip anyway).
+    _LOCK_TPL_REFRESH_S = 1.0   # refresh the target's appearance patch this often while healthy
+    _RELOCK_SEARCH      = 3.5   # re-find search window, as a multiple of the target size
+    _RELOCK_MIN_SCORE   = 0.55  # min TM_CCOEFF_NORMED to accept a re-lock (keeps it off hands/skin)
 
     def _apply_theme(self, name):
         """Apply a colour theme by name."""
@@ -2060,6 +2066,8 @@ class App:
         self._track_msg         = ""
         self.yolo_frame_counter = 0
         self.yolo_candidate     = None  # (bbox, hits) pending confirmation
+        self._lock_template     = None  # appearance patch of the locked target (BGR)
+        self._lock_tpl_time     = 0.0   # last time the patch was refreshed
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
         self._frame_times       = deque(maxlen=30)  # for FPS calculation
 
@@ -5692,11 +5700,13 @@ class App:
         self._save_config()
         if self._reanchor_lock:
             self.yolo_candidate = None   # drop any pending reanchor candidate
+            self._lock_tpl_time = 0.0    # grab a fresh appearance patch next healthy frame
             self._snark_label.configure(
-                text="🔒 Locked on target — won't auto-reanchor",
+                text="🔒 Locked on target — re-finds it if lost, no auto-reanchor",
                 text_color="#F5A623")
-            log.info("Tracking lock ON — YOLO reanchoring disabled")
+            log.info("Tracking lock ON — YOLO reanchoring disabled; appearance re-find enabled")
         else:
+            self._lock_template = None   # drop the saved patch
             self._snark_label.configure(
                 text="🔓 Auto-reanchor back on", text_color="#F5A623")
             log.info("Tracking lock OFF — YOLO reanchoring enabled")
@@ -5809,6 +5819,56 @@ class App:
         log.info(f"Tracking resolution -> {self.proc_res_var.get()} "
                  f"(proc_width={self._proc_width or 'native'})")
 
+    def _refresh_lock_template(self, frame):
+        """While locked and tracking cleanly, keep a fresh appearance patch of the
+        target so _relock_from_template can re-find it if CSRT drops the lock."""
+        now = time.time()
+        if now - self._lock_tpl_time < self._LOCK_TPL_REFRESH_S:
+            return
+        x, y, w, h = self.last_bbox
+        fh, fw = frame.shape[:2]
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(fw, int(x + w)), min(fh, int(y + h))
+        if x1 - x0 >= 8 and y1 - y0 >= 8:
+            self._lock_template = frame[y0:y1, x0:x1].copy()
+            self._lock_tpl_time = now
+
+    def _relock_from_template(self, frame):
+        """Search a window around the last position for the locked target's saved
+        appearance patch; on a confident match, re-init the tracker there. Returns
+        True on re-lock. It only accepts the saved patch, so it re-finds the SAME
+        target (a plug/clip/marker) and won't wander onto a hand or bare skin."""
+        tpl = self._lock_template
+        if tpl is None:
+            return False
+        th, tw = tpl.shape[:2]
+        fh, fw = frame.shape[:2]
+        if th < 8 or tw < 8 or th >= fh or tw >= fw:
+            return False
+        px, py, pw, ph = self.last_bbox
+        cx, cy = px + pw // 2, py + ph // 2
+        sw = min(fw, max(tw + 2, int(tw * self._RELOCK_SEARCH)))
+        sh = min(fh, max(th + 2, int(th * self._RELOCK_SEARCH)))
+        sx0 = max(0, min(cx - sw // 2, fw - sw))
+        sy0 = max(0, min(cy - sh // 2, fh - sh))
+        region = frame[sy0:sy0 + sh, sx0:sx0 + sw]
+        if region.shape[0] < th or region.shape[1] < tw:
+            return False
+        res = cv2.matchTemplate(region, tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+        if not (max_val >= self._RELOCK_MIN_SCORE):   # also rejects NaN (flat patch)
+            return False
+        mx, my = sx0 + max_loc[0], sy0 + max_loc[1]
+        bbox = (int(mx), int(my), int(tw), int(th))
+        self._tracker_init(frame, bbox)
+        self.last_bbox   = bbox
+        self.tracking_ok = True
+        self._track_msg  = ""
+        self.head_y      = my + th // 2
+        self._head_y_history.append(self.head_y)
+        log.debug(f"Lock re-find: matched {max_val:.2f} at ({mx},{my})")
+        return True
+
     def _run_tracker(self, frame):
         """Update tracker state — does NOT draw; call _draw_tracking_overlay every frame."""
         small, scale = self._downscale(frame)
@@ -5818,6 +5878,7 @@ class App:
             # it on the current frame before updating, else it instantly loses lock.
             self._tracker_init(frame, self.last_bbox)
         success, new_bbox = self.tracker.update(small)
+        good = False
         if success:
             inv = 1.0 / scale
             x, y, w, h_box = [int(v * inv) for v in new_bbox]
@@ -5834,6 +5895,7 @@ class App:
             jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * self._MAX_JUMP_FACTOR
 
             if size_ok and jump_ok:
+                good = True
                 self.last_bbox    = (x, y, w, h_box)
                 self.tracking_ok  = True
                 self._track_msg   = ""
@@ -5842,14 +5904,22 @@ class App:
                 # Feed auto-cum detector
                 if self._auto_cum_enabled and not self._cum_stopped:
                     self._tick_cum_detect(new_cy, frame)
+                # Keep the locked target's appearance patch current for re-find.
+                if self._reanchor_lock:
+                    self._refresh_lock_template(frame)
             else:
                 reason = "size" if not size_ok else "jump"
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
-                self.tracking_ok = False
-                self._tracker_init(frame, self.last_bbox)
         else:
             self._track_msg  = "TRACKING LOST - Frozen at last position"
+
+        if not good:
             self.tracking_ok = False
+            # Lock mode: re-find the SAME target by appearance near where it was,
+            # rather than freezing. YOLO reanchor is off while locked (and can't see
+            # a plug/clip anyway), so this is the only recovery path.
+            if self._reanchor_lock and self._relock_from_template(frame):
+                return
             self._tracker_init(frame, self.last_bbox)
 
     def _draw_tracking_overlay(self, frame):
