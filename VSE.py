@@ -2019,6 +2019,7 @@ class App:
     _COLOR_HUE_TOL       = 12      # +/- hue band accepted (OpenCV hue is 0-179)
     _COLOR_MIN_AREA_FRAC = 0.0004  # ignore colour blobs smaller than this fraction of the frame
     _COLOR_SEARCH        = 4.0     # prefer blobs within this * target-diagonal of the last position
+    _COLOR_SAT_FRAC      = 0.20    # >= this fraction of saturated box pixels picks hue mode, else dark
 
     def _apply_theme(self, name):
         """Apply a colour theme by name."""
@@ -2079,6 +2080,9 @@ class App:
         self._color_s_min       = 60    # saturation / value floors for the colour mask
         self._color_v_min       = 50
         self._color_needs_derive = False # re-derive colour from the box on the next frame
+        self._lock_mode         = "hue"  # "hue" (vivid marker) or "dark" (black electrode)
+        self._dark_v            = 90     # dark mode: pixels darker than this are the target
+        self._dark_s            = 110    # dark mode: ...and less saturated than this
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
         self._frame_times       = deque(maxlen=30)  # for FPS calculation
 
@@ -2413,14 +2417,14 @@ class App:
                           "stable, high-contrast spot (a plug/electrode is ideal) and it "
                           "stays put. Turn off to let auto-reacquire find the head again.")
 
-        # Colour lock — track the target by its colour instead of by shape. Derives
-        # the colour from your selection box; ideal for a vivid marker (a bright
-        # clip) that CSRT keeps losing. Survives occlusion and re-finds instantly.
+        # Lock by look — track the target by its appearance instead of its shape.
+        # Auto-picks from the selection box: a vivid marker's colour, or a black
+        # electrode's darkness. Survives occlusion and re-finds instantly.
         self._color_lock_var = tk.BooleanVar(value=self._color_lock)
         _cl_row = ctk.CTkFrame(vid_col, fg_color="transparent")
         _cl_row.pack(anchor="w", fill=tk.X, pady=(2, 0))
         _cl_sw = ctk.CTkSwitch(
-            _cl_row, text="🎨 Colour lock (track by colour)",
+            _cl_row, text="🎯 Lock by look (colour / dark)",
             variable=self._color_lock_var, command=self._on_color_lock_toggle,
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             switch_width=28, switch_height=14,
@@ -2430,11 +2434,13 @@ class App:
         self._color_swatch_lbl = ctk.CTkFrame(_cl_row, width=16, height=16,
                                               corner_radius=3, fg_color=self._C_SURFACE2)
         self._color_swatch_lbl.pack(side=tk.LEFT, padx=(6, 0))
-        Tooltip(_cl_sw, "Track your target by its colour instead of its shape. Draw your "
-                        "box on a vividly-coloured marker (a bright clip is perfect), turn "
-                        "this on, and it locks that colour — it shrugs off a hand passing "
-                        "over it and re-finds instantly. Best for saturated colours; not "
-                        "for grey or bare metal.")
+        Tooltip(_cl_sw, "Lock onto your target by its look — it auto-picks how. Draw the "
+                        "box tightly on the target and turn this on: a vivid marker locks "
+                        "by COLOUR (rock-solid, shrugs off a hand); a black electrode locks "
+                        "by DARKNESS (good against lighter skin, but shadows/dark hair can "
+                        "compete). The swatch shows what it grabbed. Best marker: a matte "
+                        "lime / teal / hot-pink sticker. Grey or shiny metal has no usable "
+                        "look — put a bright matte sticker on it instead.")
 
         # Active Edging — auto-ramp the volume back up after you hold off the edge,
         # then deny again on the next edge. The aggressive auto-edging loop.
@@ -5756,25 +5762,27 @@ class App:
             log.info("Tracking lock OFF — YOLO reanchoring enabled")
 
     def _on_color_lock_toggle(self):
-        """Toggle colour-lock tracking. On enable, derive the target's colour from
-        the current selection box on the next frame."""
+        """Toggle appearance lock. On enable, read the target from the selection box
+        on the next frame and auto-pick colour or dark mode."""
         self._color_lock = bool(self._color_lock_var.get())
         self._save_config()
         if self._color_lock:
             self._color_needs_derive = True
             self._snark_label.configure(
-                text="🎨 Colour lock on — locking your target's colour…",
+                text="🎯 Lock by look on — reading your target…",
                 text_color="#F5A623")
-            log.info("Colour lock ON — deriving target colour from selection box")
+            log.info("Appearance lock ON — reading target from selection box")
         else:
             self._color_hue = None
             if hasattr(self, "_color_swatch_lbl"):
                 self._color_swatch_lbl.configure(fg_color=self._C_SURFACE2)
-            self._snark_label.configure(text="🎨 Colour lock off", text_color="#F5A623")
-            log.info("Colour lock OFF")
+            self._snark_label.configure(text="🎯 Lock by look off", text_color="#F5A623")
+            log.info("Appearance lock OFF")
 
     def _derive_color_lock(self, frame):
-        """Derive the tracked hue from the vivid pixels inside the selection box."""
+        """Read the target from the selection box and pick a lock mode: HUE for a
+        vividly-coloured marker, or DARK for a low-saturation target like a black
+        rubber electrode on lighter skin. Sets the swatch and the mode's params."""
         x, y, w, h = self.last_bbox
         fh, fw = frame.shape[:2]
         x0, y0 = max(0, int(x)), max(0, int(y))
@@ -5783,30 +5791,46 @@ class App:
             return False
         hsv = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
         H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-        vivid = (S > 80) & (V > 60)
-        if int(vivid.sum()) < 10:
-            vivid = np.ones(S.shape, bool)            # dull target: fall back to all pixels
-        hue   = int(np.median(H[vivid]))
-        s_med = int(np.median(S[vivid]))
-        v_med = int(np.median(V[vivid]))
-        self._color_hue   = hue
-        self._color_tol   = self._COLOR_HUE_TOL
-        # A shadow mostly lowers brightness (V), while hue and saturation hold — so
-        # keep a firm saturation floor (this is what rejects skin/grey) but let the
-        # brightness floor drop low, accepting much darker versions of the colour.
-        # Only near-black falls out (no reliable hue left there anyway).
-        self._color_s_min = int(max(40, min(s_med - 60, 120)))
-        self._color_v_min = 45
-        bgr = cv2.cvtColor(np.uint8([[[hue, max(s_med, 120), max(v_med, 120)]]]),
-                           cv2.COLOR_HSV2BGR)[0, 0]
+        if float((S > 80).mean()) >= self._COLOR_SAT_FRAC:
+            # HUE mode — the box has real colour. A shadow mostly lowers V while hue
+            # and saturation hold, so keep a firm saturation floor (rejects skin /
+            # grey) and let the brightness floor drop low.
+            vivid = (S > 80) & (V > 60)
+            if int(vivid.sum()) < 10:
+                vivid = np.ones(S.shape, bool)
+            hue   = int(np.median(H[vivid]))
+            s_med = int(np.median(S[vivid]))
+            v_med = int(np.median(V[vivid]))
+            self._lock_mode   = "hue"
+            self._color_hue   = hue
+            self._color_tol   = self._COLOR_HUE_TOL
+            self._color_s_min = int(max(40, min(s_med - 60, 120)))
+            self._color_v_min = 45
+            sw = (hue, max(s_med, 120), max(v_med, 120))
+            log.info(f"Lock: HUE mode hue={hue} s_min={self._color_s_min}")
+        else:
+            # DARK mode — desaturated target (black rubber / grey). Track the dark,
+            # achromatic blob. More fragile than hue (shadows and dark hair compete),
+            # but far better than freezing on a bare black electrode against skin.
+            v_med = int(np.median(V))
+            s_med = int(np.median(S))
+            self._lock_mode = "dark"
+            self._dark_v = int(max(60, min(v_med + 35, 110)))
+            self._dark_s = int(max(80, min(s_med + 60, 140)))
+            sw = (0, 0, max(v_med, 30))
+            log.info(f"Lock: DARK mode v<{self._dark_v} s<{self._dark_s}")
+        bgr = cv2.cvtColor(np.uint8([[list(sw)]]), cv2.COLOR_HSV2BGR)[0, 0]
         if hasattr(self, "_color_swatch_lbl"):
             self._color_swatch_lbl.configure(
                 fg_color="#%02x%02x%02x" % (int(bgr[2]), int(bgr[1]), int(bgr[0])))
-        log.info(f"Colour lock: hue={hue} s_min={self._color_s_min} v_min={self._color_v_min}")
         return True
 
     def _color_mask(self, hsv):
-        """Binary mask of the locked hue, handling hue wrap-around (e.g. red)."""
+        """Binary mask of the locked target — a hue band (hue mode) or dark +
+        low-saturation pixels (dark mode). Hue mode handles wrap-around (e.g. red)."""
+        if self._lock_mode == "dark":
+            S, V = hsv[..., 1], hsv[..., 2]
+            return ((V < self._dark_v) & (S < self._dark_s)).astype(np.uint8) * 255
         h, tol = self._color_hue, self._color_tol
         s, v = self._color_s_min, self._color_v_min
         lo, hi = h - tol, h + tol
@@ -6562,7 +6586,7 @@ class App:
         ft = self._frame_times
         fps = (len(ft) - 1) / max(ft[-1] - ft[0], 1e-9) if len(ft) >= 2 else 0.0
         if self._color_lock:
-            yolo_str = "Track: colour"        # colour-lock supersedes the YOLO/CSRT tracker
+            yolo_str = "Track: " + ("dark" if self._lock_mode == "dark" else "colour")
         elif not self.detector.available:
             yolo_str = "YOLO: n/a"            # model failed to load
         elif self._reanchor_lock:
