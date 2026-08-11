@@ -5860,8 +5860,12 @@ class App:
         v_med = int(np.median(V[vivid]))
         self._color_hue   = hue
         self._color_tol   = self._COLOR_HUE_TOL
+        # A shadow mostly lowers brightness (V), while hue and saturation hold — so
+        # keep a firm saturation floor (this is what rejects skin/grey) but let the
+        # brightness floor drop low, accepting much darker versions of the colour.
+        # Only near-black falls out (no reliable hue left there anyway).
         self._color_s_min = int(max(40, min(s_med - 60, 120)))
-        self._color_v_min = int(max(40, min(v_med - 60, 120)))
+        self._color_v_min = 45
         bgr = cv2.cvtColor(np.uint8([[[hue, max(s_med, 120), max(v_med, 120)]]]),
                            cv2.COLOR_HSV2BGR)[0, 0]
         if hasattr(self, "_color_swatch_lbl"):
