@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 datas = [
     ('models/yolo-fastest.cfg', 'models'),
     ('models/best.weights',     'models'),
+    ('models/vittrack.onnx',    'models'),
     ('icon.ico',                '.'),
     ('splash.png',              '.'),
     ('overlay.html',            '.'),

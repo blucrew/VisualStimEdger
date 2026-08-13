@@ -2077,6 +2077,10 @@ class App:
     # Tracker plausibility
     _SIZE_RATIO_MAX  = 2.5
     _MAX_JUMP_FACTOR = 2.5
+    # Deep tracker (TrackerVit) — far more occlusion/motion-robust than CSRT and
+    # ~constant cost; CSRT stays as a selectable fallback. A confidence score below
+    # this counts as a suspect frame (routes to the appearance re-find in lock mode).
+    _VIT_MIN_SCORE   = 0.30
     # Lock-on re-find: when "Lock on target" is on and CSRT drops the target, match
     # a saved appearance patch near the last position instead of freezing (YOLO
     # reanchor is disabled while locked, and can't see a plug/clip anyway).
@@ -2278,11 +2282,14 @@ class App:
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-        # CV — processing-resolution downscale keeps CSRT off full-res frames on
-        # slow machines (see _downscale / _tracker_init). 0 = native (default).
-        self._proc_width  = 0
-        self._track_scale = 1.0
-        self.tracker  = cv2.TrackerCSRT_create()
+        # CV — deep tracker (Vit) with a CSRT fallback, on a downscaled frame when a
+        # slow machine needs it (see _make_tracker / _downscale / _tracker_init).
+        self._proc_width        = 0
+        self._track_scale       = 1.0
+        self._tracker_backend   = "vit"    # "vit" (deep, default) or "csrt" (fallback)
+        self._tracker_has_score = False    # set by _make_tracker if the backend scores
+        self._tracker_dirty     = False    # rebuild + re-init the tracker next frame
+        self.tracker  = self._make_tracker()
         self._tracker_init(initial_frame, bbox)
         self.detector = DickDetector()
 
@@ -3307,6 +3314,7 @@ class App:
                 "exclusion_zones":      self._exclusion_zones,
                 "reanchor_lock":        self._reanchor_lock,
                 "color_lock":           self._color_lock,
+                "tracker_backend":      self._tracker_backend,
                 "proc_width":           self._proc_width,
                 "tribute_last_shown":    getattr(self, '_tribute_last_shown', 0.0),
                 "tribute_session_count": getattr(self, '_tribute_session_count', 0),
@@ -3486,6 +3494,12 @@ class App:
                     self._color_lock_var.set(self._color_lock)
                 if self._color_lock:
                     self._color_needs_derive = True   # re-derive from the box once tracking starts
+            if "tracker_backend" in data:
+                tb = str(data.get("tracker_backend", "vit")).lower()
+                self._tracker_backend = "csrt" if tb == "csrt" else "vit"
+                self._tracker_dirty = True            # rebuild to the saved backend next frame
+                if hasattr(self, "_tracker_var"):
+                    self._tracker_var.set("Classic" if self._tracker_backend == "csrt" else "Deep")
             if "erect_recovery" in data:
                 self._erect_recovery = bool(data["erect_recovery"])
             if "active_edging" in data:
@@ -4819,6 +4833,26 @@ class App:
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
         perf_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         perf_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
+        eng_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
+        eng_row.pack(fill=tk.X, padx=12, pady=(10, 4))
+        ctk.CTkLabel(eng_row, text="Tracking engine", font=lbl,
+                     text_color=self._C_TEXT).pack(side=tk.LEFT)
+        self._tracker_var = tk.StringVar(
+            value="Deep" if self._tracker_backend == "vit" else "Classic")
+        ctk.CTkSegmentedButton(
+            eng_row, values=["Deep", "Classic"],
+            variable=self._tracker_var, command=self._on_tracker_backend_change,
+            selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
+            unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
+            font=ctk.CTkFont(size=11, weight="bold"), text_color=self._C_TEXT,
+        ).pack(side=tk.RIGHT)
+        ctk.CTkLabel(
+            perf_frame,
+            text="Deep = a neural tracker that holds through hands and fast motion far "
+                 "better, at similar cost — recommended. Classic = the old CSRT; switch "
+                 "to it only if Deep ever misbehaves.",
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            wraplength=440, justify="left").pack(padx=12, pady=(0, 8), anchor="w")
         perf_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
         perf_row.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(perf_row, text="Tracking resolution", font=lbl,
@@ -6046,6 +6080,30 @@ class App:
                            interpolation=cv2.INTER_AREA)
         return small, scale
 
+    def _make_tracker(self):
+        """Create the tracking backend. TrackerVit (deep, occlusion-robust, ~constant
+        cost) by default; falls back to CSRT if the model is missing or Vit won't
+        load. Sets _tracker_has_score so _run_tracker knows to read a confidence."""
+        if self._tracker_backend == "vit":
+            try:
+                model = resource_path(os.path.join("models", "vittrack.onnx"))
+                if os.path.exists(model):
+                    params = cv2.TrackerVit_Params()
+                    params.net = model
+                    t = cv2.TrackerVit_create(params)
+                    self._tracker_has_score = True
+                    log.info("Tracker backend: Vit (deep)")
+                    return t
+                log.warning(f"Vit model not found at {model} — using CSRT")
+            except Exception as e:
+                log.warning(f"TrackerVit unavailable ({type(e).__name__}: {e}) — using CSRT")
+            self._tracker_backend = "csrt"        # reflect the fallback in UI + config
+            if hasattr(self, "_tracker_var"):
+                self._tracker_var.set("Classic")
+        self._tracker_has_score = False
+        log.info("Tracker backend: CSRT (classic)")
+        return cv2.TrackerCSRT_create()
+
     def _tracker_init(self, full_frame, full_bbox):
         """(Re)initialise the CSRT tracker at the current processing resolution.
         full_bbox is in full-res frame pixels; it is scaled into the tracker's
@@ -6070,6 +6128,14 @@ class App:
         self._save_config()
         log.info(f"Tracking resolution -> {self.proc_res_var.get()} "
                  f"(proc_width={self._proc_width or 'native'})")
+
+    def _on_tracker_backend_change(self, _value=None):
+        """Deep/Classic tracker toggle — rebuild the tracker on the next frame (it
+        re-anchors on the current target) and persist."""
+        self._tracker_backend = "vit" if self._tracker_var.get() == "Deep" else "csrt"
+        self._tracker_dirty = True
+        self._save_config()
+        log.info(f"Tracking engine -> {self._tracker_var.get()} ({self._tracker_backend})")
 
     def _refresh_lock_template(self, frame):
         """While locked and tracking cleanly, keep a fresh appearance patch of the
@@ -6124,12 +6190,19 @@ class App:
     def _run_tracker(self, frame):
         """Update tracker state — does NOT draw; call _draw_tracking_overlay every frame."""
         small, scale = self._downscale(frame)
-        if scale != self._track_scale:
+        if self._tracker_dirty:
+            # Backend changed (Deep/Classic toggle or config load) — rebuild + re-anchor.
+            self.tracker = self._make_tracker()
+            self._tracker_dirty = False
+            self._tracker_init(frame, self.last_bbox)
+            small, scale = self._downscale(frame)
+        elif scale != self._track_scale:
             # Processing-resolution changed (setting toggled live, or the capture
-            # frame size shifted). CSRT was init on a different-sized image — re-anchor
-            # it on the current frame before updating, else it instantly loses lock.
+            # frame size shifted). The tracker was init on a different-sized image —
+            # re-anchor on the current frame before updating, else it loses lock.
             self._tracker_init(frame, self.last_bbox)
         success, new_bbox = self.tracker.update(small)
+        score = self.tracker.getTrackingScore() if self._tracker_has_score else 1.0
         good = False
         if success:
             inv = 1.0 / scale
@@ -6146,7 +6219,7 @@ class App:
             )
             jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * self._MAX_JUMP_FACTOR
 
-            if size_ok and jump_ok:
+            if size_ok and jump_ok and score >= self._VIT_MIN_SCORE:
                 good = True
                 self.last_bbox    = (x, y, w, h_box)
                 self.tracking_ok  = True
@@ -6160,7 +6233,7 @@ class App:
                 if self._reanchor_lock:
                     self._refresh_lock_template(frame)
             else:
-                reason = "size" if not size_ok else "jump"
+                reason = "size" if not size_ok else ("jump" if not jump_ok else "conf")
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
         else:
             self._track_msg  = "TRACKING LOST - Frozen at last position"
