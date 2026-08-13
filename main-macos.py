@@ -6244,7 +6244,6 @@ class App:
             # re-anchor on the current frame before updating, else it loses lock.
             self._tracker_init(frame, self.last_bbox)
         success, new_bbox = self.tracker.update(small)
-        score = self.tracker.getTrackingScore() if self._tracker_has_score else 1.0
         good = False
         if success:
             inv = 1.0 / scale
@@ -6261,7 +6260,7 @@ class App:
             )
             jump_ok = np.sqrt((new_cx - prev_cx) ** 2 + (new_cy - prev_cy) ** 2) < diag * self._MAX_JUMP_FACTOR
 
-            if size_ok and jump_ok and score >= self._VIT_MIN_SCORE:
+            if size_ok and jump_ok:
                 good = True
                 self.last_bbox    = (x, y, w, h_box)
                 self.tracking_ok  = True
@@ -6275,7 +6274,7 @@ class App:
                 if self._reanchor_lock:
                     self._refresh_lock_template(frame)
             else:
-                reason = "size" if not size_ok else ("jump" if not jump_ok else "conf")
+                reason = "size" if not size_ok else "jump"
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
         else:
             self._track_msg  = "TRACKING LOST - Frozen at last position"
