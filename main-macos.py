@@ -2093,6 +2093,7 @@ class App:
     _COLOR_MIN_AREA_FRAC = 0.0004  # ignore colour blobs smaller than this fraction of the frame
     _COLOR_SEARCH        = 2.5     # search window as a multiple of the target diagonal
     _COLOR_MAX_JUMP      = 2.0     # accept the nearest colour blob only within this * diagonal
+    _COLOR_MAX_AREA      = 6.0     # reject blobs bigger than this * the box — that's skin, not a marker
     _COLOR_SAT_FRAC      = 0.20    # >= this fraction of saturated box pixels picks hue mode, else dark
 
     def _apply_theme(self, name):
@@ -6006,11 +6007,12 @@ class App:
         cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
         inv = 1.0 / scale
         min_area = max(12.0, 0.03 * pw * ph * scale * scale)   # ~3% of the last box
+        max_area = self._COLOR_MAX_AREA * pw * ph * scale * scale
         max_jump2 = (max(np.hypot(pw, ph), 40.0) * self._COLOR_MAX_JUMP) ** 2
         best = None; best_d2 = None
         for c in cnts:
             a = cv2.contourArea(c)
-            if a < min_area:
+            if a < min_area or a > max_area:       # speckle, or a scene-sized skin blob
                 continue
             bx, by, bw, bh = cv2.boundingRect(c)
             fx = sx0 + int(bx * inv); fy = sy0 + int(by * inv)
