@@ -2091,7 +2091,8 @@ class App:
     # Cheap, rotation/scale/occlusion-proof; only works for saturated colours.
     _COLOR_HUE_TOL       = 12      # +/- hue band accepted (OpenCV hue is 0-179)
     _COLOR_MIN_AREA_FRAC = 0.0004  # ignore colour blobs smaller than this fraction of the frame
-    _COLOR_SEARCH        = 4.0     # prefer blobs within this * target-diagonal of the last position
+    _COLOR_SEARCH        = 2.5     # search window as a multiple of the target diagonal
+    _COLOR_MAX_JUMP      = 2.0     # accept the nearest colour blob only within this * diagonal
     _COLOR_SAT_FRAC      = 0.20    # >= this fraction of saturated box pixels picks hue mode, else dark
 
     def _apply_theme(self, name):
@@ -5892,31 +5893,57 @@ class App:
         x1, y1 = min(fw, int(x + w)), min(fh, int(y + h))
         if x1 - x0 < 4 or y1 - y0 < 4:
             return False
-        hsv = cv2.cvtColor(frame[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
+        # Sample the box AND a surrounding ring (box expanded ~60%) so we can lock the
+        # colour that's DISTINCTIVE — present in the box but not in the surroundings —
+        # instead of the box's average (which is mostly the skin the marker sits on).
+        ex = int((x1 - x0) * 0.6) + 4
+        ey = int((y1 - y0) * 0.6) + 4
+        rx0, ry0 = max(0, x0 - ex), max(0, y0 - ey)
+        rx1, ry1 = min(fw, x1 + ex), min(fh, y1 + ey)
+        hsv = cv2.cvtColor(frame[ry0:ry1, rx0:rx1], cv2.COLOR_BGR2HSV)
         H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-        if float((S > 80).mean()) >= self._COLOR_SAT_FRAC:
-            # HUE mode — the box has real colour. A shadow mostly lowers V while hue
-            # and saturation hold, so keep a firm saturation floor (rejects skin /
-            # grey) and let the brightness floor drop low.
-            vivid = (S > 80) & (V > 60)
-            if int(vivid.sum()) < 10:
-                vivid = np.ones(S.shape, bool)
-            hue   = int(np.median(H[vivid]))
-            s_med = int(np.median(S[vivid]))
-            v_med = int(np.median(V[vivid]))
+        inner = np.zeros(H.shape, bool)
+        inner[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0] = True
+        sat = (S > 60) & (V > 50)
+        in_sat = inner & sat
+        box_frac = int(in_sat.sum()) / max(1, int(inner.sum()))
+        if int(in_sat.sum()) >= 10 and box_frac >= 0.10:
+            # HUE mode. Lock the hue over-represented inside the box vs the ring.
+            ring = (~inner) & sat
+            hi = np.bincount(H[in_sat], minlength=180).astype(float); hi /= hi.sum()
+            if int(ring.sum()) >= 8:
+                ho = np.bincount(H[ring], minlength=180).astype(float); ho /= ho.sum()
+            else:
+                ho = np.zeros(180)
+            def _sm(a):                                       # circular ±smooth
+                p = np.concatenate([a[-8:], a, a[:8]])
+                return np.convolve(p, np.ones(9) / 9.0, "same")[8:-8]
+            hue  = int(np.argmax(_sm(hi) - _sm(ho)))
+            dist = np.abs(((H.astype(int) - hue + 90) % 180) - 90)
+            band = in_sat & (dist <= self._COLOR_HUE_TOL)
+            if int(band.sum()) < 5:
+                band = in_sat
+            ring_s = int(np.median(S[ring])) if int(ring.sum()) >= 8 else 40
+            # Isolate the marker within that hue band: the pixels MORE saturated than
+            # the surroundings, so same-hue skin doesn't drag the estimate down.
+            marker = band & (S > ring_s + 20)
+            if int(marker.sum()) >= 5:
+                mk_s = int(np.median(S[marker])); mk_v = int(np.median(V[marker]))
+            else:
+                mk_s = int(np.percentile(S[band], 80)); mk_v = int(np.median(V[band]))
             self._lock_mode   = "hue"
             self._color_hue   = hue
             self._color_tol   = self._COLOR_HUE_TOL
-            self._color_s_min = int(max(40, min(s_med - 60, 120)))
+            # Floor sits ABOVE the surroundings (skin) but below the marker, so a red
+            # marker on red-ish skin is separated by saturation, not just hue.
+            self._color_s_min = int(max(70, min((ring_s + mk_s) // 2, mk_s - 10, 200)))
             self._color_v_min = 45
-            sw = (hue, max(s_med, 120), max(v_med, 120))
-            log.info(f"Lock: HUE mode hue={hue} s_min={self._color_s_min}")
+            sw = (hue, max(mk_s, 120), max(mk_v, 120))
+            log.info(f"Lock: HUE mode hue={hue} s_min={self._color_s_min} "
+                     f"(ring_s={ring_s} mk_s={mk_s})")
         else:
-            # DARK mode — desaturated target (black rubber / grey). Track the dark,
-            # achromatic blob. More fragile than hue (shadows and dark hair compete),
-            # but far better than freezing on a bare black electrode against skin.
-            v_med = int(np.median(V))
-            s_med = int(np.median(S))
+            # DARK mode — no saturated colour in the box (black rubber / grey).
+            v_med = int(np.median(V[inner])); s_med = int(np.median(S[inner]))
             self._lock_mode = "dark"
             self._dark_v = int(max(60, min(v_med + 35, 110)))
             self._dark_s = int(max(80, min(s_med + 60, 140)))
@@ -5954,41 +5981,54 @@ class App:
                 self._track_msg = "COLOUR LOCK - draw a box on the marker"
                 return
             self._color_needs_derive = False
-        small, scale = self._downscale(frame)
-        hsv  = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-        mask = self._color_mask(hsv)
+        fh, fw = frame.shape[:2]
+        px, py, pw, ph = self.last_bbox
+        lcx, lcy = px + pw // 2, py + ph // 2
+        # Search only a window around the last position — never scan the whole scene,
+        # so it can't jump to distant skin/fabric of a similar colour.
+        R = int(max(np.hypot(pw, ph), 40.0) * self._COLOR_SEARCH)
+        sx0, sy0 = max(0, lcx - R), max(0, lcy - R)
+        sx1, sy1 = min(fw, lcx + R), min(fh, lcy + R)
+        roi = frame[sy0:sy1, sx0:sx1]
+        if roi.shape[0] < 4 or roi.shape[1] < 4:
+            self.tracking_ok = False
+            self._track_msg  = "COLOUR HIDDEN - holding"
+            return
+        scale, small = 1.0, roi
+        if self._proc_width and roi.shape[1] > self._proc_width:
+            scale = self._proc_width / float(roi.shape[1])
+            small = cv2.resize(roi, (self._proc_width, max(1, int(roi.shape[0] * scale))),
+                               interpolation=cv2.INTER_AREA)
+        mask = self._color_mask(cv2.cvtColor(small, cv2.COLOR_BGR2HSV))
         ker  = np.ones((3, 3), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  ker)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, ker)
         cnts = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-        inv  = 1.0 / scale
-        px, py, pw, ph = self.last_bbox
-        lcx, lcy = px + pw // 2, py + ph // 2
-        radius2  = (max(np.sqrt(pw ** 2 + ph ** 2), 40.0) * self._COLOR_SEARCH) ** 2
-        min_area = mask.shape[0] * mask.shape[1] * self._COLOR_MIN_AREA_FRAC
-        near = far = None
+        inv = 1.0 / scale
+        min_area = max(12.0, 0.03 * pw * ph * scale * scale)   # ~3% of the last box
+        max_jump2 = (max(np.hypot(pw, ph), 40.0) * self._COLOR_MAX_JUMP) ** 2
+        best = None; best_d2 = None
         for c in cnts:
             a = cv2.contourArea(c)
             if a < min_area:
                 continue
             bx, by, bw, bh = cv2.boundingRect(c)
-            fx, fy, fw2, fh2 = int(bx * inv), int(by * inv), int(bw * inv), int(bh * inv)
+            fx = sx0 + int(bx * inv); fy = sy0 + int(by * inv)
+            fw2, fh2 = int(bw * inv), int(bh * inv)
             ccx, ccy = fx + fw2 // 2, fy + fh2 // 2
-            if any(ex <= ccx <= ex + ew and ey <= ccy <= ey + eh
-                   for ex, ey, ew, eh in self._exclusion_zones):
+            if any(zx <= ccx <= zx + zw and zy <= ccy <= zy + zh
+                   for zx, zy, zw, zh in self._exclusion_zones):
                 continue
-            cand = (a, fx, fy, fw2, fh2, ccy)
-            if (ccx - lcx) ** 2 + (ccy - lcy) ** 2 <= radius2:
-                if near is None or a > near[0]:
-                    near = cand
-            elif far is None or a > far[0]:
-                far = cand
-        pick = near or far
-        if pick is None:
+            d2 = (ccx - lcx) ** 2 + (ccy - lcy) ** 2
+            if best is None or d2 < best_d2:                    # nearest-to-last
+                best = (fx, fy, fw2, fh2, ccy); best_d2 = d2
+        # Accept the nearest blob only if it's a plausible move — otherwise the target
+        # is hidden and we hold, rather than jump to a same-colour thing elsewhere.
+        if best is None or best_d2 > max_jump2:
             self.tracking_ok = False
             self._track_msg  = "COLOUR HIDDEN - holding"
             return
-        _, fx, fy, fw2, fh2, ccy = pick
+        fx, fy, fw2, fh2, ccy = best
         self.last_bbox   = (fx, fy, fw2, fh2)
         self.tracking_ok = True
         self._track_msg  = ""
