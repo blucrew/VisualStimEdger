@@ -2219,7 +2219,7 @@ class App:
         # slow machine needs it (see _make_tracker / _downscale / _tracker_init).
         self._proc_width        = 0
         self._track_scale       = 1.0
-        self._tracker_backend   = "vit"    # "vit" (deep, default) or "csrt" (fallback)
+        self._tracker_backend   = "csrt"   # "csrt" (proven default) or "vit" (deep, opt-in)
         self._tracker_has_score = False    # set by _make_tracker if the backend scores
         self._tracker_dirty     = False    # rebuild + re-init the tracker next frame
         self.tracker  = self._make_tracker()
@@ -4781,9 +4781,9 @@ class App:
         ).pack(side=tk.RIGHT)
         ctk.CTkLabel(
             perf_frame,
-            text="Deep = a neural tracker that holds through hands and fast motion far "
-                 "better, at similar cost — recommended. Classic = the old CSRT; switch "
-                 "to it only if Deep ever misbehaves.",
+            text="Classic = the proven tracker (default). Deep = an experimental neural "
+                 "tracker — more robust in clean tests, but it can balloon its box on "
+                 "smooth targets; still being validated. Stick with Classic for now.",
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 8), anchor="w")
         perf_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
@@ -6093,6 +6093,7 @@ class App:
         h = max(1, min(int(round(h)), sh - y))
         self.tracker.init(small, (x, y, w, h))
         self._track_scale = scale
+        self._track_init_wh = (max(1, int(full_bbox[2])), max(1, int(full_bbox[3])))
 
     def _on_proc_res_change(self, _value=None):
         """Tracking-resolution preset changed — apply live (the tracker re-anchors
@@ -6179,6 +6180,14 @@ class App:
         if success:
             inv = 1.0 / scale
             x, y, w, h_box = [int(v * inv) for v in new_bbox]
+            # Clamp against ballooning — some trackers (Vit) grow the box on smooth or
+            # ambiguous targets; keep the centre but cap the size at ~2.5x what it was
+            # locked at, so it can't swallow half the screen.
+            iw, ih = self._track_init_wh
+            if w > 2.5 * iw or h_box > 2.5 * ih:
+                cx0, cy0 = x + w // 2, y + h_box // 2
+                w, h_box = min(w, int(2.5 * iw)), min(h_box, int(2.5 * ih))
+                x, y = cx0 - w // 2, cy0 - h_box // 2
             px, py, pw, ph = self.last_bbox
             prev_cx, prev_cy = px + pw // 2, py + ph // 2
             new_cx,  new_cy  = x  + w  // 2, y  + h_box // 2
