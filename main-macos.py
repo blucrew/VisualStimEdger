@@ -2495,31 +2495,6 @@ class App:
                           "stable, high-contrast spot (a plug/electrode is ideal) and it "
                           "stays put. Turn off to let auto-reacquire find the head again.")
 
-        # Lock by look — track the target by its appearance instead of its shape.
-        # Auto-picks from the selection box: a vivid marker's colour, or a black
-        # electrode's darkness. Survives occlusion and re-finds instantly.
-        self._color_lock_var = tk.BooleanVar(value=self._color_lock)
-        _cl_row = ctk.CTkFrame(vid_col, fg_color="transparent")
-        _cl_row.pack(anchor="w", fill=tk.X, pady=(2, 0))
-        _cl_sw = ctk.CTkSwitch(
-            _cl_row, text="🎯 Lock by look (colour / dark)",
-            variable=self._color_lock_var, command=self._on_color_lock_toggle,
-            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
-            switch_width=28, switch_height=14,
-            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
-            progress_color=self._C_ACCENT)
-        _cl_sw.pack(side=tk.LEFT)
-        self._color_swatch_lbl = ctk.CTkFrame(_cl_row, width=16, height=16,
-                                              corner_radius=3, fg_color=self._C_SURFACE2)
-        self._color_swatch_lbl.pack(side=tk.LEFT, padx=(6, 0))
-        Tooltip(_cl_sw, "Lock onto your target by its look — it auto-picks how. Draw the "
-                        "box tightly on the target and turn this on: a vivid marker locks "
-                        "by COLOUR (rock-solid, shrugs off a hand); a black electrode locks "
-                        "by DARKNESS (good against lighter skin, but shadows/dark hair can "
-                        "compete). The swatch shows what it grabbed. Best marker: a matte "
-                        "lime / teal / hot-pink sticker. Grey or shiny metal has no usable "
-                        "look — put a bright matte sticker on it instead.")
-
         # Active Edging — auto-ramp the volume back up after you hold off the edge,
         # then deny again on the next edge. The aggressive auto-edging loop.
         self._active_edging_var = tk.BooleanVar(value=self._active_edging)
@@ -4870,6 +4845,29 @@ class App:
             perf_frame,
             text="Lower = faster on slow PCs. Downscales the frame before tracking, "
                  "not the video you watch. If your FPS is low, try Fast or Fastest.",
+            font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
+            wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
+
+        # Lock by look (experimental) — tucked here on purpose: it only works with a
+        # genuinely distinct-colour marker, and can't separate a red/yellow/black
+        # target from skin. Off by default.
+        cl_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
+        cl_row.pack(fill=tk.X, padx=12, pady=(2, 0))
+        self._color_lock_var = tk.BooleanVar(value=self._color_lock)
+        ctk.CTkSwitch(
+            cl_row, text="Lock by look (experimental)",
+            variable=self._color_lock_var, command=self._on_color_lock_toggle,
+            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
+            button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
+            progress_color=self._C_ACCENT).pack(side=tk.LEFT)
+        self._color_swatch_lbl = ctk.CTkFrame(cl_row, width=16, height=16,
+                                              corner_radius=3, fg_color=self._C_SURFACE2)
+        self._color_swatch_lbl.pack(side=tk.LEFT, padx=(6, 0))
+        ctk.CTkLabel(
+            perf_frame,
+            text="Tracks by colour/darkness instead of the tracker. Only worth it with a "
+                 "genuinely distinct marker — a matte lime / teal / hot-pink sticker. It "
+                 "can't tell a red/yellow/black target from skin. Off = normal tracking.",
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
 
