@@ -2319,6 +2319,23 @@ class App:
     def run(self):
         self.root.after(5, self._update_frame)
         self.root.mainloop()
+        # mainloop() has returned → the window is destroyed and _cleanup() has
+        # already run (via _on_close). If we now fall through to a normal Python
+        # exit, the interpreter's teardown GC finalises leftover Tk/PhotoImage
+        # objects on a non-main thread, which trips
+        #   Tcl_AsyncDelete: async handler deleted by the wrong thread
+        # and aborts with exit code 3 — an intermittent, ugly crash on close.
+        # Everything that matters has been flushed by _cleanup(), so skip the
+        # teardown entirely with a hard exit.
+        try:
+            self._cleanup()          # idempotent; no-op if _on_close already ran
+        except Exception:
+            pass
+        try:
+            logging.shutdown()       # flush + close log handlers before we bail
+        except Exception:
+            pass
+        os._exit(0)
 
     # ------------------------------------------------------------------ UI
 
