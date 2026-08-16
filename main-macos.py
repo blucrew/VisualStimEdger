@@ -3647,7 +3647,19 @@ class App:
             pass
         self._save_config()
         self._cleanup()
-        self.root.destroy()
+        # Do NOT call root.destroy() here. Tearing down the Tk interpreter trips
+        #   Tcl_AsyncDelete: async handler deleted by the wrong thread
+        # (abort, exit code 3) whenever a background thread has marshalled work
+        # via root.after(...): Tcl creates the async handler on that thread and
+        # then destroy() frees it on the main thread — the wrong one. _cleanup()
+        # has already persisted config and stopped/flushed everything that
+        # matters, so bypass the Tk teardown entirely and let the OS reclaim the
+        # process. (An immediate _exit is also a faster, cleaner-feeling close.)
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
+        os._exit(0)
 
     # ------------------------------------------------------------------ capture thread
 
