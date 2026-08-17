@@ -2091,6 +2091,9 @@ class App:
         self._dark_s            = 110    # dark mode: ...and less saturated than this
         self._head_y_history    = deque(maxlen=HEAD_Y_SMOOTH)
         self._frame_times       = deque(maxlen=30)  # for FPS calculation
+        self._frame_dt          = deque(maxlen=300) # per-frame Δt (ms) for p95/p99
+        self._last_frame_t      = 0.0               # ts of previous processed frame
+        self._last_perf_log     = 0.0               # throttle for the perf log line
 
         # Session stats
         self.session_start   = time.time()
@@ -5740,6 +5743,7 @@ class App:
     # Throttle constants (ms)
     _DISPLAY_INTERVAL_MS  = 50   # max 20 fps for the preview panel
     _STATUS_INTERVAL_MS   = 250  # max 4 fps for the status label text
+    _PERF_LOG_INTERVAL_S  = 10.0 # how often to log p50/p95/p99 frame time
     # Tracking-resolution presets (target width in px; 0 = native/off). Downscaling
     # the frame before CSRT is the main FPS lever on slow CPUs — the tracker is the
     # per-frame cost, and it scales with pixel count.
@@ -5759,6 +5763,11 @@ class App:
 
             now = time.time()
             self._frame_times.append(now)
+            if self._last_frame_t:
+                dt = (now - self._last_frame_t) * 1000.0   # ms since last frame
+                if dt < 2000.0:        # skip pause/stall gaps, keep real spikes
+                    self._frame_dt.append(dt)
+            self._last_frame_t = now
 
             # Tracking + volume: every other frame in non-Expert modes
             self._proc_frame_count = self._proc_frame_count + 1
@@ -5788,6 +5797,11 @@ class App:
                 self._update_status_label(state)
                 self._last_status_time = now
 
+            # Frame-time percentiles → log (avg FPS alone hides the spikes)
+            if now - self._last_perf_log >= self._PERF_LOG_INTERVAL_S:
+                self._log_perf()
+                self._last_perf_log = now
+
             # OBS overlay broadcast — 4 Hz
             if now - self._last_overlay_broadcast >= 0.25:
                 self._last_overlay_broadcast = now
@@ -5806,6 +5820,25 @@ class App:
         finally:
             interval = 100 if self.tracking_paused else 33  # ~30fps poll
             self.root.after(interval, self._update_frame)
+
+    def _log_perf(self):
+        """Log frame-time percentiles. Average FPS can read fine while p95/p99
+        spikes make the toy stutter — this surfaces the spikes (Jarry's ask).
+        Runs once per _PERF_LOG_INTERVAL_S; the sort is over <=300 samples."""
+        dt = list(self._frame_dt)
+        if len(dt) < 5:
+            return
+        dt.sort()
+        n = len(dt)
+        def pct(p):
+            return dt[min(n - 1, int(round((p / 100.0) * (n - 1))))]
+        mean = sum(dt) / n
+        fps  = 1000.0 / mean if mean > 0 else 0.0
+        backend = "Deep" if getattr(self, "_tracker_backend", "") == "vit" else "Classic"
+        res = self.proc_res_var.get() if hasattr(self, "proc_res_var") else "?"
+        log.info(f"perf: {fps:.1f} fps avg | frame ms p50={pct(50):.0f} "
+                 f"p95={pct(95):.0f} p99={pct(99):.0f} max={dt[-1]:.0f} "
+                 f"(n={n}) | tracker={backend} res={res}")
 
     def _on_lock_track_toggle(self):
         """Freeze/unfreeze YOLO reanchoring (the 'Lock on target' switch)."""
@@ -6129,6 +6162,7 @@ class App:
         self._save_config()
         log.info(f"Tracking resolution -> {self.proc_res_var.get()} "
                  f"(proc_width={self._proc_width or 'native'})")
+        self._frame_dt.clear(); self._last_perf_log = 0.0  # fresh perf window
 
     def _on_tracker_backend_change(self, _value=None):
         """Deep/Classic tracker toggle — rebuild the tracker on the next frame (it
@@ -6137,6 +6171,7 @@ class App:
         self._tracker_dirty = True
         self._save_config()
         log.info(f"Tracking engine -> {self._tracker_var.get()} ({self._tracker_backend})")
+        self._frame_dt.clear(); self._last_perf_log = 0.0  # fresh perf window
 
     def _refresh_lock_template(self, frame):
         """While locked and tracking cleanly, keep a fresh appearance patch of the
