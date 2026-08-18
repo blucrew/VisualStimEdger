@@ -348,7 +348,7 @@ class RegionSelector:
 
         # Overlay label with place() so it doesn't steal space from the canvas.
         # The canvas must span the full virtual desktop for multi-monitor selection.
-        self.label = tk.Label(self.root, text="Step 1 — Draw a box around your video feed, then release to lock.  [Esc to cancel]", font=("Arial", 18, "bold"), bg="#111111", fg="#F5A623")
+        self.label = tk.Label(self.root, text=tr("Step 1 — Draw a box around your video feed, then release to lock.  [Esc to cancel]"), font=("Arial", 18, "bold"), bg="#111111", fg="#F5A623")
         self.label.place(relx=0.5, y=50, anchor="n")
 
         self.canvas.bind("<ButtonPress-1>", self.on_press)
@@ -559,7 +559,7 @@ def select_head(frame_cv, parent=None):
 
     btn_frame = tk.Frame(root, bg="#111111")
     btn_frame.pack(fill=tk.X)
-    tk.Button(btn_frame, text="Confirm Head Area ✅", command=root.destroy, font=("Arial", 11, "bold"), bg="#3EC941", fg="#111111", activebackground="#32a435", activeforeground="#111111").pack(pady=5)
+    tk.Button(btn_frame, text=tr("Confirm Head Area ✅"), command=root.destroy, font=("Arial", 11, "bold"), bg="#3EC941", fg="#111111", activebackground="#32a435", activeforeground="#111111").pack(pady=5)
     
     if is_main:
         root.eval('tk::PlaceWindow . center')
@@ -2458,7 +2458,7 @@ class App:
         self._update_label  = ctk.CTkLabel(self._update_banner, text="",
                                            text_color="white", font=lbl)
         self._update_label.pack(side=tk.LEFT, padx=P, pady=6)
-        self._update_btn = ctk.CTkButton(self._update_banner, text="Download", width=100,
+        self._update_btn = ctk.CTkButton(self._update_banner, text=tr("Download"), width=100,
                                          fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                                          text_color="white", font=lbl, corner_radius=4)
         self._update_btn.pack(side=tk.RIGHT, padx=P, pady=6)
@@ -2491,7 +2491,7 @@ class App:
         # never blocks the count. Created hidden; _grant_cum packs it, the cum-window
         # end (_tick_cum_grant expiry / cum-stopped) hides it again.
         self._tribute_btn = ctk.CTkButton(
-            vid_shell, text="😈 tribute your dom before you're allowed → ☕", height=24,
+            vid_shell, text=tr("😈 tribute your dom before you're allowed → ☕"), height=24,
             fg_color="#8a1a1a", hover_color="#6a0a0a", text_color="#F5A623",
             border_width=1, border_color="#F5A623",
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -2502,9 +2502,9 @@ class App:
         _vbtn_kw = dict(font=ctk.CTkFont(size=10), height=28,
                         fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                         text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER)
-        ctk.CTkButton(_vbr, text="Re-Select Feed", command=self._reselect_feed,
+        ctk.CTkButton(_vbr, text=tr("Re-Select Feed"), command=self._reselect_feed,
                       **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ctk.CTkButton(_vbr, text="Re-Select Head", command=self._reselect_head,
+        ctk.CTkButton(_vbr, text=tr("Re-Select Head"), command=self._reselect_head,
                       **_vbtn_kw).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         # Lock toggle — freeze the tracker on the user's target (no auto-reanchor).
@@ -2512,7 +2512,7 @@ class App:
         # would otherwise get pulled toward; keeps it from "skipping" off the box.
         self._lock_track_var = tk.BooleanVar(value=self._reanchor_lock)
         _lock_sw = ctk.CTkSwitch(
-            vid_col, text="🔒 Lock on target (no auto-reanchor)",
+            vid_col, text=tr("🔒 Lock on target (no auto-reanchor)"),
             variable=self._lock_track_var, command=self._on_lock_track_toggle,
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             switch_width=28, switch_height=14,
@@ -2527,7 +2527,7 @@ class App:
         # then deny again on the next edge. The aggressive auto-edging loop.
         self._active_edging_var = tk.BooleanVar(value=self._active_edging)
         _ae_sw = ctk.CTkSwitch(
-            vid_col, text="🔁 Active Edging (auto-ramp)",
+            vid_col, text=tr("🔁 Active Edging (auto-ramp)"),
             variable=self._active_edging_var, command=self._on_active_edging_toggle,
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             switch_width=28, switch_height=14,
@@ -2560,7 +2560,7 @@ class App:
             return row
 
         self._auto_btn = ctk.CTkButton(
-            hbf, text="📷 AUTO  (observing...)", command=self._toggle_auto,
+            hbf, text=tr("📷 AUTO  (observing...)"), command=self._toggle_auto,
             font=btn, height=28, corner_radius=4,
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
@@ -2580,7 +2580,7 @@ class App:
             self._save_config()
             log.info("All exclusion zones cleared")
         ctk.CTkButton(
-            ez_row, text="✕ Clear", command=_clear_zones,
+            ez_row, text=tr("✕ Clear"), command=_clear_zones,
             font=ctk.CTkFont(size=10), height=26, corner_radius=4,
             fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
             text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
@@ -2593,7 +2593,7 @@ class App:
         # lines below it is OPTIONAL — nothing depends on it being set. Crossing
         # ABOVE it instantly cuts volume to the floor: a hard "don't let me finish"
         # stop for when the reactive ramp is too slow.
-        ctk.CTkLabel(hbf, text="Optional cut-off", anchor="w",
+        ctk.CTkLabel(hbf, text=tr("Optional cut-off"), anchor="w",
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM
                      ).pack(fill=tk.X, pady=(1, 0))
         ponr_row = ctk.CTkFrame(hbf, fg_color="transparent")
@@ -2601,11 +2601,11 @@ class App:
         ponr_row.columnconfigure(0, weight=3, uniform="ponr")
         ponr_row.columnconfigure(1, weight=2, uniform="ponr")
         ponr_row.columnconfigure(2, weight=1, uniform="ponr")
-        ctk.CTkButton(ponr_row, text="⚡ P.O.N.R.", command=self._set_ponr,
+        ctk.CTkButton(ponr_row, text=tr("⚡ P.O.N.R."), command=self._set_ponr,
                       font=btn, height=28, fg_color=self._C_YELLOW, hover_color=self._C_YELLOW_H,
                       text_color="black", corner_radius=4
                       ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
-        ctk.CTkButton(ponr_row, text="Manual ✚", command=lambda: self._start_pick("PONR"),
+        ctk.CTkButton(ponr_row, text=tr("Manual ✚"), command=lambda: self._start_pick("PONR"),
                       font=ctk.CTkFont(size=10), height=28,
                       fg_color=self._C_YELLOW, hover_color=self._C_YELLOW_H,
                       text_color="black", corner_radius=4
@@ -2623,7 +2623,7 @@ class App:
                 "reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it.")
 
         # ── The three calibration lines — ALL REQUIRED for the tool to run ───
-        ctk.CTkLabel(hbf, text="Calibration — set all 3 (required)", anchor="w",
+        ctk.CTkLabel(hbf, text=tr("Calibration — set all 3 (required)"), anchor="w",
                      font=ctk.CTkFont(size=9, weight="bold"), text_color=self._C_TEXT_DIM
                      ).pack(fill=tk.X, pady=(4, 0))
         _hbtn_row(hbf, "Edging",  self._set_edging,  lambda: self._start_pick("Edging"),  self._C_RED,    self._C_RED_HOV)
@@ -2636,7 +2636,7 @@ class App:
         _acd_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 1))
         self._auto_cum_var = tk.BooleanVar(value=False)
         ctk.CTkSwitch(
-            _acd_row, text="Auto-detect cum",
+            _acd_row, text=tr("Auto-detect cum"),
             variable=self._auto_cum_var,
             command=self._on_auto_cum_toggle,
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
@@ -2649,12 +2649,12 @@ class App:
         cum_row.columnconfigure(0, weight=1, uniform="cumbtn")
         cum_row.columnconfigure(1, weight=1, uniform="cumbtn")
         self._letmecum_btn = ctk.CTkButton(
-            cum_row, text="Let me cum?", command=self._on_letmecum,
+            cum_row, text=tr("Let me cum?"), command=self._on_letmecum,
             font=btn, height=50, corner_radius=4,
             fg_color=self._C_GREEN, hover_color=self._C_GREEN_H, text_color="white")
         self._letmecum_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         Tooltip(self._letmecum_btn, "Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission")
-        self._cum_btn = ctk.CTkButton(cum_row, text="I've CUM", command=self._on_cum,
+        self._cum_btn = ctk.CTkButton(cum_row, text=tr("I've CUM"), command=self._on_cum,
                       font=btn, height=50, corner_radius=4,
                       fg_color="#e0e0e8", hover_color="#c8c8d0",
                       text_color=self._C_BG)
@@ -2667,7 +2667,7 @@ class App:
         vol_col.pack(side=tk.LEFT, fill=tk.Y, padx=(4, 0))
         vol_col.pack_propagate(False)
 
-        ctk.CTkLabel(vol_col, text="VOL\nRANGE", font=_tiny,
+        ctk.CTkLabel(vol_col, text=tr("VOL\nRANGE"), font=_tiny,
                      text_color=self._C_TEXT_DIM, justify="center").pack(pady=(6, 0))
         ctk.CTkLabel(vol_col, text="ceil", font=_tiny,
                      text_color=self._C_TEXT_DIM).pack()
@@ -2813,10 +2813,10 @@ class App:
                "Expert: aggressive ramps, 1-in-30 odds, 1 min grant")
         aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
         aggr_row.pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkLabel(aggr_row, text="Aggressiveness", font=lbl,
+        ctk.CTkLabel(aggr_row, text=tr("Aggressiveness"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self._evil_btn = ctk.CTkButton(
-            aggr_row, text="EVIL MODE", command=self._toggle_evil_mode,
+            aggr_row, text=tr("EVIL MODE"), command=self._toggle_evil_mode,
             font=ctk.CTkFont(size=12), height=28, width=36, corner_radius=4,
             fg_color="transparent", hover_color="#3a0000",
             border_width=2, border_color="#cc0000", text_color="#cc0000",
@@ -2841,7 +2841,7 @@ class App:
         mode_card.pack(fill=tk.X, padx=P, pady=2)
         mode_row = ctk.CTkFrame(mode_card, fg_color="transparent")
         mode_row.pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkLabel(mode_row, text="Output", font=lbl,
+        ctk.CTkLabel(mode_row, text=tr("Output"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         _mode_defs = [
@@ -2892,14 +2892,14 @@ class App:
         self._restim_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         ro = ctk.CTkFrame(self._restim_opts, fg_color="transparent")
         ro.pack(padx=12, pady=7)
-        ctk.CTkLabel(ro, text="Restim Port:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkLabel(ro, text=tr("Restim Port:"), font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkEntry(ro, textvariable=self.port_var, width=72,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self.port_var.trace_add("write", self._on_port_change)
         # OBS overlay URL on same row
         _overlay_url = f"http://127.0.0.1:{OverlayServer.PORT}"
-        ctk.CTkLabel(ro, text="OBS Overlay:", font=lbl,
+        ctk.CTkLabel(ro, text=tr("OBS Overlay:"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(16, 6))
         _obs_entry = ctk.CTkEntry(ro, width=170,
                                   fg_color=self._C_SURFACE, border_color=self._C_BORDER,
@@ -2910,9 +2910,9 @@ class App:
         def _copy_overlay_url():
             self.root.clipboard_clear()
             self.root.clipboard_append(_overlay_url)
-            _copy_btn.configure(text="Copied!")
-            self.root.after(1500, lambda: _copy_btn.configure(text="Copy"))
-        _copy_btn = ctk.CTkButton(ro, text="Copy", command=_copy_overlay_url, width=48,
+            _copy_btn.configure(text=tr("Copied!"))
+            self.root.after(1500, lambda: _copy_btn.configure(text=tr("Copy")))
+        _copy_btn = ctk.CTkButton(ro, text=tr("Copy"), command=_copy_overlay_url, width=48,
                                   fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                                   text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                                   font=ctk.CTkFont(size=10))
@@ -2922,12 +2922,12 @@ class App:
         self._xtoys_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         xo = ctk.CTkFrame(self._xtoys_opts, fg_color="transparent")
         xo.pack(fill=tk.X, padx=12, pady=(7, 2))
-        ctk.CTkLabel(xo, text="Webhook ID:", font=lbl,
+        ctk.CTkLabel(xo, text=tr("Webhook ID:"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
         self._xtoys_entry = ctk.CTkEntry(xo, textvariable=self.xtoys_id_var, width=240,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT,
-                     placeholder_text="e.g. 8hR5acKTCx2s")
+                     placeholder_text=tr("e.g. 8hR5acKTCx2s"))
         self._xtoys_entry.pack(side=tk.LEFT, padx=(0, 8))
         # One-click shortcut straight to the Private Webhook page \u2014 saves users hunting
         # for xtoys.app/me. Mirrors the About-menu link buttons (webbrowser.open).
@@ -2952,7 +2952,7 @@ class App:
         # HR source selector
         hr_src_row = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
         hr_src_row.pack(fill=tk.X, padx=12, pady=(7, 2))
-        ctk.CTkLabel(hr_src_row, text="HR Source:", font=lbl,
+        ctk.CTkLabel(hr_src_row, text=tr("HR Source:"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 8))
         self._hr_src_seg = ctk.CTkSegmentedButton(
             hr_src_row, values=["Pulsoid", "BLE Direct"],
@@ -2966,12 +2966,12 @@ class App:
 
         hr_row1 = ctk.CTkFrame(self._hr_opts, fg_color="transparent")
         hr_row1.pack(fill=tk.X, padx=12, pady=(7, 2))
-        ctk.CTkLabel(hr_row1, text="Pulsoid Token:", font=lbl,
+        ctk.CTkLabel(hr_row1, text=tr("Pulsoid Token:"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
         ctk.CTkEntry(hr_row1, textvariable=self.hr_token_var, width=210,
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT, show="\u2022",
-                     placeholder_text="pulsoid.net/ui/keys (paid plan required)").pack(side=tk.LEFT, padx=(0, 8))
+                     placeholder_text=tr("pulsoid.net/ui/keys (paid plan required)")).pack(side=tk.LEFT, padx=(0, 8))
         self._hr_bpm_label = ctk.CTkLabel(hr_row1, text="\u2665 -- bpm",
                                           font=ctk.CTkFont(size=fs + 1, weight="bold"),
                                           text_color="#e91e63")
@@ -3005,10 +3005,10 @@ class App:
         # (packed/unpacked by _on_hr_source_change)
         ble_inner = ctk.CTkFrame(self._ble_row, fg_color="transparent")
         ble_inner.pack(fill=tk.X, padx=12, pady=(2, 7))
-        self._ble_name_lbl = ctk.CTkLabel(ble_inner, text="No device selected",
+        self._ble_name_lbl = ctk.CTkLabel(ble_inner, text=tr("No device selected"),
                                            font=lbl, text_color=self._C_TEXT_DIM)
         self._ble_name_lbl.pack(side=tk.LEFT, expand=True, anchor="w")
-        ctk.CTkButton(ble_inner, text="Scan…", width=70, height=26,
+        ctk.CTkButton(ble_inner, text=tr("Scan…"), width=70, height=26,
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white", font=ctk.CTkFont(size=11),
                       command=self._ble_scan_dialog).pack(side=tk.RIGHT)
@@ -3025,7 +3025,7 @@ class App:
         self._windows_opts = ctk.CTkFrame(sf, fg_color=self._C_SURFACE2, corner_radius=6)
         wo = ctk.CTkFrame(self._windows_opts, fg_color="transparent")
         wo.pack(padx=12, pady=7, fill=tk.X)
-        ctk.CTkLabel(wo, text="Device:", font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
+        ctk.CTkLabel(wo, text=tr("Device:"), font=lbl, text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 6))
         self._device_combo = ctk.CTkComboBox(
             wo, values=[], command=self._on_device_select, width=280,
             fg_color=self._C_SURFACE, border_color=self._C_BORDER,
@@ -3033,12 +3033,12 @@ class App:
             dropdown_fg_color=self._C_SURFACE2, text_color=self._C_TEXT,
         )
         self._device_combo.pack(side=tk.LEFT, padx=(0, 6))
-        ctk.CTkButton(wo, text="Refresh", command=self._refresh_devices, width=72,
+        ctk.CTkButton(wo, text=tr("Refresh"), command=self._refresh_devices, width=72,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
         # Soft promo: users on audio output (electro) are exactly who'd want the pattern packs.
-        _js_btn = ctk.CTkButton(wo, text="⚡ Free stim patterns ↗", width=168, height=24,
+        _js_btn = ctk.CTkButton(wo, text=tr("⚡ Free stim patterns ↗"), width=168, height=24,
                       fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                       text_color="#F5A623", border_width=1, border_color="#F5A623",
                       font=ctk.CTkFont(size=10, weight="bold"),
@@ -3058,18 +3058,18 @@ class App:
             # File / folder load buttons
             load_row = ctk.CTkFrame(mo, fg_color="transparent")
             load_row.pack(fill=tk.X, pady=(0, 4))
-            ctk.CTkButton(load_row, text="📁 Load File", width=110, height=28,
+            ctk.CTkButton(load_row, text=tr("📁 Load File"), width=110, height=28,
                           fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_file).pack(side=tk.LEFT, padx=(0, 6))
-            ctk.CTkButton(load_row, text="📂 Load Folder", width=120, height=28,
+            ctk.CTkButton(load_row, text=tr("📂 Load Folder"), width=120, height=28,
                           fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                           text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                           font=ctk.CTkFont(size=10),
                           command=self._mp3_load_folder).pack(side=tk.LEFT, padx=(0, 10))
             # Soft promo: they're sat here looking for something to load.
-            _pv_btn = ctk.CTkButton(load_row, text="🎧 21 tracks to edge to ↗", width=190, height=28,
+            _pv_btn = ctk.CTkButton(load_row, text=tr("🎧 21 tracks to edge to ↗"), width=190, height=28,
                           fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                           text_color="#F5A623", border_width=1, border_color="#F5A623",
                           font=ctk.CTkFont(size=10, weight="bold"),
@@ -3077,7 +3077,7 @@ class App:
             _pv_btn.pack(side=tk.RIGHT)
             Tooltip(_pv_btn, "Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. "
                              "Load them straight into this player. Opens Ko-fi.")
-            self._mp3_track_lbl = ctk.CTkLabel(load_row, text="No file loaded",
+            self._mp3_track_lbl = ctk.CTkLabel(load_row, text=tr("No file loaded"),
                                                font=ctk.CTkFont(size=10),
                                                text_color=self._C_TEXT_DIM,
                                                anchor="w")
@@ -3099,7 +3099,7 @@ class App:
             # Output device
             dev_row = ctk.CTkFrame(mo, fg_color="transparent")
             dev_row.pack(fill=tk.X, pady=(0, 4))
-            ctk.CTkLabel(dev_row, text="Out:", font=ctk.CTkFont(size=10),
+            ctk.CTkLabel(dev_row, text=tr("Out:"), font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
             _mp3_devs = ["Default"] + (MusicPlayer.list_devices() if _MINIAUDIO_OK else [])
             self._mp3_dev_var = tk.StringVar(value="Default")
@@ -3116,7 +3116,7 @@ class App:
             # Loop mode
             loop_row = ctk.CTkFrame(mo, fg_color="transparent")
             loop_row.pack(pady=(0, 6))
-            ctk.CTkLabel(loop_row, text="Loop:", font=ctk.CTkFont(size=10),
+            ctk.CTkLabel(loop_row, text=tr("Loop:"), font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 6))
             self._mp3_loop_var = tk.StringVar(value="folder")
             ctk.CTkSegmentedButton(
@@ -3153,7 +3153,7 @@ class App:
         self._play_btn.pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(self._play_btn, "Play Mode — minimal immersive view; hides settings")
         self._bondage_btn = ctk.CTkButton(
-            ctrl, text="🎙 BONDAGE", command=self._open_bondage_splash,
+            ctrl, text=tr("🎙 BONDAGE"), command=self._open_bondage_splash,
             font=ctk.CTkFont(size=10, weight="bold"), height=34, corner_radius=4,
             fg_color="transparent", hover_color="#1a0028",
             border_width=2, border_color="#8a2a9a", text_color="#c080ff", width=90,
@@ -3165,7 +3165,7 @@ class App:
 
         # ── Status labels ─────────────────────────────────────────────────────
         self.info_label = ctk.CTkLabel(
-            sf, text="State: --  |  Vol: --  |  WS: Disconnected",
+            sf, text=tr("State: --  |  Vol: --  |  WS: Disconnected"),
             font=ctk.CTkFont(size=15, weight="bold"), text_color=self._C_TEXT,
         )
         self.info_label.pack(pady=(4, 1))
@@ -3180,7 +3180,7 @@ class App:
         self._help_label.pack(pady=(0, 1))
 
         self.stats_label = ctk.CTkLabel(
-            sf, text="Session: 00:00  |  Edges: 0",
+            sf, text=tr("Session: 00:00  |  Edges: 0"),
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
         )
         self.stats_label.pack(pady=(0, 4))
@@ -3203,7 +3203,7 @@ class App:
 
         # ── Volume ────────────────────────────────────────────────────────────
         self._play_vol_lbl = ctk.CTkLabel(
-            pp, text="Vol: —",
+            pp, text=tr("Vol: —"),
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color=self._C_TEXT_DIM)
         self._play_vol_lbl.pack(pady=(0, 8))
@@ -3212,7 +3212,7 @@ class App:
         stats_card = ctk.CTkFrame(pp, fg_color=self._C_SURFACE, corner_radius=8)
         stats_card.pack(fill=tk.X, padx=P, pady=4)
         self._play_edges_lbl = ctk.CTkLabel(
-            stats_card, text="0 edges",
+            stats_card, text=tr("0 edges"),
             font=ctk.CTkFont(size=13, weight="bold"), text_color=self._C_TEXT)
         self._play_edges_lbl.pack(side=tk.LEFT, padx=16, pady=10)
         self._play_time_lbl = ctk.CTkLabel(
@@ -3260,7 +3260,7 @@ class App:
         _play_acd_row = ctk.CTkFrame(pp, fg_color="transparent")
         _play_acd_row.pack(fill=tk.X, padx=P, pady=(0, 8))
         ctk.CTkSwitch(
-            _play_acd_row, text="Auto-detect cum",
+            _play_acd_row, text=tr("Auto-detect cum"),
             variable=self._auto_cum_var,
             command=self._on_auto_cum_toggle,
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
@@ -3759,10 +3759,10 @@ class App:
             self._auto_min_y = self._auto_max_y = None
             self._auto_obs_start = None
             self._auto_last_apply = 0.0
-            self._auto_btn.configure(text="📷 AUTO  (observing...)",
+            self._auto_btn.configure(text=tr("📷 AUTO  (observing...)"),
                                      fg_color="#b8a000", hover_color="#8a7800")
         else:
-            self._auto_btn.configure(text="📷 AUTO  (off)",
+            self._auto_btn.configure(text=tr("📷 AUTO  (off)"),
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _auto_feed(self, y: float):
@@ -3804,13 +3804,13 @@ class App:
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
-            self._auto_btn.configure(text="📷 AUTO  (flaccid set, need more range)")
+            self._auto_btn.configure(text=tr("📷 AUTO  (flaccid set, need more range)"))
 
     def _disable_auto(self):
         """Turn off AUTO so manual height settings aren't overwritten."""
         if self._auto_mode:
             self._auto_mode = False
-            self._auto_btn.configure(text="📷 AUTO  (off)",
+            self._auto_btn.configure(text=tr("📷 AUTO  (off)"),
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _cancel_pick(self):
@@ -3964,7 +3964,7 @@ class App:
         self._head_y_history.clear()
         self._auto_btn_state = None
         if hasattr(self, '_auto_btn'):
-            self._auto_btn.configure(text="📷 AUTO", fg_color=self._C_SURFACE2,
+            self._auto_btn.configure(text=tr("📷 AUTO"), fg_color=self._C_SURFACE2,
                                      hover_color="#4a4a4a")
         log.info("Heights reset after feed re-selection")
 
@@ -4091,7 +4091,7 @@ class App:
 
             cooldown = self._CUM_DENY_COOLDOWN.get(aggr, 30)
             self._letmecum_cooldown_until = time.time() + cooldown
-            self._letmecum_btn.configure(text="DENIED!", fg_color="#FF4444",
+            self._letmecum_btn.configure(text=tr("DENIED!"), fg_color="#FF4444",
                                          hover_color="#cc3636")
             snark = random.choice(self._denial_phrases) if self._denial_phrases else "Denied."
             self._snark_label.configure(text=snark)
@@ -4134,10 +4134,10 @@ class App:
             self.root.after(1000, self._tick_letmecum_cooldown)
         else:
             if self._evil_mode:
-                self._letmecum_btn.configure(text="Let me cum?",
+                self._letmecum_btn.configure(text=tr("Let me cum?"),
                                              fg_color="#8a1a1a", hover_color="#6a0a0a")
             else:
-                self._letmecum_btn.configure(text="Let me cum?",
+                self._letmecum_btn.configure(text=tr("Let me cum?"),
                                              fg_color="#3EC941", hover_color="#32a435")
             self._snark_label.configure(text="")
 
@@ -4161,9 +4161,9 @@ class App:
             self._cum_allowed = False
             self._last_letmecum_result = "expired"
             self._tribute_btn.pack_forget()
-            self._letmecum_btn.configure(text="Too slow!",
+            self._letmecum_btn.configure(text=tr("Too slow!"),
                                          fg_color="#FF4444", hover_color="#cc3636")
-            self._snark_label.configure(text="Time's up. Back to edging.",
+            self._snark_label.configure(text=tr("Time's up. Back to edging."),
                                         text_color="#ff4444")
             if getattr(self, '_evil_mode', False):
                 _btn_fg  = "#8a1a1a"
@@ -4172,7 +4172,7 @@ class App:
                 _btn_fg  = "#3EC941"
                 _btn_hov = "#32a435"
             self.root.after(3000, lambda fg=_btn_fg, hov=_btn_hov: (
-                self._letmecum_btn.configure(text="Let me cum?",
+                self._letmecum_btn.configure(text=tr("Let me cum?"),
                                              fg_color=fg, hover_color=hov),
                 self._snark_label.configure(text="")))
             log.info("Cum grant expired — permission revoked")
@@ -4217,7 +4217,7 @@ class App:
         self._ruin_jobs = []
         log.info(f"RUIN triggered on {aggr}")
 
-        self._letmecum_btn.configure(text="RUINED 😈", fg_color="#6600cc",
+        self._letmecum_btn.configure(text=tr("RUINED 😈"), fg_color="#6600cc",
                                      hover_color="#440088")
 
         # Longer, crueler 5-pulse climb (85 → 90 → 94 → 97 → 100) with the
@@ -4285,7 +4285,7 @@ class App:
             self._cum_undo_active = True
             try:
                 self._cum_btn.configure(
-                    text="↩ Undo (3s)", command=self._on_cum,
+                    text=tr("↩ Undo (3s)"), command=self._on_cum,
                     fg_color="#F5A623", hover_color="#d08800", text_color="black")
             except Exception:
                 pass
@@ -4293,7 +4293,7 @@ class App:
             if btn:
                 try:
                     btn.configure(
-                        text="↩ Undo (3s)", command=self._on_cum,
+                        text=tr("↩ Undo (3s)"), command=self._on_cum,
                         fg_color="#F5A623", hover_color="#d08800", text_color="black")
                 except Exception:
                     pass
@@ -4309,7 +4309,7 @@ class App:
             self.root.after_cancel(self._cum_undo_job)
         self._cum_undo_job    = None
         self._cum_undo_active = False
-        _cum_kw = dict(text="I've CUM", command=self._on_cum,
+        _cum_kw = dict(text=tr("I've CUM"), command=self._on_cum,
                        fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG)
         try: self._cum_btn.configure(**_cum_kw)
         except Exception: pass
@@ -4342,7 +4342,7 @@ class App:
         self._cum_allowed = False
         self._tribute_btn.pack_forget()
         self._cum_grant_expires = 0
-        self._letmecum_btn.configure(text="Let me cum?", fg_color="#3EC941",
+        self._letmecum_btn.configure(text=tr("Let me cum?"), fg_color="#3EC941",
                                      hover_color="#32a435", state="disabled")
         self._snark_label.configure(text="")
 
@@ -4368,12 +4368,12 @@ class App:
             log.info(f"Refractory started — {self._refractory_mins} min")
         else:
             # No refractory — immediate manual resume
-            self._cum_btn.configure(text="Resume", command=self._on_resume,
+            self._cum_btn.configure(text=tr("Resume"), command=self._on_resume,
                                     fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
                                     text_color="white")
             btn = getattr(self, '_play_cum_btn', None)
             if btn:
-                btn.configure(text="Resume", command=self._on_resume,
+                btn.configure(text=tr("Resume"), command=self._on_resume,
                                fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
                                text_color="white")
             log.info("Cum triggered — session stopped, awaiting Resume")
@@ -4406,7 +4406,7 @@ class App:
         self._cum_detect_buf.clear()
         self._cum_peak_activity = 0.0
         self._cum_score = 0.0
-        _cum_kw = dict(text="I've CUM", command=self._on_cum,
+        _cum_kw = dict(text=tr("I've CUM"), command=self._on_cum,
                        fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG)
         self._cum_btn.configure(**_cum_kw)
         try:
@@ -4554,7 +4554,7 @@ class App:
         # Repurpose "Let me cum?" as the Cancel button
         try:
             self._letmecum_btn.configure(
-                text="✕ Cancel", command=self._cum_cancel,
+                text=tr("✕ Cancel"), command=self._cum_cancel,
                 fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                 text_color=self._C_TEXT, state="normal",
             )
@@ -4630,7 +4630,7 @@ class App:
     def _restore_cum_btn_normal(self):
         """Put I've CUM / Let me cum? back to their standard appearance."""
         _cum_kw = dict(
-            text="I've CUM", command=self._on_cum,
+            text=tr("I've CUM"), command=self._on_cum,
             fg_color="#e0e0e8", hover_color="#c8c8d0", text_color=self._C_BG,
         )
         try: self._cum_btn.configure(**_cum_kw)
@@ -4639,7 +4639,7 @@ class App:
         except Exception: pass
         try:
             self._letmecum_btn.configure(
-                text="Let me cum?", command=self._on_letmecum,
+                text=tr("Let me cum?"), command=self._on_letmecum,
                 fg_color=self._C_GREEN, hover_color=self._C_GREEN_H,
                 text_color="white",
             )
@@ -4822,14 +4822,14 @@ class App:
                       text_color="white").pack(padx=12, pady=(4, 10), anchor="e")
 
         # ── Calibration ───────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Calibration",
+        ctk.CTkLabel(sf, text=tr("Calibration"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         calib_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         calib_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         sens_hdr = ctk.CTkFrame(calib_frame, fg_color="transparent")
         sens_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
-        ctk.CTkLabel(sens_hdr, text="Edging Sensitivity",
+        ctk.CTkLabel(sens_hdr, text=tr("Edging Sensitivity"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
         sens_val_lbl = ctk.CTkLabel(sens_hdr, text=f"{int(self.edge_sens_var.get())} px",
@@ -4857,14 +4857,14 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
         # ── Restim ────────────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Restim",
+        ctk.CTkLabel(sf, text=tr("Restim"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         restim_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         restim_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         ax_row = ctk.CTkFrame(restim_frame, fg_color="transparent")
         ax_row.pack(fill=tk.X, padx=12, pady=(8, 2))
-        ctk.CTkLabel(ax_row, text="T-code Axis",
+        ctk.CTkLabel(ax_row, text=tr("T-code Axis"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
 
@@ -4960,14 +4960,14 @@ class App:
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
 
-        ctk.CTkLabel(sf, text="xToys",
+        ctk.CTkLabel(sf, text=tr("xToys"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         xtoys_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         xtoys_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         xtoys_help_row = ctk.CTkFrame(xtoys_frame, fg_color="transparent")
         xtoys_help_row.pack(fill=tk.X, padx=12, pady=(8, 4))
-        ctk.CTkLabel(xtoys_help_row, text="First time setup?",
+        ctk.CTkLabel(xtoys_help_row, text=tr("First time setup?"),
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
 
         def _show_xtoys_help():
@@ -4988,11 +4988,11 @@ class App:
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
-            ctk.CTkButton(hw, text="Close", command=hw.destroy, width=80,
+            ctk.CTkButton(hw, text=tr("Close"), command=hw.destroy, width=80,
                           fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                           text_color=self._C_TEXT).pack(pady=(0, 16))
 
-        ctk.CTkButton(xtoys_help_row, text="? Setup Guide", command=_show_xtoys_help,
+        ctk.CTkButton(xtoys_help_row, text=tr("? Setup Guide"), command=_show_xtoys_help,
                       width=100, height=22, font=ctk.CTkFont(size=9),
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT_DIM, border_width=1,
@@ -5000,18 +5000,18 @@ class App:
 
 
         # ── Cum Volume Override ───────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Cum Volume Behavior",
+        ctk.CTkLabel(sf, text=tr("Cum Volume Behavior"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         cum_vol_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         cum_vol_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
         override_var = tk.BooleanVar(value=self._cum_override_range)
-        ctk.CTkRadioButton(cum_vol_frame, text="Override to 100% volume (ignore range)",
+        ctk.CTkRadioButton(cum_vol_frame, text=tr("Override to 100% volume (ignore range)"),
                            variable=override_var, value=True,
                            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                            fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                            border_color=self._C_BORDER
                            ).pack(padx=16, pady=(8, 2), anchor="w")
-        ctk.CTkRadioButton(cum_vol_frame, text="Respect volume ceiling (stay within range)",
+        ctk.CTkRadioButton(cum_vol_frame, text=tr("Respect volume ceiling (stay within range)"),
                            variable=override_var, value=False,
                            font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                            fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
@@ -5019,14 +5019,14 @@ class App:
                            ).pack(padx=16, pady=(2, 8), anchor="w")
 
         # ── Refractory Period ─────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Refractory Period",
+        ctk.CTkLabel(sf, text=tr("Refractory Period"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         refrac_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         refrac_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         refrac_hdr = ctk.CTkFrame(refrac_frame, fg_color="transparent")
         refrac_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
-        ctk.CTkLabel(refrac_hdr, text="Cooldown after I've CUM",
+        ctk.CTkLabel(refrac_hdr, text=tr("Cooldown after I've CUM"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
         refrac_val_lbl = ctk.CTkLabel(
@@ -5057,14 +5057,14 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
         # ── Edging behaviour (volume recovery) ────────────────────────────────
-        ctk.CTkLabel(sf, text="Edging behaviour",
+        ctk.CTkLabel(sf, text=tr("Edging behaviour"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         edge_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         edge_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         recover_var = tk.BooleanVar(value=self._erect_recovery)
         ctk.CTkSwitch(
-            edge_frame, text="Recover volume when held in the erect zone",
+            edge_frame, text=tr("Recover volume when held in the erect zone"),
             variable=recover_var,
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             switch_width=36, switch_height=16,
@@ -5105,7 +5105,7 @@ class App:
                              text_color=self._C_TEXT).pack(side=tk.LEFT, padx=4)
 
         # ── Auto-Cum Detection ────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Auto-Cum Detection",
+        ctk.CTkLabel(sf, text=tr("Auto-Cum Detection"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         acd_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         acd_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
@@ -5113,7 +5113,7 @@ class App:
         # Delay slider
         acd_delay_hdr = ctk.CTkFrame(acd_frame, fg_color="transparent")
         acd_delay_hdr.pack(fill=tk.X, padx=12, pady=(8, 2))
-        ctk.CTkLabel(acd_delay_hdr, text="Countdown delay",
+        ctk.CTkLabel(acd_delay_hdr, text=tr("Countdown delay"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
         acd_delay_val = ctk.CTkLabel(
@@ -5137,7 +5137,7 @@ class App:
         # Sensitivity slider
         acd_sens_hdr = ctk.CTkFrame(acd_frame, fg_color="transparent")
         acd_sens_hdr.pack(fill=tk.X, padx=12, pady=(0, 2))
-        ctk.CTkLabel(acd_sens_hdr, text="Detection sensitivity",
+        ctk.CTkLabel(acd_sens_hdr, text=tr("Detection sensitivity"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
         acd_sens_val = ctk.CTkLabel(
@@ -5175,7 +5175,7 @@ class App:
         hf_toggle_row.pack(fill=tk.X, padx=12, pady=(10, 4))
         hf_var = tk.BooleanVar(value=self._hf_enabled)
         hf_switch = ctk.CTkSwitch(
-            hf_toggle_row, text="Enable hands-free mode",
+            hf_toggle_row, text=tr("Enable hands-free mode"),
             variable=hf_var,
             font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
             switch_width=36, switch_height=18,
@@ -5189,11 +5189,11 @@ class App:
         # Column headers
         hdr_row = ctk.CTkFrame(hf_frame, fg_color="transparent")
         hdr_row.pack(fill=tk.X, padx=12, pady=(0, 2))
-        ctk.CTkLabel(hdr_row, text="Level", font=ctk.CTkFont(size=9),
+        ctk.CTkLabel(hdr_row, text=tr("Level"), font=ctk.CTkFont(size=9),
                      text_color=self._C_TEXT_DIM, width=70, anchor="w").pack(side=tk.LEFT)
-        ctk.CTkLabel(hdr_row, text="Min edges", font=ctk.CTkFont(size=9),
+        ctk.CTkLabel(hdr_row, text=tr("Min edges"), font=ctk.CTkFont(size=9),
                      text_color=self._C_TEXT_DIM, width=80, anchor="w").pack(side=tk.LEFT)
-        ctk.CTkLabel(hdr_row, text="1-in-N chance", font=ctk.CTkFont(size=9),
+        ctk.CTkLabel(hdr_row, text=tr("1-in-N chance"), font=ctk.CTkFont(size=9),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
 
         hf_min_vars    = {}
@@ -5210,7 +5210,7 @@ class App:
                          text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 12))
             chance_var = tk.IntVar(value=self._hf_cum_chance.get(level, 10))
             hf_chance_vars[level] = chance_var
-            ctk.CTkLabel(row, text="1 in", font=ctk.CTkFont(size=10),
+            ctk.CTkLabel(row, text=tr("1 in"), font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
             ctk.CTkEntry(row, textvariable=chance_var, width=56,
                          fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
@@ -5227,14 +5227,14 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
 
         # ── Bondage Mode Defaults ─────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="🎙 Bondage Mode Defaults",
+        ctk.CTkLabel(sf, text=tr("🎙 Bondage Mode Defaults"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         bm_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         bm_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
 
         bm_sw_row = ctk.CTkFrame(bm_frame, fg_color="transparent")
         bm_sw_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(bm_sw_row, text="Default safeword:", font=ctk.CTkFont(size=10, weight="bold"),
+        ctk.CTkLabel(bm_sw_row, text=tr("Default safeword:"), font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, width=130, anchor="w").pack(side=tk.LEFT)
         bm_sw_var = tk.StringVar(value=self._bondage_safeword)
         ctk.CTkEntry(bm_sw_row, textvariable=bm_sw_var, width=160,
@@ -5244,7 +5244,7 @@ class App:
 
         bm_mic_row = ctk.CTkFrame(bm_frame, fg_color="transparent")
         bm_mic_row.pack(fill=tk.X, padx=12, pady=(4, 10))
-        ctk.CTkLabel(bm_mic_row, text="Default mic device:", font=ctk.CTkFont(size=10, weight="bold"),
+        ctk.CTkLabel(bm_mic_row, text=tr("Default mic device:"), font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, width=130, anchor="w").pack(side=tk.LEFT)
         _bm_mics   = ["System Default"] + VoiceEngine.list_input_devices()
         _bm_cur    = self._bondage_mic_device if self._bondage_mic_device in _bm_mics else "System Default"
@@ -5256,7 +5256,7 @@ class App:
                         ).pack(side=tk.LEFT)
 
         # ── Ruin Odds ─────────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="😈 Ruin Odds (% chance when denied, Evil Mode only)",
+        ctk.CTkLabel(sf, text=tr("😈 Ruin Odds (% chance when denied, Evil Mode only)"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         ruin_odds_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         ruin_odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
@@ -5276,7 +5276,7 @@ class App:
                          text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         # ── Ruin Phrases ──────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Ruin Phrases (one per line)",
+        ctk.CTkLabel(sf, text=tr("Ruin Phrases (one per line)"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         ruin_phrases_box = ctk.CTkTextbox(sf, height=150,
                                           fg_color=self._C_SURFACE, border_color=self._C_BORDER,
@@ -5297,7 +5297,7 @@ class App:
             row.pack(fill=tk.X, padx=12, pady=4)
             ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
                          width=70, anchor="w").pack(side=tk.LEFT)
-            ctk.CTkLabel(row, text="1 in", font=ctk.CTkFont(size=10),
+            ctk.CTkLabel(row, text=tr("1 in"), font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
             var = tk.IntVar(value=self._cum_odds.get(level, 4))
             odds_vars[level] = var
@@ -5306,7 +5306,7 @@ class App:
                          text_color=self._C_TEXT).pack(side=tk.LEFT)
 
         # ── Denial Phrases ────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Denial Phrases  (one per line)",
+        ctk.CTkLabel(sf, text=tr("Denial Phrases  (one per line)"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         phrases_box = ctk.CTkTextbox(sf, height=220,
                                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
@@ -5407,15 +5407,15 @@ class App:
             ruin_phrases_box.delete("1.0", "end")
             ruin_phrases_box.insert("1.0", "\n".join(self._ruin_phrases))
 
-        ctk.CTkButton(btn_row, text="Reset Defaults", command=_reset, width=120,
+        ctk.CTkButton(btn_row, text=tr("Reset Defaults"), command=_reset, width=120,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
-        ctk.CTkButton(btn_row, text="Cancel", command=_cancel, width=90,
+        ctk.CTkButton(btn_row, text=tr("Cancel"), command=_cancel, width=90,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT_DIM, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=11)).pack(side=tk.RIGHT, padx=(4, 0))
-        ctk.CTkButton(btn_row, text="OK", command=_save, width=100,
+        ctk.CTkButton(btn_row, text=tr("OK"), command=_save, width=100,
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white", font=ctk.CTkFont(size=12, weight="bold")
                       ).pack(side=tk.RIGHT)
@@ -5568,9 +5568,9 @@ class App:
         dlg.grab_set()
         dlg.resizable(False, False)
 
-        ctk.CTkLabel(dlg, text="Scanning for BLE HR monitors…",
+        ctk.CTkLabel(dlg, text=tr("Scanning for BLE HR monitors…"),
                      font=ctk.CTkFont(size=12)).pack(pady=(18, 4))
-        status_lbl = ctk.CTkLabel(dlg, text="(up to 6 seconds)",
+        status_lbl = ctk.CTkLabel(dlg, text=tr("(up to 6 seconds)"),
                                    font=ctk.CTkFont(size=10),
                                    text_color=self._C_TEXT_DIM)
         status_lbl.pack()
@@ -5580,12 +5580,12 @@ class App:
 
         btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
         btn_row.pack(fill=tk.X, padx=16, pady=(0, 12))
-        connect_btn = ctk.CTkButton(btn_row, text="Connect", width=100,
+        connect_btn = ctk.CTkButton(btn_row, text=tr("Connect"), width=100,
                                      fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                                      text_color="white", state="disabled",
                                      command=lambda: None)
         connect_btn.pack(side=tk.RIGHT, padx=(4, 0))
-        ctk.CTkButton(btn_row, text="Cancel", width=80,
+        ctk.CTkButton(btn_row, text=tr("Cancel"), width=80,
                        fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                        text_color=self._C_TEXT,
                        command=dlg.destroy).pack(side=tk.RIGHT)
@@ -5692,18 +5692,18 @@ class App:
     def _toggle_hold(self):
         self.hold_active = not self.hold_active
         if self.hold_active:
-            self._hold_btn.configure(text="HELD [|]",
+            self._hold_btn.configure(text=tr("HELD [|]"),
                                      fg_color=self._C_RED, hover_color=self._C_RED_HOV,
                                      border_color=self._C_RED)
             if hasattr(self, '_play_hold_btn'):
-                self._play_hold_btn.configure(text="HELD [|]",
+                self._play_hold_btn.configure(text=tr("HELD [|]"),
                                               fg_color=self._C_RED, hover_color=self._C_RED_HOV)
         else:
-            self._hold_btn.configure(text="Hold Volume",
+            self._hold_btn.configure(text=tr("Hold Volume"),
                                      fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                      border_color=self._C_BORDER)
             if hasattr(self, '_play_hold_btn'):
-                self._play_hold_btn.configure(text="Hold Volume",
+                self._play_hold_btn.configure(text=tr("Hold Volume"),
                                               fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
     def _fit_window(self):
@@ -5729,7 +5729,7 @@ class App:
         else:
             self._play_panel.pack_forget()
             self._sf.pack(fill=tk.X)
-            self._play_btn.configure(text="▶ Play")
+            self._play_btn.configure(text=tr("▶ Play"))
             self.root.title(("👿 " if self._evil_mode else "") + "VisualStimEdger" + (" [EVIL]" if self._evil_mode else ""))
         self.root.after(50, self._fit_window)
 
@@ -5981,7 +5981,7 @@ class App:
         else:
             self._lock_template = None   # drop the saved patch
             self._snark_label.configure(
-                text="🔓 Auto-reanchor back on", text_color="#F5A623")
+                text=tr("🔓 Auto-reanchor back on"), text_color="#F5A623")
             log.info("Tracking lock OFF — YOLO reanchoring enabled")
 
     def _on_color_lock_toggle(self):
@@ -6171,7 +6171,7 @@ class App:
             log.info(f"Active Edging ON — {_lvl}: hold {_hold}s, "
                      f"ramp {self._ae_ramp_pct.get(_lvl, 8.0)}%/s")
         else:
-            self._snark_label.configure(text="🔁 Active Edging off", text_color="#F5A623")
+            self._snark_label.configure(text=tr("🔁 Active Edging off"), text_color="#F5A623")
             log.info("Active Edging OFF")
 
     def _maybe_yolo_reanchor(self, frame):
@@ -6742,7 +6742,7 @@ class App:
                      f"— output cut to floor {floor_val*100:.0f}%")
             try:
                 self._snark_label.configure(
-                    text="⚡ Point of No Return — cut", text_color=self._C_YELLOW)
+                    text=tr("⚡ Point of No Return — cut"), text_color=self._C_YELLOW)
             except Exception:
                 pass
         elif not above:
@@ -6981,15 +6981,15 @@ class App:
             ctk.CTkLabel(fr, text=f"You've been edging {self.edge_count}+ times, hands-free.",
                          font=ctk.CTkFont(size=13, weight="bold"),
                          text_color=self._C_TEXT).pack(pady=(12, 2), padx=14)
-            ctk.CTkLabel(fr, text="Free tool. One guy made it. Tribute your dev? 😈",
+            ctk.CTkLabel(fr, text=tr("Free tool. One guy made it. Tribute your dev? 😈"),
                          font=ctk.CTkFont(size=11), text_color=self._C_TEXT_DIM).pack(pady=(0, 8), padx=14)
             br = ctk.CTkFrame(fr, fg_color="transparent"); br.pack(pady=(0, 10))
-            ctk.CTkButton(br, text="☕ Tribute", width=120, fg_color="#F5A623",
+            ctk.CTkButton(br, text=tr("☕ Tribute"), width=120, fg_color="#F5A623",
                           hover_color="#d68f14", text_color="#000000",
                           font=ctk.CTkFont(weight="bold"),
                           command=lambda: (webbrowser.open("https://ko-fi.com/stimstation"),
                                            t.destroy())).pack(side=tk.LEFT, padx=8)
-            ctk.CTkButton(br, text="Not now", width=90, fg_color=self._C_SURFACE,
+            ctk.CTkButton(br, text=tr("Not now"), width=90, fg_color=self._C_SURFACE,
                           hover_color="#4a4a4a", border_width=1, border_color=self._C_BORDER,
                           command=t.destroy).pack(side=tk.LEFT, padx=8)
             t.after(25000, lambda: t.winfo_exists() and t.destroy())
@@ -7084,11 +7084,11 @@ class App:
         P = 16
 
         # ── title ─────────────────────────────────────────────────────────────
-        ctk.CTkLabel(win, text="🎙 Bondage Mode Setup",
+        ctk.CTkLabel(win, text=tr("🎙 Bondage Mode Setup"),
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color=self._C_TEXT).pack(pady=(P, 4))
         ctk.CTkLabel(win,
-                     text="Configure your microphone and safeword before the session starts.",
+                     text=tr("Configure your microphone and safeword before the session starts."),
                      font=_dim, text_color=self._C_TEXT_DIM, wraplength=440).pack(pady=(0, 8))
 
         card = ctk.CTkFrame(win, fg_color=self._C_SURFACE, corner_radius=8)
@@ -7097,7 +7097,7 @@ class App:
         # ── mic device ────────────────────────────────────────────────────────
         mic_row = ctk.CTkFrame(card, fg_color="transparent")
         mic_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(mic_row, text="Microphone:", font=_lbl,
+        ctk.CTkLabel(mic_row, text=tr("Microphone:"), font=_lbl,
                      text_color=self._C_TEXT, width=110, anchor="w").pack(side=tk.LEFT)
         mic_devices = VoiceEngine.list_input_devices()
         mic_options  = ["System Default"] + mic_devices
@@ -7113,7 +7113,7 @@ class App:
         # ── level meter ───────────────────────────────────────────────────────
         meter_row = ctk.CTkFrame(card, fg_color="transparent")
         meter_row.pack(fill=tk.X, padx=12, pady=(4, 8))
-        ctk.CTkLabel(meter_row, text="Mic level:", font=_dim,
+        ctk.CTkLabel(meter_row, text=tr("Mic level:"), font=_dim,
                      text_color=self._C_TEXT_DIM, width=110, anchor="w").pack(side=tk.LEFT)
         meter_cv = tk.Canvas(meter_row, width=280, height=14,
                              bg=self._C_SURFACE2, highlightthickness=0)
@@ -7133,14 +7133,14 @@ class App:
         # ── safeword ──────────────────────────────────────────────────────────
         sw_row = ctk.CTkFrame(card, fg_color="transparent")
         sw_row.pack(fill=tk.X, padx=12, pady=(8, 4))
-        ctk.CTkLabel(sw_row, text="Safeword:", font=_lbl,
+        ctk.CTkLabel(sw_row, text=tr("Safeword:"), font=_lbl,
                      text_color=self._C_TEXT, width=110, anchor="w").pack(side=tk.LEFT)
         sw_var = tk.StringVar(value=self._bondage_safeword)
         sw_entry = ctk.CTkEntry(sw_row, textvariable=sw_var, width=160,
                                 fg_color=self._C_SURFACE2, border_color=self._C_BORDER,
                                 text_color=self._C_TEXT)
         sw_entry.pack(side=tk.LEFT, padx=(0, 8))
-        ctk.CTkLabel(sw_row, text="(single word)", font=_dim,
+        ctk.CTkLabel(sw_row, text=tr("(single word)"), font=_dim,
                      text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
 
         # verification status — saved safeword pre-fills the field but still requires saying it
@@ -7160,7 +7160,7 @@ class App:
         skip_row = ctk.CTkFrame(card, fg_color="transparent")
         skip_row.pack(fill=tk.X, padx=12, pady=(8, 10))
         skip_var = tk.BooleanVar(value=False)
-        skip_cb  = ctk.CTkCheckBox(skip_row, text="Skip voice verification",
+        skip_cb  = ctk.CTkCheckBox(skip_row, text=tr("Skip voice verification"),
                                    variable=skip_var, onvalue=True, offvalue=False,
                                    font=_dim, text_color=self._C_TEXT_DIM,
                                    fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
@@ -7171,21 +7171,21 @@ class App:
         nav_row = ctk.CTkFrame(win, fg_color="transparent")
         nav_row.pack(fill=tk.X, padx=P, pady=(8, P))
 
-        cont_btn = ctk.CTkButton(nav_row, text="Continue →",
+        cont_btn = ctk.CTkButton(nav_row, text=tr("Continue →"),
                                  font=ctk.CTkFont(size=12, weight="bold"),
                                  height=36, corner_radius=4,
                                  fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                                  text_color=self._C_TEXT_DIM, state="disabled")
         cont_btn.pack(side=tk.RIGHT, padx=(4, 0))
 
-        practice_btn = ctk.CTkButton(nav_row, text="Practice Grid →",
+        practice_btn = ctk.CTkButton(nav_row, text=tr("Practice Grid →"),
                                      font=ctk.CTkFont(size=11),
                                      height=36, corner_radius=4,
                                      fg_color="#2a1a3a", hover_color="#4a2a5a",
                                      text_color=self._C_TEXT_DIM, state="disabled")
         practice_btn.pack(side=tk.RIGHT)
 
-        ctk.CTkButton(nav_row, text="Cancel", command=win.destroy,
+        ctk.CTkButton(nav_row, text=tr("Cancel"), command=win.destroy,
                       font=ctk.CTkFont(size=11), height=36, corner_radius=4,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT).pack(side=tk.LEFT)
@@ -7209,7 +7209,7 @@ class App:
             if _verified[0]:
                 return
             _verified[0] = True
-            verify_lbl.configure(text="✓ Safeword verified!", text_color="#3EC941")
+            verify_lbl.configure(text=tr("✓ Safeword verified!"), text_color="#3EC941")
             _unlock_continue()
 
         def _on_skip_toggle():
@@ -7313,22 +7313,22 @@ class App:
         win.geometry("510x700")
         win.resizable(False, False)
 
-        ctk.CTkLabel(win, text="🍆  Grid Navigator Practice",
+        ctk.CTkLabel(win, text=tr("🍆  Grid Navigator Practice"),
                      font=ctk.CTkFont(size=16, weight="bold"),
                      text_color=self._C_TEXT).pack(pady=(P, 2))
         ctk.CTkLabel(win,
-                     text="1–9  zoom in    •    here  confirm    •    back  step back    •    cancel  reset",
+                     text=tr("1–9  zoom in    •    here  confirm    •    back  step back    •    cancel  reset"),
                      font=ctk.CTkFont(size=13), text_color=self._C_TEXT,
                      wraplength=490).pack(pady=(0, 6))
 
         # Score + status row
         hdr = ctk.CTkFrame(win, fg_color="transparent")
         hdr.pack(fill=tk.X, padx=P, pady=(0, 4))
-        score_lbl = ctk.CTkLabel(hdr, text="Score: 0",
+        score_lbl = ctk.CTkLabel(hdr, text=tr("Score: 0"),
                                   font=ctk.CTkFont(size=13, weight="bold"),
                                   text_color="#44ff44")
         score_lbl.pack(side=tk.LEFT, padx=8)
-        status_lbl = ctk.CTkLabel(hdr, text="Navigate to the 🌿 stem!",
+        status_lbl = ctk.CTkLabel(hdr, text=tr("Navigate to the 🌿 stem!"),
                                    font=ctk.CTkFont(size=11), text_color=self._C_TEXT_DIM)
         status_lbl.pack(side=tk.LEFT, padx=4)
 
@@ -7448,7 +7448,7 @@ class App:
 
             # Hit banner
             if gs["celebrate"] > 20:
-                cv.create_text(cx, ey - 100, text="✓  HIT!", fill="#44ff44",
+                cv.create_text(cx, ey - 100, text=tr("✓  HIT!"), fill="#44ff44",
                                font=("Segoe UI", 17, "bold"))
 
         def _tick():
@@ -7488,7 +7488,7 @@ class App:
         def _confirm_pin():
             gx, gy, gw, gh = gs["grid_x"], gs["grid_y"], gs["grid_w"], gs["grid_h"]
             if gw >= CV_W and gh >= CV_H:
-                status_lbl.configure(text="Zoom in first — say a number!")
+                status_lbl.configure(text=tr("Zoom in first — say a number!"))
                 return
             gs["pin_x"], gs["pin_y"] = gx, gy
             gs["pin_w"], gs["pin_h"] = gw, gh
@@ -7505,7 +7505,7 @@ class App:
                 gs["score"] += 1
                 score_lbl.configure(text=f"Score: {gs['score']}")
                 gs["celebrate"] = 45
-                status_lbl.configure(text="🎉 Nice shot!")
+                status_lbl.configure(text=tr("🎉 Nice shot!"))
             else:
                 gs["miss_x"] = pin_cx
                 gs["miss_y"] = pin_cy
@@ -7514,7 +7514,7 @@ class App:
                 gs["grid_w"], gs["grid_h"] = CV_W, CV_H
                 gs["grid_stack"].clear()
                 gs["pin_x"] = gs["pin_y"] = None
-                status_lbl.configure(text="Miss — aim for the green ring at the top!")
+                status_lbl.configure(text=tr("Miss — aim for the green ring at the top!"))
 
         def _cancel_grid():
             """Step back one zoom level. 'again' does a full reset."""
@@ -7524,23 +7524,23 @@ class App:
                 gs["grid_w"], gs["grid_h"] = gw, gh
                 gs["pin_x"] = gs["pin_y"] = None
                 if gs["grid_stack"]:
-                    status_lbl.configure(text="Stepped back — say a number or 'back' again")
+                    status_lbl.configure(text=tr("Stepped back — say a number or 'back' again"))
                 else:
-                    status_lbl.configure(text="Back to full view — navigate to the 🌿 stem!")
+                    status_lbl.configure(text=tr("Back to full view — navigate to the 🌿 stem!"))
             else:
-                status_lbl.configure(text="Already at full view!")
+                status_lbl.configure(text=tr("Already at full view!"))
 
         def _reset_grid():
             gs["grid_x"], gs["grid_y"] = 0, 0
             gs["grid_w"], gs["grid_h"] = CV_W, CV_H
             gs["grid_stack"].clear()
             gs["pin_x"] = gs["pin_y"] = None
-            status_lbl.configure(text="Reset — navigate to the 🌿 stem!")
+            status_lbl.configure(text=tr("Reset — navigate to the 🌿 stem!"))
 
         def _nudge_grid(dx: int, dy: int):
             gw, gh = gs["grid_w"], gs["grid_h"]
             if gw >= CV_W and gh >= CV_H:
-                status_lbl.configure(text="Zoom in first — say a number!")
+                status_lbl.configure(text=tr("Zoom in first — say a number!"))
                 return
             gs["grid_x"] = max(0, min(CV_W - gw, gs["grid_x"] + dx))
             gs["grid_y"] = max(0, min(CV_H - gh, gs["grid_y"] + dy))
@@ -7593,12 +7593,12 @@ class App:
         # ── mic level meter ───────────────────────────────────────────────────
         mic_row = ctk.CTkFrame(win, fg_color="transparent")
         mic_row.pack(fill=tk.X, padx=P, pady=(4, 0))
-        ctk.CTkLabel(mic_row, text="🎙 MIC",
+        ctk.CTkLabel(mic_row, text=tr("🎙 MIC"),
                      font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM).pack(side=tk.LEFT)
         mic_bar_cv = tk.Canvas(mic_row, width=260, height=12, bg=self._C_SURFACE2,
                                highlightthickness=0)
         mic_bar_cv.pack(side=tk.LEFT, padx=(6, 0))
-        mic_status = ctk.CTkLabel(mic_row, text="loading…",
+        mic_status = ctk.CTkLabel(mic_row, text=tr("loading…"),
                                    font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM, width=60)
         mic_status.pack(side=tk.LEFT, padx=(6, 0))
 
@@ -7615,7 +7615,7 @@ class App:
                     mic_bar_cv.create_rectangle(0, 0, w, 12, fill=color, outline="")
                 mic_status.configure(text="listening", text_color="#44ff44")
             else:
-                mic_status.configure(text="loading…", text_color=self._C_TEXT_DIM)
+                mic_status.configure(text=tr("loading…"), text_color=self._C_TEXT_DIM)
             try:
                 win.after(80, _mic_poll)
             except Exception:
@@ -7623,12 +7623,12 @@ class App:
 
         nav = ctk.CTkFrame(win, fg_color="transparent")
         nav.pack(fill=tk.X, padx=P, pady=(6, P))
-        ctk.CTkButton(nav, text="← Back",
+        ctk.CTkButton(nav, text=tr("← Back"),
                       command=lambda: (_stop_practice_engine(), win.destroy()),
                       font=ctk.CTkFont(size=11), height=34,
                       fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                       text_color=self._C_TEXT).pack(side=tk.LEFT)
-        ctk.CTkButton(nav, text="Start Bondage Mode →", command=_done,
+        ctk.CTkButton(nav, text=tr("Start Bondage Mode →"), command=_done,
                       font=ctk.CTkFont(size=12, weight="bold"), height=34,
                       fg_color="#4a0a6a", hover_color="#6a1a8a",
                       text_color="white").pack(side=tk.RIGHT)
@@ -7652,7 +7652,7 @@ class App:
         self._voice_engine.start()
         self._bondage_active     = True
         self._bondage_configured = True
-        self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="#6a1a8a",
+        self._bondage_btn.configure(text=tr("🎙 BONDAGE"), fg_color="#6a1a8a",
                                     hover_color="#4a0a6a", border_color="#9a3aaa",
                                     text_color="white")
         self._snark_label.configure(
@@ -7676,7 +7676,7 @@ class App:
         _dim  = ctk.CTkFont(size=11)
         P = 12
 
-        ctk.CTkLabel(ref, text="🎙 Voice Commands",
+        ctk.CTkLabel(ref, text=tr("🎙 Voice Commands"),
                      font=ctk.CTkFont(size=18, weight="bold"),
                      text_color="#c080ff").pack(pady=(P, 6))
 
@@ -7686,7 +7686,7 @@ class App:
         sw_card.pack(fill=tk.X, padx=P, pady=(0, 8))
         sw_inner = ctk.CTkFrame(sw_card, fg_color="transparent")
         sw_inner.pack(pady=8)
-        ctk.CTkLabel(sw_inner, text="🛑 SAFEWORD",
+        ctk.CTkLabel(sw_inner, text=tr("🛑 SAFEWORD"),
                      font=ctk.CTkFont(size=14, weight="bold"),
                      text_color="#ff6060").pack(side=tk.LEFT, padx=(0, 12))
         ctk.CTkLabel(sw_inner, text=f'"{self._bondage_safeword}"',
@@ -7756,7 +7756,7 @@ class App:
             ('"resume session"',        "leave standby, continue"),
         ], title_color="#ff6060")
 
-        ctk.CTkButton(ref, text="Got it — close",
+        ctk.CTkButton(ref, text=tr("Got it — close"),
                       command=ref.destroy,
                       font=ctk.CTkFont(size=13, weight="bold"), height=34,
                       fg_color="#2d1a40", hover_color="#4a0a6a",
@@ -7776,7 +7776,7 @@ class App:
             self._voice_engine.stop()
             self._voice_engine = None
         try:
-            self._bondage_btn.configure(text="🎙 BONDAGE", fg_color="transparent",
+            self._bondage_btn.configure(text=tr("🎙 BONDAGE"), fg_color="transparent",
                                         hover_color="#1a0028",
                                         border_color="#8a2a9a", text_color="#c080ff")
         except Exception:
@@ -7829,7 +7829,7 @@ class App:
                 return
             if kw in ("cancel", "again"):
                 self._source_picker_close()
-                self._snark_label.configure(text="🎙 Source switch cancelled",
+                self._snark_label.configure(text=tr("🎙 Source switch cancelled"),
                                             text_color="#F5A623")
                 return
             return  # absorb everything else while picker is up
@@ -7846,7 +7846,7 @@ class App:
         if kw == "pause":
             if not self.tracking_paused:
                 self.tracking_paused = True
-                self._snark_label.configure(text="🎙 Paused (say 'resume')",
+                self._snark_label.configure(text=tr("🎙 Paused (say 'resume')"),
                                             text_color="#F5A623")
             return
         if kw == "resume":
@@ -7862,7 +7862,7 @@ class App:
         if kw == "clear exclude":
             self._exclusion_zones.clear()
             self._save_config()
-            self._snark_label.configure(text="🎙 Exclusion zones cleared",
+            self._snark_label.configure(text=tr("🎙 Exclusion zones cleared"),
                                         text_color="#F5A623")
             log.info("Voice: all exclusion zones cleared")
             return
@@ -7911,7 +7911,7 @@ class App:
         # only way out — if the mic doesn't catch "resume session", this button does
         # the same thing. Restored to the normal BONDAGE button by _voice_resume_session.
         try:
-            self._bondage_btn.configure(text="▶ RESUME SESSION",
+            self._bondage_btn.configure(text=tr("▶ RESUME SESSION"),
                                         command=self._voice_resume_session,
                                         fg_color="#3EC941", hover_color="#32a435",
                                         border_color="#3EC941", text_color="white")
@@ -7919,7 +7919,7 @@ class App:
             pass
         try:
             self._snark_label.configure(
-                text='🛑 SAFEWORD — say "resume session" or click ▶ RESUME',
+                text=tr('🛑 SAFEWORD — say "resume session" or click ▶ RESUME'),
                 text_color="#FF4444")
         except Exception:
             pass
@@ -7933,13 +7933,13 @@ class App:
         try:
             # Restore the button's normal command too — safeword had repointed it
             # at _voice_resume_session.
-            self._bondage_btn.configure(text="🎙 BONDAGE", command=self._open_bondage_splash,
+            self._bondage_btn.configure(text=tr("🎙 BONDAGE"), command=self._open_bondage_splash,
                                         fg_color="#6a1a8a", hover_color="#4a0a6a",
                                         border_color="#9a3aaa", text_color="white")
         except Exception:
             pass
         try:
-            self._snark_label.configure(text="🎙 Session resumed",
+            self._snark_label.configure(text=tr("🎙 Session resumed"),
                                         text_color="#3EC941")
         except Exception:
             pass
@@ -7972,7 +7972,7 @@ class App:
         self.heights["Flaccid"] = int(fh * 0.80)
         self._disable_auto()
         self._save_config()
-        self._snark_label.configure(text="🎙 Lines set — adjust with voice",
+        self._snark_label.configure(text=tr("🎙 Lines set — adjust with voice"),
                                     text_color="#c080ff")
         log.info("Voice: set lines auto-positioned")
 
@@ -8010,7 +8010,7 @@ class App:
             log.warning(f"switch source: EnumWindows failed: {e}")
 
         if not candidates:
-            self._snark_label.configure(text="🎙 No windows found", text_color="#F5A623")
+            self._snark_label.configure(text=tr("🎙 No windows found"), text_color="#F5A623")
             return
 
         # Limit to 9 and store
@@ -8036,9 +8036,9 @@ class App:
         _hfont = ctk.CTkFont(size=13, weight="bold")
         _bfont = ctk.CTkFont(size=11)
 
-        ctk.CTkLabel(win, text="🎙 Switch Source",
+        ctk.CTkLabel(win, text=tr("🎙 Switch Source"),
                      font=_hfont, text_color="#c080ff").pack(pady=(10, 4), padx=14)
-        ctk.CTkLabel(win, text='Say a number, or "cancel"',
+        ctk.CTkLabel(win, text=tr('Say a number, or "cancel"'),
                      font=ctk.CTkFont(size=9, slant="italic"),
                      text_color="#7a6a90").pack(pady=(0, 8))
 
@@ -8055,7 +8055,7 @@ class App:
             ctk.CTkLabel(row, text=short, font=_bfont,
                          text_color="#e0d0ff", anchor="w").pack(side=tk.LEFT, padx=6, pady=6)
 
-        ctk.CTkButton(win, text="Cancel",
+        ctk.CTkButton(win, text=tr("Cancel"),
                       command=self._source_picker_close,
                       font=ctk.CTkFont(size=10), height=28,
                       fg_color="#2d1a40", hover_color="#4a0a6a",
@@ -8096,7 +8096,7 @@ class App:
             self._grid_start()
         except Exception as e:
             log.warning(f"switch source: failed to switch to hwnd={hwnd}: {e}")
-            self._snark_label.configure(text="🎙 Source switch failed", text_color="#FF4444")
+            self._snark_label.configure(text=tr("🎙 Source switch failed"), text_color="#FF4444")
 
     def _source_picker_close(self):
         """Dismiss the picker window and reset state."""
@@ -8117,7 +8117,7 @@ class App:
         self._grid_mode   = 'head'
         self._grid_region = None
         self._grid_depth  = 0
-        self._snark_label.configure(text="🎙 Grid — say 1-9 to zoom, 'here' to lock",
+        self._snark_label.configure(text=tr("🎙 Grid — say 1-9 to zoom, 'here' to lock"),
                                     text_color="#c080ff")
         log.info("Grid navigator: head mode started")
 
@@ -8128,7 +8128,7 @@ class App:
         self._grid_region = None
         self._grid_depth  = 0
         self._snark_label.configure(
-            text="🎙 Exclude zone — say 1-9 to zoom, 'exclude'/'here' to add",
+            text=tr("🎙 Exclude zone — say 1-9 to zoom, 'exclude'/'here' to add"),
             text_color="#ff8800")
         log.info("Grid navigator: exclude mode started")
 
@@ -8185,10 +8185,10 @@ class App:
             self.head_y      = cy
             self.tracking_ok = True
             self._head_y_history.clear()
-            self._snark_label.configure(text="🎙 Head reselected ✓", text_color="#3EC941")
+            self._snark_label.configure(text=tr("🎙 Head reselected ✓"), text_color="#3EC941")
             log.info(f"Grid confirm: head reanchored at ({cx}, {cy})")
         else:
-            self._snark_label.configure(text="🎙 Confirm failed — feed gone?",
+            self._snark_label.configure(text=tr("🎙 Confirm failed — feed gone?"),
                                         text_color="#FF4444")
             log.warning("Grid confirm: could not grab frame to reinit tracker")
 
@@ -8218,10 +8218,10 @@ class App:
             self._grid_region = None
             self._grid_depth  = 0
             self._snark_label.configure(
-                text="🎙 Grid reset — say 1-9 to zoom", text_color="#c080ff")
+                text=tr("🎙 Grid reset — say 1-9 to zoom"), text_color="#c080ff")
         else:
             self._grid_active = False
-            self._snark_label.configure(text="🎙 Grid cancelled", text_color="#F5A623")
+            self._snark_label.configure(text=tr("🎙 Grid cancelled"), text_color="#F5A623")
         log.info("Grid cancel")
 
     def _display_frame(self, frame):
@@ -8413,7 +8413,7 @@ def show_splash() -> bool:
 
     root.resizable(False, True)
 
-    tk.Label(root, text="VisualStimEdger", font=f_title,
+    tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
              bg=BG, fg=TEXT).pack(pady=(P, 2))
     tk.Label(root, text=f"v{VERSION}  ·  edge smarter", font=f_sub,
              bg=BG, fg=DIM).pack(pady=(0, P//2))
@@ -8421,7 +8421,7 @@ def show_splash() -> bool:
     card = tk.Frame(root, bg=CARD, padx=16, pady=12)
     card.pack(fill="x", padx=P, pady=(0, 10))
 
-    tk.Label(card, text="Before you hit Start", font=f_head,
+    tk.Label(card, text=tr("Before you hit Start"), font=f_head,
              bg=CARD, fg=YELLOW, anchor="w").pack(anchor="w", pady=(0, 8))
 
     steps = [
