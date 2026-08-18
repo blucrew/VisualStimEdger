@@ -84,6 +84,7 @@ if WINDOWS:
     from comtypes import CLSCTX_ALL
 
 import atexit
+import gc
 
 log = logging.getLogger("VisualStimEdger")
 
@@ -2392,6 +2393,7 @@ class App:
     def run(self):
         self.root.after(5, self._update_frame)
         self.root.after(30, self._pump_ui_queue)   # drain background→main-thread calls
+        self.root.after(self._GC_INTERVAL_MS, self._gc_collect)  # main-thread GC sweep
         self.root.mainloop()
         # If mainloop ever returns without going through _on_close (which hard-exits
         # on its own), do the same collapsed shutdown: flush the critical side effects
@@ -2428,6 +2430,19 @@ class App:
             pass
         if self._running:
             self.root.after(30, self._pump_ui_queue)
+
+    def _gc_collect(self):
+        """Reclaim cyclic garbage on the MAIN thread. Automatic GC is disabled
+        process-wide (see main) because when it fired on the capture thread it
+        finalized main-thread Tk objects off-thread — the Tcl_AsyncDelete abort.
+        Collecting here keeps memory bounded with every Tk finalizer on the main
+        thread. Full collect every _GC_INTERVAL_MS; cheap for this heap size."""
+        try:
+            gc.collect()
+        except Exception:
+            pass
+        if self._running:
+            self.root.after(self._GC_INTERVAL_MS, self._gc_collect)
 
     # ------------------------------------------------------------------ UI
 
@@ -5862,6 +5877,7 @@ class App:
     _DISPLAY_INTERVAL_MS  = 50   # max 20 fps for the preview panel
     _STATUS_INTERVAL_MS   = 250  # max 4 fps for the status label text
     _PERF_LOG_INTERVAL_S  = 10.0 # how often to log p50/p95/p99 frame time
+    _GC_INTERVAL_MS       = 10000 # main-thread cyclic-GC sweep (automatic GC is off)
     # Tracking-resolution presets (target width in px; 0 = native/off). Downscaling
     # the frame before CSRT is the main FPS lever on slow CPUs — the tracker is the
     # per-frame cost, and it scales with pixel count.
@@ -8491,6 +8507,23 @@ def _acquire_single_instance() -> bool:
 
 
 def main():
+    # Disable the automatic cyclic garbage collector process-wide. The video feed
+    # builds a new Tk PhotoImage every frame and the capture thread allocates hard,
+    # so an automatic GC pass periodically fired on a *background* thread and
+    # finalized a Tk object created by the main thread — a cross-thread Tcl call
+    # that aborts with "Tcl_AsyncDelete: async handler deleted by the wrong thread"
+    # (the intermittent mid-session exit-3 crash). The App re-collects on the main
+    # thread on a timer (see _gc_collect), so memory stays bounded and every Tk
+    # finalizer runs on the thread that owns the interpreter.
+    gc.disable()
+    # Safety assertion: cyclic GC should now only ever run on the main thread. If it
+    # ever fires off-thread, that's the abort condition — log it loudly so we know.
+    def _gc_guard(phase, _info):
+        if phase == "start" and threading.current_thread() is not threading.main_thread():
+            log.warning("cyclic GC ran on background thread %s — exit-3 abort risk",
+                        threading.current_thread().name)
+    gc.callbacks.append(_gc_guard)
+
     parser = argparse.ArgumentParser(description="VisualStimEdger")
     parser.add_argument("--debug", action="store_true",
                         help="Enable verbose debug logging to console")
