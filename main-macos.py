@@ -121,6 +121,44 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 
+# ── localisation ──────────────────────────────────────────────────────────────
+_CATALOG: dict = {}   # active-language translations: English source string -> target
+
+
+def tr(s: str) -> str:
+    """Translate a UI string via the active-language catalog. Falls back to the
+    English key on any miss, so partial coverage renders English, never blank."""
+    return _CATALOG.get(s, s)
+
+
+def _load_catalog(lang: str) -> None:
+    """Load i18n/vse_ui_strings_<lang>.tsv into the active catalog (en -> target).
+    lang 'en' or a missing/unreadable file leaves the catalog empty = English UI.
+    The TSV is two tab-separated columns; a literal \\n in a cell becomes a real
+    newline so keys match the multi-line Python source strings."""
+    _CATALOG.clear()
+    if not lang or lang == "en":
+        return
+    path = resource_path(os.path.join("i18n", f"vse_ui_strings_{lang}.tsv"))
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i == 0:                        # header row (en / <lang>)
+                    continue
+                line = line.rstrip("\r\n")
+                if "\t" not in line:
+                    continue
+                en, tgt = line.split("\t", 1)
+                en, tgt = en.replace("\\n", "\n"), tgt.replace("\\n", "\n")
+                if en and tgt:
+                    _CATALOG[en] = tgt
+        log.info(f"i18n: loaded {len(_CATALOG)} strings for '{lang}'")
+    except FileNotFoundError:
+        log.warning(f"i18n: no catalog for '{lang}' — staying English")
+    except Exception as e:
+        log.warning(f"i18n: failed to load '{lang}' ({e}) — staying English")
+
+
 class DickDetector:
     """
     Runs YOLOFastest (Darknet) inference via cv2.dnn to detect 'dick-head'.
@@ -2244,6 +2282,7 @@ class App:
         self._bright_baseline_std   = 2.0   # conservative floor
         self._ui_font_size = 11           # base font size for UI
         self._theme_name = DEFAULT_THEME
+        self._language   = "en"           # UI language code; see _load_catalog / tr
         self._cum_time: float | None = None
         self._cum_undo_active = False   # UX-1: misclick protection
         self._cum_undo_job    = None    # UX-1: root.after handle for undo window
@@ -2374,8 +2413,11 @@ class App:
                     self._cum_override_range = bool(_pre["cum_override_range"])
                 if "theme" in _pre and _pre["theme"] in THEMES:
                     self._theme_name = _pre["theme"]
+                if isinstance(_pre.get("language"), str):
+                    self._language = _pre["language"]
         except Exception:
             pass
+        _load_catalog(self._language)     # load translations before any UI is built
         self._apply_theme(self._theme_name)
 
         # Session event log
@@ -3341,6 +3383,7 @@ class App:
                 "refractory_mins":   self._refractory_mins,
                 "ui_font_size": self._ui_font_size,
                 "theme": self._theme_name,
+                "language": self._language,
                 "ruin_odds": self._ruin_odds,
                 "ruin_phrases": self._ruin_phrases,
                 "exclusion_zones":      self._exclusion_zones,
@@ -3510,6 +3553,8 @@ class App:
                 self._ui_font_size = int(data["ui_font_size"])
             if "theme" in data and data["theme"] in THEMES and data["theme"] != "Evil":
                 self._theme_name = data["theme"]
+            if isinstance(data.get("language"), str):
+                self._language = data["language"]
             if "ruin_odds" in data and isinstance(data["ruin_odds"], dict):
                 self._ruin_odds.update(data["ruin_odds"])
             if "ruin_phrases" in data and isinstance(data["ruin_phrases"], list):
@@ -4716,7 +4761,7 @@ class App:
         lbl = ctk.CTkFont(size=11, weight="bold")
 
         # ── Appearance (Theme + Font) ─────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Appearance",
+        ctk.CTkLabel(sf, text=tr("Appearance"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
         appear_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         appear_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
@@ -4730,7 +4775,7 @@ class App:
         theme_arrow_lbl.pack(side=tk.LEFT)
         theme_title_lbl = ctk.CTkLabel(
             theme_hdr,
-            text=f"Theme: {self._theme_name}",
+            text=tr("Theme: {}").format(self._theme_name),
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color=self._C_TEXT_DIM, anchor="w")
         theme_title_lbl.pack(side=tk.LEFT, padx=(4, 0))
@@ -4747,7 +4792,7 @@ class App:
                                    fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                                    border_color=self._C_BORDER, width=100,
                                    command=lambda t=tname: theme_title_lbl.configure(
-                                       text=f"Theme: {t}")
+                                       text=tr("Theme: {}").format(t))
                                    ).pack(side=tk.LEFT)
                 swatch_cv = tk.Canvas(row, width=120, height=16, bg=self._C_SURFACE,
                                       highlightthickness=0)
@@ -4780,7 +4825,7 @@ class App:
         # Font size
         ctk.CTkFrame(appear_frame, height=1, fg_color=self._C_BORDER
                      ).pack(fill=tk.X, padx=12, pady=6)
-        ctk.CTkLabel(appear_frame, text="Font Size", font=ctk.CTkFont(size=10, weight="bold"),
+        ctk.CTkLabel(appear_frame, text=tr("Font Size"), font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM).pack(padx=12, pady=(0, 2), anchor="w")
         font_row = ctk.CTkFrame(appear_frame, fg_color="transparent")
         font_row.pack(fill=tk.X, padx=12, pady=(0, 4))
@@ -4797,7 +4842,7 @@ class App:
         font_val_lbl.pack(side=tk.LEFT)
 
         # Live font preview
-        font_preview = ctk.CTkLabel(appear_frame, text="Sample Text Abc 123",
+        font_preview = ctk.CTkLabel(appear_frame, text=tr("Sample Text Abc 123"),
                                      font=ctk.CTkFont(size=self._ui_font_size, weight="bold"),
                                      text_color=self._C_TEXT)
         font_preview.pack(padx=12, pady=(0, 4), anchor="w")
@@ -4808,10 +4853,25 @@ class App:
             font_preview.configure(font=ctk.CTkFont(size=sz, weight="bold"))
         font_slider.configure(command=_on_font_slide)
 
+        # Language
+        ctk.CTkFrame(appear_frame, height=1, fg_color=self._C_BORDER
+                     ).pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(appear_frame, text=tr("Language"),
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=self._C_TEXT_DIM).pack(padx=12, pady=(0, 2), anchor="w")
+        _LANG_LABELS = {"en": "English", "zh": "中文"}
+        _lang_code_by_label = {v: k for k, v in _LANG_LABELS.items()}
+        lang_var = tk.StringVar(value=_LANG_LABELS.get(self._language, "English"))
+        ctk.CTkSegmentedButton(
+            appear_frame, values=list(_LANG_LABELS.values()), variable=lang_var,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill=tk.X, padx=12, pady=(0, 4))
+
         # Apply button
         def _apply_appearance():
             self._theme_name = theme_var.get()
             self._ui_font_size = int(font_var.get())
+            self._language = _lang_code_by_label.get(lang_var.get(), "en")
             self._save_config()
             win.destroy()
             # Use subprocess.Popen + sys.exit so Windows doesn't get confused.
@@ -4825,7 +4885,7 @@ class App:
                 subprocess.Popen([sys.executable] + sys.argv)
             sys.exit(0)
 
-        ctk.CTkButton(appear_frame, text="Apply (restarts app)", command=_apply_appearance,
+        ctk.CTkButton(appear_frame, text=tr("Apply (restarts app)"), command=_apply_appearance,
                       font=ctk.CTkFont(size=10, weight="bold"), height=28, corner_radius=4,
                       fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                       text_color="white").pack(padx=12, pady=(4, 10), anchor="e")

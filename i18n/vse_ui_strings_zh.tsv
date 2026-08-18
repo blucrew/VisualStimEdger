@@ -1,0 +1,246 @@
+en	zh
+"Let me cum?" Odds  (1 in N chance)	"是否允许射精?"几率（1/N的概率）
+(single word)	
+(up to 6 seconds)	(最多6秒)
+0 edges	0 次边缘
+1 in	1/
+1-in-N chance	1/N的概率
+1–9  zoom in    •    here  confirm    •    back  step back    •    cancel  reset	1–9  放大    •    here  确认    •    back  后退    •    cancel  重置
+? Setup Guide	? 设置指南
+After you back off the edge and hold for the configured time (Settings → Edging behaviour), volume ramps back toward your max until you edge again — then the cycle repeats. Off = normal reactive mode.	当你从高潮边缘回落并保持设定的时间后 (设置 → 高潮边缘时行为), 输出强度会回升到你设置的最大值，直到你再次达到高潮边缘 — 如此循环. Off = 普通反应模式.
+Aggressiveness	激进程度
+Already at full view!	已经是最完整视图了!
+Appearance	外观
+Apply (restarts app)	应用(重启软件)
+Audio: No Device	音频:无设备
+Audio: OK	音频:正常
+Auto-calibrate heights by observing motion range	通过观察运动范围自动校准高度线
+Auto-Cum Detection	自动射精检测
+Auto-detect cum	自动检测射精
+Back to full view — navigate to the 🌿 stem!	回到完整视图 — 导航到 🌿 茎部!
+Before you hit Start	开始之前
+BLE Direct	BLE 直连
+BLE HR — Scan	BLE 心率 — 扫描
+Bondage Mode — hands-free voice control (requires Vosk model)	束缚模式 — 免提语音控制 (需要 Vosk 模型)
+Calibration	校准
+Calibration — set all 3 (required)	校准 — 设置好三条线 (必须)
+Can't reach xToys — check your internet connection and Webhook ID.	无法连接xToys — 检查你的网络连接和 Webhook ID.
+Cancel	取消
+Cell {} — 'here' to pin · up/down/left/right to nudge · 'back' to step back · 'cancel' to reset	第 {} 格 — 说'here'固定位置  · up/down/left/right to 微调 · 'back' 后退 · 'cancel' 重置
+Close	关闭
+Configure your microphone and safeword before the session starts.	在会话开始前配置麦克风和安全词.
+Confirm Head Area ✅	确认龟头区域 ✅
+Connect	连接
+Continue →	继续 →
+Controls how fast volume ramps and 'Let me cum?' odds.\nEasy: gentle ramps, 1-in-2 odds, 5 min grant\nMiddle: moderate ramps, 1-in-4 odds, 5 min grant\nHard: fast ramps, 1-in-6 odds, 3 min grant\nExpert: aggressive ramps, 1-in-30 odds, 1 min grant	控制强度回升速度和"是否允许射精?"概率.\n轻松:平缓回升,1/2概率,5分钟许可\n中等:适中回升,1/4概率,5分钟许可\n困难:快速回升,1/6概率,3分钟许可\n专家:激进回升,1/30概率,1分钟许可
+Cooldown after I've CUM	射精后的冷却时间
+Copied!	已复制！
+Copy	复制
+Countdown delay	倒计时延迟
+CUM NOW! {}:00	现在射精! {}:00
+CUM NOW! {}:{}	现在射精! {}:{}
+Cum Volume Behavior	射精时输出强度策略
+Default mic device:	默认麦克风设备:
+Default safeword:	默认安全词:
+Denial Phrases  (one per line)	拒绝短语  (每行一个)
+DENIED!	拒绝!
+Detection sensitivity	检测灵敏度
+Device:	设备:
+Download	下载
+Drag handles to set volume floor (bottom) and ceiling (top).\nGreen triangle = where 'Let me cum?' sends volume.\nChange override behavior in Settings > Cum Volume Behavior.	拖动把手来设置输出强度的下限(底部)和上限(顶部).\n绿色三角 = '是否允许射精?' 获准时输出强度所在的位置.\n设置中的更改覆盖策略 > 射精后输出强度策略.
+Draw a rectangle on the video feed — YOLO reanchor detections inside it will be ignored	在视频画面上画一个矩形 — 矩形内的 YOLO  重新锚定检测将被忽略
+e.g. 8hR5acKTCx2s	例如: 8hR5acKTCx2s
+Edging behaviour	边缘行为
+Edging Sensitivity	边缘灵敏度
+Enable hands-free mode	启用免提模式
+EVIL MODE	恶魔模式
+First time setup?	第一次设置?
+Font Size	字体大小
+Free tool. One guy made it. Tribute your dev? 😈	免费工具.一个人做的.给开发者打赏? 😈
+Freeze volume at current level — tracking continues but volume won't change	冻结当前输出强度 — 跟踪继续，但输出强度不会变化
+Get ID ↗	获得 ID ↗
+Got it — close	明白了 — 关闭
+Hands-Free "Let Me Cum?"	免提"是否允许射精?"
+hard stop — mic stays on.\nsay "resume session" to continue	紧急停止 — 麦克风保持开启.\n说 "resume session" 继续会话
+HELD [|]	保持中 [|]
+Higher HR → stronger denial, slower rewards.  Get a free token at pulsoid.net/ui/keys — works with Polar, Garmin, Apple Watch, most BLE chest straps via the Pulsoid app.	心率越高 → 越可能拒绝, 奖励来得越慢.  可到 pulsoid.net/ui/keys 免费领一个token — 通过Pulsoid应用,支持Polar、Garmin、Apple Watch以及大多数BLE胸带.
+Higher sensitivity = triggers on less motion change. If it fires too easily, lower this. The countdown delay lets you cancel false positives.	灵敏度越高 = 动作变化越小就越容易触发.如果触发过于容易，就把这个调低.触发前有一个倒计时，能让你及时取消误触发.
+Hold Volume	保持强度
+How long after cumming before the session auto-resumes. Set to 0 to disable the timer and resume manually. Clicking the button during refractory skips it early.	射精后一定时间会话自动恢复.设为0则禁用计时器，改为手动恢复.不应期期间点击按钮可提前跳过.
+HR Source:	心率来源:
+HTTP {}	HTTP {}
+I'm ready — select my camera feed  →	准备好了 — 选择我的摄像头画面  →
+I've CUM	我已射精
+In xToys: load the VisualStimEdger script → add your toy under Connections → Generic Output, then press ▶ to run it (nothing moves until it runs). Tap “Get ID” to open xtoys.app/me → Private Webhook, then paste the ID here.	在 xToys 里: 加载 VisualStimEdger 脚本 → 在 Connections 下添加你的玩具 → Generic Output, 然后点击 ▶ 来运行脚本 (不点的话你的牛牛就不会动). 点击 “Get ID” 来打开 xtoys.app/me → 获得Private Webhook, 然后把 ID 粘到这里.
+Let me cum?	是否允许射精?
+Level	等级
+loading…	加载中…
+Loop:	循环播放:
+Manual ✚	输出强度 ✚
+Mic level:	麦克风电平:
+Microphone:	麦克风:
+Min edges	最小边缘次数:
+Miss — aim for the green ring at the top!	目标丢失 — 将目标对准画面边缘的绿环!
+MP3: {}	MP3: {}
+Navigate to the 🌿 stem!	移动到 🌿 茎那里!
+No device selected	未选择设备
+No file loaded	文件未加载
+Not now	不是现在
+Not yet. Wait {}s.	还没有. 等待 {}秒.
+OBS Overlay:	OBS 叠加层:
+OK	OK
+Optional cut-off	可选强制切断输出
+OPTIONAL hard cut-off — you don't need this set. Place a yellow line above the red edging line; cross ABOVE it and volume instantly drops to your floor, so a sudden spike can't finish you before the normal ramp reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it.	可选强制切断输出 — 你不需要设置这个. 在红色边缘线上方放一条黄线; 一旦越过这条线，输出强度会瞬间落到底, 这样突如其来的尖峰就不会在正常爬升反应过来之前把你送走. 不设置(或者把黄线推到最顶端)即可禁用. ✕ 可消除.
+Out:	输出:
+Output	输出:
+Override to 100% volume (ignore range)	覆盖为100%输出强度(输出范围)
+Per-difficulty tuning below. Recovery = how fast volume climbs back while you hold in the erect zone (%/sec). Hold = seconds off the edge before Active Edging ramps. Ramp = how fast it climbs to max (%/sec). Defaults get more relentless on harder levels.	以下是各难度分别调校的参数. 恢复 = 你在勃起区保持时,输出强度回爬的速度（%/秒）. 保持 = 退出边缘后、主动边缘控制开始爬升之前,需要保持的秒数.爬升 = 爬升到最大值时的速度（%/秒）.难度越高,默认值越狠.
+Play Mode — minimal immersive view; hides settings	播放模式 — 极简沉浸式视图; 隐藏设置面板
+Practice Grid →	练习网格
+Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.	射精后请点击 — v输出强度会掉到 0 并保持. 想再来一轮的话,请再按一次(按钮会变成"Resume").
+Pulls the Edging state-display toward Erect by N pixels so the OBS overlay lights up earlier. Affects only the State label / OBS broadcast — the volume / denial math always uses the strict calibrated line.	把边缘状态显示向勃起方向拉 N 像素，让 OBS 叠加层更早亮起。只影响状态标签 / OBS 广播 — 输出强度和拒绝射精的计算始终使用严格校准的线.
+Pulsoid	Pulsoid
+Pulsoid Token:	Pulsoid 令牌:
+pulsoid.net/ui/keys (paid plan required)	pulsoid.net/ui/keys(需付费方案)
+Re-Select Feed	重新选择画面
+Re-Select Head	重新选择龟头
+Recover volume when held in the erect zone	在勃起区保持时恢复输出强度
+Refractory Period	不应期
+Refractory: {}:00	不应期: {}:00
+Refractory: {}:00\n(click to skip)	不应期: {}:00\n(点击跳过)
+Refractory: {}:{}\n(click to skip)	不应期: {}:{}\n(点击跳过)
+Refresh	刷新
+Remove all exclusion zones	移除所有排除区域
+Reset Defaults	恢复默认
+Reset — navigate to the 🌿 stem!	重置 — 移动到 🌿 茎那里!
+Respect volume ceiling (stay within range)	遵守输出强度上限(保持在范围内)
+Restim	Restim
+Restim disconnected — enable its WebSocket server and check the port matches.	Restim 已断开连接 — 请启用它的 WebSocket 服务器，并确认端口是否匹配.
+Restim Port:	Restim 端口:
+Resume	恢复
+Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission	掷骰子 — 概率取决于激进程度. 赢了 = 临时获得满输出强度许可
+Ruin Phrases (one per line)	Ruin(破坏高潮) 短语（每行一条）
+RUINED 😈	破坏高潮！😈
+Safeword:	安全词:
+Sample Text Abc 123	示例文本 Abc 123
+Say a number, or "cancel"	说个数字,或者说个"cancel"
+Scanning for BLE HR monitors…	正在扫描 BLE 心率监测器…
+Scan…	扫描中…
+Score: 0	分数:
+Score: {}	分数: {}
+Select audio file	选择音频文件
+Select music folder	选择音乐文件夹
+Session: 00:00  |  Edges: 0	会话: 00:00  |  边缘次数: 0
+Session: {}:{}  |  Edges: {}  |  Edging {}%  Erect {}%  Flaccid {}%	会话: {}:{}  |  边缘次数: {}  |  边缘 {}%  勃起 {}%  疲软 {}%
+Settings	设置
+Setup steps:\n\n1. Open xtoys.app in a browser and sign in\n2. Scripts → search “VisualStimEdger” → Load Script\n3. Connections → add your toy under Generic Output\n4. Go to xtoys.app/me → Private Webhook\n5. Copy the Webhook ID → paste it into VSE\n6. Press the green ▶ to RUN the script — nothing moves until you do\n7. Keep the xToys tab open while you use VSE	设置步骤:\n\n1. 在浏览器中打开 xtoys.app 并登录\n2. Scripts(脚本) → 搜索 “VisualStimEdger” → Load Script(加载脚本)\n3. Connections(连接) → 把你的玩具添加为 Generic Output\n4. 打开 xtoys.app/me → 获得Private Webhook\n5. 复制 Webhook ID → 粘贴到 VSE 里\n6. 点击绿色 ▶ 运行脚本 — 不点你的牛牛就不会动\n7. 使用 VSE 期间保持 xToys 标签页打开
+Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. Load them straight into this player. Opens Ko-fi.	Thorn 先生的 Private Sessions Vol. 2 — 21 首为 edging 打造的 MP3 音轨,直接丢进这个播放器就能用. 打开 Ko-fi.
+Sir Thorn's Sunday Drive sessions as JSON stim patterns — free / pay-what-you-want. Made for electro over your audio output. Opens Ko-fi.	Thorn 先生的 Sunday Drive 会话 — JSON 刺激模式,完全免费 / 刷点小米. 专为使用音频输出的电流刺激打造.打开 Ko-fi.
+Skip voice verification	跳过语音验证
+Start Bondage Mode →	开启束缚模式 →
+State: --  |  Vol: --  |  WS: Disconnected	状态: --  |  输出强度: --  |  WS: 已断开
+State: {}  |  Vol: {}  |  {}  |  {}  |  {} fps  |  {}	状态: {}  |  输出强度: {}  |  {}  |  {}  |  {} 帧  |  {}
+Step 1 — Draw a box around your video feed, then release to lock.  [Esc to cancel]	第 1 步 — 在视频画面上画一个框,松开即锁定.  [按 Esc 取消l]
+Step 2: Select Cock Head	第 2 步: 选择龟头
+Stepped back — say a number or 'back' again	上一步 — 再说个数字或者说声 'back' 
+Stop YOLO from re-anchoring the tracker. Draw your box on a stable, high-contrast spot (a plug/electrode is ideal) and it stays put. Turn off to let auto-reacquire find the head again.	阻止 YOLO 重新锚定跟踪器.请把框选在阴茎的一个稳定、对比度高的位置(插头/电极就很理想)，它就会固定住不动.关掉它，可以让自动重新获取龟头位置.
+T-code Axis	T-code 轴
+Theme: {}	主题: {}
+Time's up. Back to edging.	时间到，继续边缘控制
+Too slow!	太慢了!
+TRACKING LOST - Frozen at last position	跟丢了 - 冻结在最后位置
+TRACKING SUSPECT ({}) - Frozen	跟踪存疑 ({}) - 已冻结
+Update available: v{}	有可用更新: v{}
+VisualStimEdger	VisualStimEdger 可视化边缘控制工具
+VOL\nRANGE	输出强度\n范围
+Vol: {}	输出强度: {}
+Vol: —	输出强度: —
+v{}  ·  edge smarter	v{}  ·  让边缘控制更聪明
+Wait {}s...	等待 {}秒...
+Webhook ID:	Webhook ID:
+When enabled, VSE automatically rolls for cum permission each time an edge is detected. 'Min edges' sets how many edges must occur first. '1 in N' is the per-edge roll chance (lower N = more likely). Uses the same grant window as a manual roll.	启用后，每当检测到一次高潮边缘，VSE 都会自动掷骰子决定是否放行。'最小边缘次数'决定了要先攒够多少次边缘才开始掷骰子。'1 / N' 是每次边缘的掷骰概率（N 越小越容易中）。放行窗口与手动掷骰一致。
+Which T-code axis VSE sends volume commands on. This must match the axis your Restim session has bound to the parameter you want to control (usually 'Volume'). Check Restim's Websocket / T-code panel if you're unsure.	VSE 通过哪条 T-code 轴发送输出强度命令.这条轴必须与你的 Restim 会话中、绑定到你想控制参数（通常是 'Volume'）的那条轴一致。拿不准的话，去 Restim 的 Websocket / T-code 面板确认.
+WS: {}	WS: {}
+xToys	xToys
+xToys reached the cloud but the block didn't answer — press ▶ to run the VisualStimEdger block in your xToys tab (reload it if it's an old copy, or re-check your Webhook ID).	xToys 已连通云端,但脚本块未应答 — 请在 xToys 标签页里按 ▶ 运行 VisualStimEdger 脚本块(如果是旧副本就重新加载，或重新检查 Webhook ID).
+xToys Setup	xToys 配置
+xToys: block STOPPED?	xToys: 模块已停用?
+xToys: Live	xToys: 在线
+xToys: Live ({})	xToys: 在线 ({})
+xToys: No ID	xToys: 没有 ID
+xToys: Offline	xToys: 已掉线
+xToys: paste your Webhook ID from xtoys.app/me → Private Webhook (or tap Get ID).	粘贴你的 Webhook ID：前往 xtoys.app/me → Private Webhook（私有 Webhook）复制，或点 Get ID 获取。
+You've been a good boy. {}:{} remaining.	你很乖. 还剩 {}:{}.
+You've been a good boy.{} You have {} min.	你很乖.{} 你还剩 {} 分钟.
+You've been edging {}+ times, hands-free.	你已经边缘控制了 {}+ 次, 在免提模式下.
+Zoom in first — say a number!	先放大 — 说个数字!
+{} bpm	{} bpm
+{} edges	{} 次边缘
+{} px	{} 像素
+{}px	{}像素
+← Back	← 返回
+↩ Undo (3s)	↩ 撤销 (3s)
+⏳ Cum window: {}s remaining — say 'came' or click Cancel	⏳ 射精窗口: 剩余{}s  — 说声 'came' 或点击取消
+▶ Play	▶ 启动
+▶ RESUME SESSION	▶ 恢复会话
+☕ Tribute	☕ 打赏
+♥ -- bpm	♥ -- bpm
+♥ No HR	♥ 没有心率数据
+♥ {} bpm	♥ {} bpm
+⚡ Free stim patterns ↗	⚡免费刺激模式 ↗
+⚡ P.O.N.R.	⚡ 临界点.
+⚡ Point of No Return — cut	⚡ 临界点 — 切断
+✓  HIT!	✓  命中!
+✓ Safeword verified!	✓ 安全词已验证!
+✕ Cancel	✕ 取消
+✕ Clear	✕ 清除
++ Exclusion Zone	
+🍆  Grid Navigator Practice	🍆 网格导航器练习
+🍆 Grid Practice	🍆 网格练习
+🎉 Nice shot!	🎉 漂亮一击!
+🎙 BONDAGE	🎙 束缚
+🎙 Bondage active — safeword: "{}"	🎙 束缚已激活 — 安全词: "{}"
+🎙 Bondage Mode Defaults	🎙 束缚模式默认设置
+🎙 Bondage Mode Setup	🎙 束缚模式设置
+🎙 Bondage Mode — Setup	🎙 束缚模式 — 设置
+🎙 Confirm failed — feed gone?	🎙 确认失败 — 数据流中断?
+🎙 Exclude zone — say 1-9 to zoom, 'exclude'/'here' to add	排除区域——说 1-9 缩放，喊 "exclude"/"here" 添加
+🎙 Exclusion zone added ({} total) — say 'clear exclude' to remove all	🎙 已添加排除区域 (共 {} 个) — 说 'clear exclude' 清除全部
+🎙 Exclusion zones cleared	🎙 排除区域已清除
+🎙 Grid cancelled	🎙 网格已取消
+🎙 Grid cell {} (zoom {}) — say 'here' to lock, or zoom more	🎙 网格单元 {} (缩放 {}) — 喊 'here' 锁定, 或继续缩放
+🎙 Grid reset — say 1-9 to zoom	🎙 网格已重置 — 说 1-9 缩放
+🎙 Grid — say 1-9 to zoom, 'here' to lock	🎙 网格 — 说 1-9 缩放, 说 'here' 锁定
+🎙 Head reselected ✓	🎙 龟头重新选择完毕 ✓
+🎙 Lines set — adjust with voice	🎙 线条已设置 — 用语音调整
+🎙 MIC	🎙 麦克风
+🎙 No windows found	🎙 未找到窗口
+🎙 Paused (say 'resume')	🎙 暂停(说'resume')
+🎙 Session resumed	🎙 会话已恢复
+🎙 Source switch cancelled	🎙 源切换已取消
+🎙 Source switch failed	🎙 源切换失败
+🎙 Source → {}… — say 'find head' to reanchor	🎙 源 → {}… — 说 'find head' 重新锚定
+🎙 Switch Source	🎙 切换源
+🎙 Voice Commands	🎙 语音命令
+🎙 {} {}  ({}px)	🎙 {} {}  ({}像素)
+🎧 21 tracks to edge to ↗	🎧 21首边控曲目 ↗
+👿 VisualStimEdger [EVIL MODE]	👿 可视化边缘控制工具 [恶魔模式]
+💡 Press AUTO to calibrate height lines	💡 按 AUTO 校准高度线
+📁 Load File	📁 加载文件
+📂 Load Folder	📂 加载文件夹
+📷 AUTO	📷 AUTO
+📷 AUTO  (flaccid set, need more range)	AUTO（疲软区 已设定，需更大范围）
+📷 AUTO  (observing...)	📷 AUTO  (观察中...)
+📷 AUTO  (off)	📷 AUTO  (关闭)
+📷 AUTO  ✓	📷 AUTO  ✓
+🔁 Active Edging (auto-ramp)	🔁 主动边缘控制（自动递增）
+🔁 Active Edging off	🔁 主动边缘控制关闭
+🔁 Active Edging on — ramps up after {}s off the edge ({})	🔁 主动边缘已开启 — ramps up after {}s off the edge ({})
+🔒 Lock on target (no auto-reanchor)	🔒 锁定目标（不自动重新锚定）
+🔒 Locked on target — won't auto-reanchor	🔒 已锁定目标 — 不自动重新锚定
+🔓 Auto-reanchor back on	🔓 自动重新锚定已重新开启
+😈 Ruin Odds (% chance when denied, Evil Mode only)	😈  破坏高潮的概率（被拒绝时的 % 概率，仅限 恶魔模式）
+😈 tribute your dom before you're allowed → ☕	😈 获得允许前，先打赏你的 Dom → ☕
+🛑 SAFEWORD	🛑 安全词
+🛑 SAFEWORD — say "resume session" or click ▶ RESUME	🛑 安全词 — 说 "resume session" 或点击 ▶ 恢复
+Language	语言

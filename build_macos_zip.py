@@ -61,6 +61,7 @@ files = [
     ("splash.png",             "splash.png"),
     ("overlay.html",           "overlay.html"),
     ("ko-fi.png",              "ko-fi.png"),
+    ("i18n/vse_ui_strings_zh.tsv", "i18n/vse_ui_strings_zh.tsv"),
 ]
 
 with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:

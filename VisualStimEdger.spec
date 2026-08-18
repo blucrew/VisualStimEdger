@@ -8,6 +8,7 @@ datas = [
     ('icon.ico',                '.'),
     ('splash.png',              '.'),
     ('overlay.html',            '.'),
+    ('i18n/vse_ui_strings_zh.tsv', 'i18n'),
 ]
 binaries = []
 hiddenimports = [
