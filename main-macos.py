@@ -2284,6 +2284,7 @@ class App:
         # Background capture — keeps the main thread free for tracking + UI
         self._frame_queue    = queue.Queue(maxsize=2)
         self._running        = True
+        self._ui_queue       = queue.Queue()   # background→main-thread calls (see _call_on_main)
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
@@ -2390,24 +2391,43 @@ class App:
 
     def run(self):
         self.root.after(5, self._update_frame)
+        self.root.after(30, self._pump_ui_queue)   # drain background→main-thread calls
         self.root.mainloop()
-        # mainloop() has returned → the window is destroyed and _cleanup() has
-        # already run (via _on_close). If we now fall through to a normal Python
-        # exit, the interpreter's teardown GC finalises leftover Tk/PhotoImage
-        # objects on a non-main thread, which trips
-        #   Tcl_AsyncDelete: async handler deleted by the wrong thread
-        # and aborts with exit code 3 — an intermittent, ugly crash on close.
-        # Everything that matters has been flushed by _cleanup(), so skip the
-        # teardown entirely with a hard exit.
+        # If mainloop ever returns without going through _on_close (which hard-exits
+        # on its own), do the same collapsed shutdown: flush the critical side effects
+        # on the main thread, then hard-exit — skipping the interpreter teardown that
+        # would finalise Tk objects off-thread (Tcl_AsyncDelete, exit 3).
+        self._running = False
         try:
-            self._cleanup()          # idempotent; no-op if _on_close already ran
+            self._flush_critical()
         except Exception:
             pass
         try:
-            logging.shutdown()       # flush + close log handlers before we bail
+            logging.shutdown()
         except Exception:
             pass
         os._exit(0)
+
+    def _call_on_main(self, fn, *args):
+        """Schedule fn(*args) on the Tk main thread. Background threads MUST use this
+        instead of touching Tk (or self.root.after) directly — a cross-thread Tcl call
+        is what trips 'Tcl_AsyncDelete: async handler deleted by the wrong thread' when
+        the app shuts down. Drained by _pump_ui_queue."""
+        self._ui_queue.put((fn, args))
+
+    def _pump_ui_queue(self):
+        """Run background→main calls on the Tk thread, then reschedule itself."""
+        try:
+            while True:
+                fn, args = self._ui_queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception:
+                    log.exception("UI-queue callback failed")
+        except queue.Empty:
+            pass
+        if self._running:
+            self.root.after(30, self._pump_ui_queue)
 
     # ------------------------------------------------------------------ UI
 
@@ -3265,7 +3285,7 @@ class App:
 
     def _start_update_check(self):
         def callback(latest, url):
-            self.root.after(0, self._show_update_banner, latest, url)
+            self._call_on_main(self._show_update_banner, latest, url)
         threading.Thread(target=check_for_update, args=(callback,), daemon=True).start()
 
     # ------------------------------------------------------------------ config persistence
@@ -3636,28 +3656,57 @@ class App:
             except Exception:
                 pass
 
+    def _flush_critical(self):
+        """The fast, must-happen-on-close side effects: stop the toy, restore the
+        user's system volume, log the session. Main-thread only — no blocking joins,
+        no thread .stop() — so it's safe to run right before os._exit(0). Idempotent."""
+        try:
+            self.restim.set_volume(0.0, instant=True)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "xtoys", None):
+                self.xtoys.set_volume(0.0, instant=True)
+        except Exception:
+            pass
+        if self.win_audio and self.win_audio.connected and self._orig_win_volume is not None:
+            try:
+                self.win_audio._volume_interface.SetMasterVolumeLevelScalar(
+                    self._orig_win_volume, None)
+                log.info(f"WinAudio: restored volume to {self._orig_win_volume:.2f}")
+            except Exception:
+                pass
+        if hasattr(self, 'session_logger'):
+            try:
+                self.session_logger.log_session_end(
+                    edge_count=self.edge_count, cum_count=self._cum_count,
+                    denial_count=self._denial_count,
+                    elapsed_s=time.time() - self.session_start)
+            except Exception:
+                pass
+
     def _on_close(self):
-        # Remember the width the user is leaving the window at, so it re-opens
-        # the same next time. Captured here (a stable, post-boot moment) rather
-        # than in _save_config, which also fires during construction when the
-        # window is briefly at its over-wide natural size.
+        # Collapsed close path. The old path ran the full _cleanup(), which blocks up
+        # to 1.5s joining the capture thread while Tk's event loop goes unserviced — a
+        # background thread touching Tk in that window trips
+        #   Tcl_AsyncDelete: async handler deleted by the wrong thread
+        # (abort, exit 3), and because the abort beat the zeroing the toy was left
+        # running. So do ONLY the fast, must-happen side effects on the main thread,
+        # then hard-exit immediately: no joins, no destroy, no teardown window. (And
+        # background threads no longer touch Tk at all — see _call_on_main — so there's
+        # nothing left to race even in the millisecond before we exit.)
+        self._running = False
         try:
             _w = self.root.winfo_width()
             if 200 < _w <= _MAX_WIN_W:
-                self._win_w = _w
-            # else: don't persist an over-wide width, or it boots huge next time.
+                self._win_w = _w          # persist the window width for next launch
         except Exception:
             pass
-        self._save_config()
-        self._cleanup()
-        # Do NOT call root.destroy() here. Tearing down the Tk interpreter trips
-        #   Tcl_AsyncDelete: async handler deleted by the wrong thread
-        # (abort, exit code 3) whenever a background thread has marshalled work
-        # via root.after(...): Tcl creates the async handler on that thread and
-        # then destroy() frees it on the main thread — the wrong one. _cleanup()
-        # has already persisted config and stopped/flushed everything that
-        # matters, so bypass the Tk teardown entirely and let the OS reclaim the
-        # process. (An immediate _exit is also a faster, cleaner-feeling close.)
+        self._flush_critical()            # stop the toy, restore audio, log the session
+        try:
+            self._save_config()
+        except Exception:
+            pass
         try:
             logging.shutdown()
         except Exception:
@@ -5577,7 +5626,7 @@ class App:
                     btn.configure(command=lambda a=addr, n=name, b=btn: _pick(a, n, b))
                     btn.pack(fill=tk.X, pady=1)
                     row_btns.append(btn)
-            self.root.after(0, _update)
+            self._call_on_main(_update)
 
         threading.Thread(target=_do_scan, daemon=True).start()
 
@@ -7145,7 +7194,7 @@ class App:
         def _on_splash_keyword(kw):
             """Called from VoiceEngine audio thread."""
             if kw == "safeword":
-                self.root.after(0, _on_verified)
+                self._call_on_main(_on_verified)
 
         def _on_verified():
             if _verified[0]:
@@ -7729,7 +7778,7 @@ class App:
 
     def _voice_raw_cb(self, kw: str):
         """Called from VoiceEngine audio thread — posts to main thread."""
-        self.root.after(0, lambda: self._on_voice_keyword(kw))
+        self._call_on_main(self._on_voice_keyword, kw)
 
     def _on_voice_keyword(self, kw: str):
         """Dispatches a recognised keyword (runs on main thread)."""
