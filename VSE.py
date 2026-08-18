@@ -508,7 +508,7 @@ def select_head(frame_cv, parent=None):
         root = tk.Toplevel(parent)
         is_main = False
     
-    root.title("Step 2: Select Cock Head")
+    root.title(tr("Step 2: Select Cock Head"))
     root.attributes("-topmost", True)
     
     frame_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
@@ -2519,9 +2519,9 @@ class App:
             button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
             progress_color=self._C_ACCENT)
         _lock_sw.pack(anchor="w", pady=(4, 0))
-        Tooltip(_lock_sw, "Stop YOLO from re-anchoring the tracker. Draw your box on a "
+        Tooltip(_lock_sw, tr("Stop YOLO from re-anchoring the tracker. Draw your box on a "
                           "stable, high-contrast spot (a plug/electrode is ideal) and it "
-                          "stays put. Turn off to let auto-reacquire find the head again.")
+                          "stays put. Turn off to let auto-reacquire find the head again."))
 
         # Active Edging — auto-ramp the volume back up after you hold off the edge,
         # then deny again on the next edge. The aggressive auto-edging loop.
@@ -2534,9 +2534,9 @@ class App:
             button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
             progress_color=self._C_ACCENT)
         _ae_sw.pack(anchor="w", pady=(2, 0))
-        Tooltip(_ae_sw, "After you back off the edge and hold for the configured time "
+        Tooltip(_ae_sw, tr("After you back off the edge and hold for the configured time "
                         "(Settings → Edging behaviour), volume ramps back toward your max "
-                        "until you edge again — then the cycle repeats. Off = normal reactive mode.")
+                        "until you edge again — then the cycle repeats. Off = normal reactive mode."))
 
         # height buttons — stacked right of video
         hbf = ctk.CTkFrame(top_frame, fg_color="transparent", width=180, height=260)
@@ -2564,17 +2564,17 @@ class App:
             font=btn, height=28, corner_radius=4,
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="white")
         self._auto_btn.pack(fill=tk.X, pady=(0, 3))
-        Tooltip(self._auto_btn, "Auto-calibrate heights by observing motion range")
+        Tooltip(self._auto_btn, tr("Auto-calibrate heights by observing motion range"))
 
         # Exclusion zone controls
         ez_row = ctk.CTkFrame(hbf, fg_color="transparent")
         ez_row.pack(fill=tk.X, pady=(0, 4))
         self._ez_add_btn = ctk.CTkButton(
-            ez_row, text="＋ Exclusion Zone", command=self._add_exclusion_zone,
+            ez_row, text=tr("＋ Exclusion Zone"), command=self._add_exclusion_zone,
             font=ctk.CTkFont(size=10), height=26, corner_radius=4,
             fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H, text_color="black")
         self._ez_add_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
-        Tooltip(self._ez_add_btn, "Draw a rectangle on the video feed — YOLO reanchor detections inside it will be ignored")
+        Tooltip(self._ez_add_btn, tr("Draw a rectangle on the video feed — YOLO reanchor detections inside it will be ignored"))
         def _clear_zones():
             self._exclusion_zones.clear()
             self._save_config()
@@ -2585,7 +2585,7 @@ class App:
             fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
             text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
             width=60).pack(side=tk.LEFT)
-        Tooltip(ez_row, "Remove all exclusion zones")
+        Tooltip(ez_row, tr("Remove all exclusion zones"))
 
         # ── Point of No Return (optional yellow panic line) ──────────────────
         # On screen this line sits ABOVE the red edging line, so its button sits
@@ -2617,10 +2617,10 @@ class App:
                       corner_radius=4
                       ).grid(row=0, column=2, sticky="ew")
         Tooltip(ponr_row,
-                "OPTIONAL hard cut-off — you don't need this set. Place a yellow line "
+                tr("OPTIONAL hard cut-off — you don't need this set. Place a yellow line "
                 "above the red edging line; cross ABOVE it and volume instantly drops to "
                 "your floor, so a sudden spike can't finish you before the normal ramp "
-                "reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it.")
+                "reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it."))
 
         # ── The three calibration lines — ALL REQUIRED for the tool to run ───
         ctk.CTkLabel(hbf, text=tr("Calibration — set all 3 (required)"), anchor="w",
@@ -2653,13 +2653,13 @@ class App:
             font=btn, height=50, corner_radius=4,
             fg_color=self._C_GREEN, hover_color=self._C_GREEN_H, text_color="white")
         self._letmecum_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
-        Tooltip(self._letmecum_btn, "Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission")
+        Tooltip(self._letmecum_btn, tr("Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission"))
         self._cum_btn = ctk.CTkButton(cum_row, text=tr("I've CUM"), command=self._on_cum,
                       font=btn, height=50, corner_radius=4,
                       fg_color="#e0e0e8", hover_color="#c8c8d0",
                       text_color=self._C_BG)
         self._cum_btn.grid(row=0, column=1, sticky="ew")
-        Tooltip(self._cum_btn, "Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.")
+        Tooltip(self._cum_btn, tr("Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round."))
 
         # ── Vertical volume range slider — right of hbf ───────────────────────
         _tiny = ctk.CTkFont(size=9)
@@ -2795,9 +2795,9 @@ class App:
         self._range_cv.bind("<Configure>", _range_draw)
         self._range_draw = _range_draw
         Tooltip(self._range_cv,
-               "Drag handles to set volume floor (bottom) and ceiling (top).\n"
+               tr("Drag handles to set volume floor (bottom) and ceiling (top).\n"
                "Green triangle = where 'Let me cum?' sends volume.\n"
-               "Change override behavior in Settings > Cum Volume Behavior.")
+               "Change override behavior in Settings > Cum Volume Behavior."))
 
         def _divider():
             ctk.CTkFrame(sf, height=1, fg_color=self._C_BORDER).pack(fill=tk.X, padx=P, pady=1)
@@ -2806,11 +2806,11 @@ class App:
         aggr_card = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         aggr_card.pack(fill=tk.X, padx=P, pady=2)
         Tooltip(aggr_card,
-               "Controls how fast volume ramps and 'Let me cum?' odds.\n"
+               tr("Controls how fast volume ramps and 'Let me cum?' odds.\n"
                "Easy: gentle ramps, 1-in-2 odds, 5 min grant\n"
                "Middle: moderate ramps, 1-in-4 odds, 5 min grant\n"
                "Hard: fast ramps, 1-in-6 odds, 3 min grant\n"
-               "Expert: aggressive ramps, 1-in-30 odds, 1 min grant")
+               "Expert: aggressive ramps, 1-in-30 odds, 1 min grant"))
         aggr_row = ctk.CTkFrame(aggr_card, fg_color="transparent")
         aggr_row.pack(fill=tk.X, padx=12, pady=6)
         ctk.CTkLabel(aggr_row, text=tr("Aggressiveness"), font=lbl,
@@ -2931,13 +2931,13 @@ class App:
         self._xtoys_entry.pack(side=tk.LEFT, padx=(0, 8))
         # One-click shortcut straight to the Private Webhook page \u2014 saves users hunting
         # for xtoys.app/me. Mirrors the About-menu link buttons (webbrowser.open).
-        ctk.CTkButton(xo, text="Get ID \u2197", width=64, height=24,
+        ctk.CTkButton(xo, text=tr("Get ID \u2197"), width=64, height=24,
                       command=lambda: webbrowser.open("https://xtoys.app/me"),
                       fg_color=self._C_SURFACE, hover_color="#4a4a4a",
                       text_color=self._C_TEXT, border_width=1, border_color=self._C_BORDER,
                       font=ctk.CTkFont(size=10)).pack(side=tk.LEFT)
         ctk.CTkLabel(self._xtoys_opts,
-                     text="In xToys: load the VisualStimEdger script \u2192 add your toy under Connections \u2192 Generic Output, then press \u25b6 to run it (nothing moves until it runs). Tap \u201cGet ID\u201d to open xtoys.app/me \u2192 Private Webhook, then paste the ID here.",
+                     text=tr("In xToys: load the VisualStimEdger script \u2192 add your toy under Connections \u2192 Generic Output, then press \u25b6 to run it (nothing moves until it runs). Tap \u201cGet ID\u201d to open xtoys.app/me \u2192 Private Webhook, then paste the ID here."),
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
                      wraplength=380, justify="left").pack(anchor="w", padx=12, pady=(0, 6))
         self._xtoys_warn = ctk.CTkLabel(self._xtoys_opts, text="",
@@ -2972,7 +2972,7 @@ class App:
                      fg_color=self._C_SURFACE, border_color=self._C_BORDER,
                      text_color=self._C_TEXT, show="\u2022",
                      placeholder_text=tr("pulsoid.net/ui/keys (paid plan required)")).pack(side=tk.LEFT, padx=(0, 8))
-        self._hr_bpm_label = ctk.CTkLabel(hr_row1, text="\u2665 -- bpm",
+        self._hr_bpm_label = ctk.CTkLabel(hr_row1, text=tr("\u2665 -- bpm"),
                                           font=ctk.CTkFont(size=fs + 1, weight="bold"),
                                           text_color="#e91e63")
         self._hr_bpm_label.pack(side=tk.LEFT)
@@ -2983,12 +2983,12 @@ class App:
         def _hr_slider_group(parent, label, var, lo, hi):
             ctk.CTkLabel(parent, text=label, font=lbl,
                          text_color=self._C_TEXT).pack(side=tk.LEFT, padx=(0, 4))
-            lbl_val = ctk.CTkLabel(parent, text=f"{var.get()} bpm",
+            lbl_val = ctk.CTkLabel(parent, text=tr("{} bpm").format(var.get()),
                                    font=lbl, text_color=self._C_TEXT_DIM, width=60)
             lbl_val.pack(side=tk.LEFT, padx=(0, 6))
             def _upd(v, lv=lbl_val, sv=var):
                 sv.set(int(float(v)))
-                lv.configure(text=f"{int(float(v))} bpm")
+                lv.configure(text=tr("{} bpm").format(int(float(v))))
                 self.hr_client.resting_bpm = self.hr_resting_var.get()
                 self.hr_client.peak_bpm    = self.hr_peak_var.get()
             ctk.CTkSlider(parent, from_=lo, to=hi, variable=var,
@@ -3014,7 +3014,7 @@ class App:
                       command=self._ble_scan_dialog).pack(side=tk.RIGHT)
 
         ctk.CTkLabel(self._hr_opts,
-                     text=("Higher HR \u2192 stronger denial, slower rewards.  "
+                     text=tr("Higher HR \u2192 stronger denial, slower rewards.  "
                            "Get a free token at pulsoid.net/ui/keys \u2014 works with Polar, Garmin, "
                            "Apple Watch, most BLE chest straps via the Pulsoid app."),
                      font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
@@ -3044,8 +3044,8 @@ class App:
                       font=ctk.CTkFont(size=10, weight="bold"),
                       command=lambda: webbrowser.open("https://ko-fi.com/s/db90a470a9"))
         _js_btn.pack(side=tk.RIGHT)
-        Tooltip(_js_btn, "Sir Thorn's Sunday Drive sessions as JSON stim patterns — free / "
-                         "pay-what-you-want. Made for electro over your audio output. Opens Ko-fi.")
+        Tooltip(_js_btn, tr("Sir Thorn's Sunday Drive sessions as JSON stim patterns — free / "
+                         "pay-what-you-want. Made for electro over your audio output. Opens Ko-fi."))
 
         self._restim_opts.pack(fill=tk.X, padx=P, pady=(0, 4))  # default; _on_output_change re-packs after load
 
@@ -3075,8 +3075,8 @@ class App:
                           font=ctk.CTkFont(size=10, weight="bold"),
                           command=lambda: webbrowser.open("https://ko-fi.com/s/ab28a9a250"))
             _pv_btn.pack(side=tk.RIGHT)
-            Tooltip(_pv_btn, "Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. "
-                             "Load them straight into this player. Opens Ko-fi.")
+            Tooltip(_pv_btn, tr("Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. "
+                             "Load them straight into this player. Opens Ko-fi."))
             self._mp3_track_lbl = ctk.CTkLabel(load_row, text=tr("No file loaded"),
                                                font=ctk.CTkFont(size=10),
                                                text_color=self._C_TEXT_DIM,
@@ -3146,12 +3146,12 @@ class App:
         self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
                                     font=ctk.CTkFont(size=10, weight="bold"), width=120)
         self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
-        Tooltip(self._hold_btn, "Freeze volume at current level — tracking continues but volume won't change")
+        Tooltip(self._hold_btn, tr("Freeze volume at current level — tracking continues but volume won't change"))
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
         self._play_btn = _ghost_btn(ctrl, "▶ Play", self._toggle_play_mode, width=60)
         self._play_btn.pack(side=tk.LEFT, padx=(4, 0))
-        Tooltip(self._play_btn, "Play Mode — minimal immersive view; hides settings")
+        Tooltip(self._play_btn, tr("Play Mode — minimal immersive view; hides settings"))
         self._bondage_btn = ctk.CTkButton(
             ctrl, text=tr("🎙 BONDAGE"), command=self._open_bondage_splash,
             font=ctk.CTkFont(size=10, weight="bold"), height=34, corner_radius=4,
@@ -3159,7 +3159,7 @@ class App:
             border_width=2, border_color="#8a2a9a", text_color="#c080ff", width=90,
         )
         self._bondage_btn.pack(side=tk.LEFT, padx=(4, 0))
-        Tooltip(self._bondage_btn, "Bondage Mode — hands-free voice control (requires Vosk model)")
+        Tooltip(self._bondage_btn, tr("Bondage Mode — hands-free voice control (requires Vosk model)"))
 
         _divider()
 
@@ -3376,7 +3376,7 @@ class App:
                 try:
                     self.edge_sens_var.set(max(0, min(500, int(data["edge_sens"]))))
                     if hasattr(self, "_sens_lbl"):
-                        self._sens_lbl.configure(text=f"{int(self.edge_sens_var.get())} px")
+                        self._sens_lbl.configure(text=tr("{} px").format(int(self.edge_sens_var.get())))
                 except Exception:
                     pass
             if "xtoys_id" in data:
@@ -3745,7 +3745,7 @@ class App:
             menu.grab_release()
 
     def _show_update_banner(self, latest, url):
-        self._update_label.configure(text=f"Update available: v{latest}")
+        self._update_label.configure(text=tr("Update available: v{}").format(latest))
         self._update_btn.configure(command=lambda: webbrowser.open(url))
         self._update_banner.pack(fill=tk.X, before=self._first_widget)
 
@@ -3800,7 +3800,7 @@ class App:
             self.heights["Erect"]  = (self._auto_min_y + self._auto_max_y) / 2
             if self._auto_btn_state != "active":
                 self._auto_btn_state = "active"
-                self._auto_btn.configure(text="📷 AUTO  \u2713", fg_color="#3EC941", hover_color="#32a435")
+                self._auto_btn.configure(text=tr("📷 AUTO  \u2713"), fg_color="#3EC941", hover_color="#32a435")
             log.debug(f"AUTO heights: edging={self.heights['Edging']:.0f} "
                       f"erect={self.heights['Erect']:.0f} flaccid={self.heights['Flaccid']:.0f}")
         else:
@@ -4062,9 +4062,9 @@ class App:
         # Check denial cooldown
         cooldown_left = self._letmecum_cooldown_until - time.time()
         if cooldown_left > 0:
-            self._letmecum_btn.configure(text=f"Wait {int(cooldown_left)}s...")
+            self._letmecum_btn.configure(text=tr("Wait {}s...").format(int(cooldown_left)))
             # Voice users can't see the button — give them the snark too
-            self._snark_label.configure(text=f"Not yet. Wait {int(cooldown_left)}s.",
+            self._snark_label.configure(text=tr("Not yet. Wait {}s.").format(int(cooldown_left)),
                                         text_color="#F5A623")
             return
 
@@ -4110,9 +4110,9 @@ class App:
         mins = grant_secs // 60
         hf_tag = " [auto]" if source != "manual" and not source.startswith("manual") else ""
         self._snark_label.configure(
-            text=f"You've been a good boy.{hf_tag} You have {mins} min.",
+            text=tr("You've been a good boy.{} You have {} min.").format(hf_tag, mins),
             text_color="#3EC941")
-        self._letmecum_btn.configure(text=f"CUM NOW! {mins}:00", fg_color="#3EC941",
+        self._letmecum_btn.configure(text=tr("CUM NOW! {}:00").format(mins), fg_color="#3EC941",
                                      hover_color="#32a435")
         self._tribute_btn.pack(padx=3, pady=(0, 3))   # #2: nudge at peak, never blocks
         if self._cum_override_range:
@@ -4129,7 +4129,7 @@ class App:
             return
         remaining = self._letmecum_cooldown_until - time.time()
         if remaining > 0:
-            self._letmecum_btn.configure(text=f"Wait {int(remaining)}s...",
+            self._letmecum_btn.configure(text=tr("Wait {}s...").format(int(remaining)),
                                          fg_color="#FF4444", hover_color="#cc3636")
             self.root.after(1000, self._tick_letmecum_cooldown)
         else:
@@ -4151,9 +4151,9 @@ class App:
         if remaining > 0:
             m = int(remaining) // 60
             s = int(remaining) % 60
-            self._letmecum_btn.configure(text=f"CUM NOW! {m}:{s:02d}")
+            self._letmecum_btn.configure(text=tr("CUM NOW! {}:{}").format(m, f"{s:02d}"))
             self._snark_label.configure(
-                text=f"You've been a good boy. {m}:{s:02d} remaining.",
+                text=tr("You've been a good boy. {}:{} remaining.").format(m, f"{s:02d}"),
                 text_color="#3EC941")
             self.root.after(1000, self._tick_cum_grant)
         else:
@@ -4353,14 +4353,14 @@ class App:
             # Refractory countdown — clicking the button skips it early
             self._refractory_until = time.time() + self._refractory_mins * 60
             self._cum_btn.configure(
-                text=f"Refractory: {self._refractory_mins}:00\n(click to skip)",
+                text=tr("Refractory: {}:00\n(click to skip)").format(self._refractory_mins),
                 command=self._on_resume, state="normal",
                 fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                 text_color=self._C_TEXT_DIM)
             btn = getattr(self, '_play_cum_btn', None)
             if btn:
                 btn.configure(
-                    text=f"Refractory: {self._refractory_mins}:00",
+                    text=tr("Refractory: {}:00").format(self._refractory_mins),
                     command=self._on_resume, state="normal",
                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                     text_color=self._C_TEXT_DIM)
@@ -4388,7 +4388,7 @@ class App:
             return
         m = int(remaining) // 60
         s = int(remaining) % 60
-        label = f"Refractory: {m}:{s:02d}\n(click to skip)"
+        label = tr("Refractory: {}:{}\n(click to skip)").format(m, f"{s:02d}")
         short  = f"Refractory: {m}:{s:02d}"
         self._cum_btn.configure(text=label)
         btn = getattr(self, '_play_cum_btn', None)
@@ -4587,7 +4587,7 @@ class App:
         try:
             if rem > 0:
                 self._snark_label.configure(
-                    text=f"⏳ Cum window: {rem}s remaining — say 'came' or click Cancel",
+                    text=tr("⏳ Cum window: {}s remaining — say 'came' or click Cancel").format(rem),
                     text_color="#3EC941")
             else:
                 self._snark_label.configure(text="", text_color=self._C_TEXT)
@@ -4677,7 +4677,7 @@ class App:
         }
 
         win = ctk.CTkToplevel(self.root)
-        win.title("Settings")
+        win.title(tr("Settings"))
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
@@ -4768,7 +4768,7 @@ class App:
                                      progress_color=self._C_ACCENT,
                                      fg_color=self._C_SURFACE2, width=180)
         font_slider.pack(side=tk.LEFT, padx=(0, 8))
-        font_val_lbl = ctk.CTkLabel(font_row, text=f"{self._ui_font_size}px", font=lbl,
+        font_val_lbl = ctk.CTkLabel(font_row, text=tr("{}px").format(self._ui_font_size), font=lbl,
                                      text_color=self._C_ACCENT, width=36)
         font_val_lbl.pack(side=tk.LEFT)
 
@@ -4780,7 +4780,7 @@ class App:
 
         def _on_font_slide(v):
             sz = int(float(v))
-            font_val_lbl.configure(text=f"{sz}px")
+            font_val_lbl.configure(text=tr("{}px").format(sz))
             font_preview.configure(font=ctk.CTkFont(size=sz, weight="bold"))
         font_slider.configure(command=_on_font_slide)
 
@@ -4832,12 +4832,12 @@ class App:
         ctk.CTkLabel(sens_hdr, text=tr("Edging Sensitivity"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM, anchor="w").pack(side=tk.LEFT)
-        sens_val_lbl = ctk.CTkLabel(sens_hdr, text=f"{int(self.edge_sens_var.get())} px",
+        sens_val_lbl = ctk.CTkLabel(sens_hdr, text=tr("{} px").format(int(self.edge_sens_var.get())),
                                     font=lbl, text_color=self._C_ACCENT, anchor="e")
         sens_val_lbl.pack(side=tk.RIGHT)
 
         def _on_sens(val):
-            sens_val_lbl.configure(text=f"{int(float(val))} px")
+            sens_val_lbl.configure(text=tr("{} px").format(int(float(val))))
             self._save_config()
 
         ctk.CTkSlider(
@@ -4848,10 +4848,10 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 4))
         ctk.CTkLabel(
             calib_frame,
-            text="Pulls the Edging state-display toward Erect by N pixels so "
+            text=tr("Pulls the Edging state-display toward Erect by N pixels so "
                  "the OBS overlay lights up earlier. "
                  "Affects only the State label / OBS broadcast — the volume / "
-                 "denial math always uses the strict calibrated line.",
+                 "denial math always uses the strict calibrated line."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
@@ -4885,10 +4885,10 @@ class App:
 
         ctk.CTkLabel(
             restim_frame,
-            text="Which T-code axis VSE sends volume commands on. This must "
+            text=tr("Which T-code axis VSE sends volume commands on. This must "
                  "match the axis your Restim session has bound to the "
                  "parameter you want to control (usually 'Volume'). Check "
-                 "Restim's Websocket / T-code panel if you're unsure.",
+                 "Restim's Websocket / T-code panel if you're unsure."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
@@ -4972,19 +4972,19 @@ class App:
 
         def _show_xtoys_help():
             hw = ctk.CTkToplevel(win)
-            hw.title("xToys Setup")
+            hw.title(tr("xToys Setup"))
             hw.geometry("420x320")
             hw.resizable(False, False)
             hw.grab_set()
             ctk.CTkLabel(hw,
-                text="Setup steps:\n\n"
+                text=tr("Setup steps:\n\n"
                      "1. Open xtoys.app in a browser and sign in\n"
                      "2. Scripts \u2192 search \u201cVisualStimEdger\u201d \u2192 Load Script\n"
                      "3. Connections \u2192 add your toy under Generic Output\n"
                      "4. Go to xtoys.app/me \u2192 Private Webhook\n"
                      "5. Copy the Webhook ID \u2192 paste it into VSE\n"
                      "6. Press the green \u25b6 to RUN the script \u2014 nothing moves until you do\n"
-                     "7. Keep the xToys tab open while you use VSE",
+                     "7. Keep the xToys tab open while you use VSE"),
                 font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
                 justify="left", anchor="w", wraplength=380,
             ).pack(padx=20, pady=20, anchor="w")
@@ -5049,9 +5049,9 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 4))
         ctk.CTkLabel(
             refrac_frame,
-            text="How long after cumming before the session auto-resumes. "
+            text=tr("How long after cumming before the session auto-resumes. "
                  "Set to 0 to disable the timer and resume manually. "
-                 "Clicking the button during refractory skips it early.",
+                 "Clicking the button during refractory skips it early."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
@@ -5073,10 +5073,10 @@ class App:
         ).pack(anchor="w", padx=12, pady=(8, 2))
         ctk.CTkLabel(
             edge_frame,
-            text="Per-difficulty tuning below. Recovery = how fast volume climbs back "
+            text=tr("Per-difficulty tuning below. Recovery = how fast volume climbs back "
                  "while you hold in the erect zone (%/sec). Hold = seconds off the edge "
                  "before Active Edging ramps. Ramp = how fast it climbs to max (%/sec). "
-                 "Defaults get more relentless on harder levels.",
+                 "Defaults get more relentless on harder levels."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -5157,15 +5157,15 @@ class App:
         ).pack(fill=tk.X, padx=12, pady=(0, 4))
         ctk.CTkLabel(
             acd_frame,
-            text="Higher sensitivity = triggers on less motion change. "
+            text=tr("Higher sensitivity = triggers on less motion change. "
                  "If it fires too easily, lower this. "
-                 "The countdown delay lets you cancel false positives.",
+                 "The countdown delay lets you cancel false positives."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(0, 10))
 
         # ── Hands-Free "Let Me Cum?" ──────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Hands-Free \"Let Me Cum?\"",
+        ctk.CTkLabel(sf, text=tr("Hands-Free \"Let Me Cum?\""),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(8, 4), anchor="w")
         hf_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         hf_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
@@ -5218,10 +5218,10 @@ class App:
 
         ctk.CTkLabel(
             hf_frame,
-            text="When enabled, VSE automatically rolls for cum permission each time an edge "
+            text=tr("When enabled, VSE automatically rolls for cum permission each time an edge "
                  "is detected. 'Min edges' sets how many edges must occur first. "
                  "'1 in N' is the per-edge roll chance (lower N = more likely). "
-                 "Uses the same grant window as a manual roll.",
+                 "Uses the same grant window as a manual roll."),
             font=ctk.CTkFont(size=9), text_color=self._C_TEXT_DIM,
             wraplength=420, justify="left", anchor="w",
         ).pack(fill=tk.X, padx=12, pady=(4, 10))
@@ -5286,7 +5286,7 @@ class App:
         ruin_phrases_box.insert("1.0", "\n".join(self._ruin_phrases))
 
         # ── Cum Odds ──────────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="\"Let me cum?\" Odds  (1 in N chance)",
+        ctk.CTkLabel(sf, text=tr("\"Let me cum?\" Odds  (1 in N chance)"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
         odds_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         odds_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
@@ -5563,7 +5563,7 @@ class App:
     def _ble_scan_dialog(self):
         """Open a scan dialog, show found BLE HR devices, let user pick one."""
         dlg = ctk.CTkToplevel(self.root)
-        dlg.title("BLE HR — Scan")
+        dlg.title(tr("BLE HR — Scan"))
         dlg.geometry("340x280")
         dlg.grab_set()
         dlg.resizable(False, False)
@@ -5741,7 +5741,7 @@ class App:
         """Toggle Evil Mode — adds ruin outcome chance."""
         if on:
             # 1. Title
-            self.root.title("👿 VisualStimEdger [EVIL MODE]")
+            self.root.title(tr("👿 VisualStimEdger [EVIL MODE]"))
             # 2. Window background — dark red tint (shows through transparent frames)
             self.root.configure(fg_color="#120005")
             # 3. Video border — red
@@ -5795,7 +5795,7 @@ class App:
 
     def _mp3_load_file(self):
         path = filedialog.askopenfilename(
-            title="Select audio file",
+            title=tr("Select audio file"),
             filetypes=[
                 ("Audio files", "*.mp3 *.wav *.ogg *.flac *.m4a"),
                 ("All files", "*.*"),
@@ -5809,7 +5809,7 @@ class App:
             self._mp3_update_track_label()
 
     def _mp3_load_folder(self):
-        folder = filedialog.askdirectory(title="Select music folder")
+        folder = filedialog.askdirectory(title=tr("Select music folder"))
         if folder and self.music_player:
             self.music_player.load_folder(folder)
             self._mp3_last_path = folder
@@ -6166,7 +6166,7 @@ class App:
             _lvl  = self.aggr_var.get()
             _hold = self._ae_hold_secs.get(_lvl, 10)
             self._snark_label.configure(
-                text=f"🔁 Active Edging on — ramps up after {_hold}s off the edge ({_lvl})",
+                text=tr("🔁 Active Edging on — ramps up after {}s off the edge ({})").format(_hold, _lvl),
                 text_color="#F5A623")
             log.info(f"Active Edging ON — {_lvl}: hold {_hold}s, "
                      f"ramp {self._ae_ramp_pct.get(_lvl, 8.0)}%/s")
@@ -6406,7 +6406,7 @@ class App:
                 reason = "size" if not size_ok else "jump"
                 self._track_msg  = f"TRACKING SUSPECT ({reason}) - Frozen"
         else:
-            self._track_msg  = "TRACKING LOST - Frozen at last position"
+            self._track_msg  = tr("TRACKING LOST - Frozen at last position")
 
         if not good:
             self.tracking_ok = False
@@ -6577,15 +6577,14 @@ class App:
             pcts = {"Edging": 0.0, "Erect": 0.0, "Flaccid": 0.0}
 
         self.stats_label.configure(
-            text=(f"Session: {m:02d}:{s:02d}  |  Edges: {self.edge_count}  |  "
-                  f"Edging {pcts['Edging']:.0f}%  "
-                  f"Erect {pcts['Erect']:.0f}%  "
-                  f"Flaccid {pcts['Flaccid']:.0f}%")
+            text=(tr("Session: {}:{}  |  Edges: {}  |  Edging {}%  Erect {}%  Flaccid {}%").format(
+                  f"{m:02d}", f"{s:02d}", self.edge_count,
+                  f"{pcts['Edging']:.0f}", f"{pcts['Erect']:.0f}", f"{pcts['Flaccid']:.0f}"))
         )
         if self._play_mode:
             elapsed = time.time() - self.session_start
             m2, s2 = divmod(int(elapsed), 60)
-            self._play_edges_lbl.configure(text=f"{self.edge_count} edges")
+            self._play_edges_lbl.configure(text=tr("{} edges").format(self.edge_count))
             self._play_time_lbl.configure(text=f"{m2:02d}:{s2:02d}")
 
     def _draw_height_lines(self, frame):
@@ -6825,62 +6824,62 @@ class App:
             ok = bool(self.restim.ws)
             if ok: conn_color = "#00ff00"
             elif conn_color != "#00ff00": conn_color = "#ff0000"
-            parts.append(f"WS: {'OK' if ok else 'Disconnected'}")
+            parts.append(tr("WS: {}").format('OK' if ok else 'Disconnected'))
             if not ok and not help_msg:
-                help_msg = "Restim disconnected — enable its WebSocket server and check the port matches."
+                help_msg = tr("Restim disconnected — enable its WebSocket server and check the port matches.")
         if self.xtoys_on.get():
             if not self.xtoys.enabled:
                 if conn_color != "#00ff00": conn_color = "#ffaa00"
-                parts.append("xToys: No ID")
+                parts.append(tr("xToys: No ID"))
                 if not help_msg:
-                    help_msg = "xToys: paste your Webhook ID from xtoys.app/me → Private Webhook (or tap Get ID)."
+                    help_msg = tr("xToys: paste your Webhook ID from xtoys.app/me → Private Webhook (or tap Get ID).")
             elif self.xtoys.listening:
                 # Script acked over the socket → genuinely running and receiving us.
                 conn_color = "#00ff00"
                 toys = self.xtoys.toys
                 if toys:
                     _t = toys[0] if len(toys) == 1 else f"{toys[0]} +{len(toys) - 1}"
-                    parts.append(f"xToys: Live ({_t})")
+                    parts.append(tr("xToys: Live ({})").format(_t))
                 else:
-                    parts.append("xToys: Live")
+                    parts.append(tr("xToys: Live"))
             elif self.xtoys.connected:
                 # Cloud accepts our POSTs but the script hasn't acked — most likely the
                 # block was stopped (lookalikes: an old copy without the ack, or a wrong
                 # ID). Hence the honest "block STOPPED?" with the "?" + a fuller hint.
                 if conn_color != "#00ff00": conn_color = "#ffaa00"
-                parts.append("xToys: block STOPPED?")
+                parts.append(tr("xToys: block STOPPED?"))
                 if not help_msg:
-                    help_msg = ("xToys reached the cloud but the block didn't answer — press ▶ to run the "
+                    help_msg = tr("xToys reached the cloud but the block didn't answer — press ▶ to run the "
                                 "VisualStimEdger block in your xToys tab (reload it if it's an old copy, or "
                                 "re-check your Webhook ID).")
             else:
                 if conn_color != "#00ff00": conn_color = "#ff0000"
-                parts.append("xToys: Offline")
+                parts.append(tr("xToys: Offline"))
                 if not help_msg:
-                    help_msg = "Can't reach xToys — check your internet connection and Webhook ID."
+                    help_msg = tr("Can't reach xToys — check your internet connection and Webhook ID.")
         if self.audio_on.get():
             if self.win_audio and self.win_audio.connected:
                 conn_color = "#00ff00"
-                parts.append("Audio: OK")
+                parts.append(tr("Audio: OK"))
             else:
-                parts.append("Audio: No Device")
+                parts.append(tr("Audio: No Device"))
         if self.mp3_on.get() and self.music_player:
             self._mp3_update_track_label()
             if self.music_player._state == "playing": conn_color = "#00ff00"
-            parts.append(f"MP3: {self.music_player.track_name or '—'}")
+            parts.append(tr("MP3: {}").format(self.music_player.track_name or '—'))
         if self.hr_on.get():
             sbpm = self._active_hr.smooth_bpm()
             if self._active_hr.connected and sbpm is not None:
-                parts.append(f"\u2665 {sbpm:.0f} bpm")
+                parts.append(tr("\u2665 {} bpm").format(f"{sbpm:.0f}"))
                 if hasattr(self, '_hr_bpm_label'):
                     self._hr_bpm_label.configure(
-                        text=f"\u2665 {sbpm:.0f} bpm",
+                        text=tr("\u2665 {} bpm").format(f"{sbpm:.0f}"),
                         text_color="#e91e63")
             else:
-                parts.append("\u2665 No HR")
+                parts.append(tr("\u2665 No HR"))
                 if hasattr(self, '_hr_bpm_label'):
                     self._hr_bpm_label.configure(
-                        text="\u2665 -- bpm",
+                        text=tr("\u2665 -- bpm"),
                         text_color=self._C_TEXT_DIM)
 
         src_str = " | ".join(parts) if parts else "No output"
@@ -6908,8 +6907,8 @@ class App:
         else:
             yolo_str = "YOLO: --"             # enabled but hasn't detected the head yet
 
-        status_text = (f"State: {state}  |  Vol: {vol_str}  |  {quality_str}"
-                       f"  |  {src_str}  |  {fps:.0f} fps  |  {yolo_str}")
+        status_text = (tr("State: {}  |  Vol: {}  |  {}  |  {}  |  {} fps  |  {}").format(
+                       state, vol_str, quality_str, src_str, f"{fps:.0f}", yolo_str))
         if self._evil_mode:
             status_text += "  |  😈 EVIL"
             conn_color = "#cc0000"
@@ -6926,7 +6925,7 @@ class App:
             _all_unset = all(self.heights.get(k) is None for k in ("Erect", "Flaccid", "Edging"))
             _session_live = self._running and not self._cum_stopped and not getattr(self, 'tracking_paused', False)
             _snark_now = self._snark_label.cget("text")
-            _calib_hint = "💡 Press AUTO to calibrate height lines"
+            _calib_hint = tr("💡 Press AUTO to calibrate height lines")
             if _all_unset and _session_live:
                 if _snark_now == "" or _snark_now == _calib_hint:
                     self._snark_label.configure(text=_calib_hint, text_color="#5ba3c9")
@@ -6938,11 +6937,11 @@ class App:
             _sc = {"Edging": self._C_ACCENT, "Erect": self._C_GREEN, "Flaccid": self._C_BLUE}
             self._play_state_lbl.configure(
                 text=state, text_color=_sc.get(state, self._C_TEXT))
-            self._play_vol_lbl.configure(text=f"Vol: {vol_str}")
+            self._play_vol_lbl.configure(text=tr("Vol: {}").format(vol_str))
             if self.hr_on.get():
                 sbpm2 = self._active_hr.smooth_bpm()
                 self._play_hr_lbl.configure(
-                    text=f"♥ {sbpm2:.0f} bpm" if sbpm2 else "♥ --")
+                    text=tr("♥ {} bpm").format(f"{sbpm2:.0f}") if sbpm2 else "♥ --")
             else:
                 self._play_hr_lbl.configure(text="")
             self._play_snark_lbl.configure(
@@ -6978,7 +6977,7 @@ class App:
             fr = ctk.CTkFrame(t, fg_color="#141414", border_width=2,
                               border_color="#F5A623", corner_radius=10)
             fr.pack(fill=tk.BOTH, expand=True)
-            ctk.CTkLabel(fr, text=f"You've been edging {self.edge_count}+ times, hands-free.",
+            ctk.CTkLabel(fr, text=tr("You've been edging {}+ times, hands-free.").format(self.edge_count),
                          font=ctk.CTkFont(size=13, weight="bold"),
                          text_color=self._C_TEXT).pack(pady=(12, 2), padx=14)
             ctk.CTkLabel(fr, text=tr("Free tool. One guy made it. Tribute your dev? 😈"),
@@ -7073,7 +7072,7 @@ class App:
             return
 
         win = ctk.CTkToplevel(self.root)
-        win.title("🎙 Bondage Mode — Setup")
+        win.title(tr("🎙 Bondage Mode — Setup"))
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
@@ -7306,7 +7305,7 @@ class App:
         P = 12
 
         win = ctk.CTkToplevel(self.root)
-        win.title("🍆 Grid Practice")
+        win.title(tr("🍆 Grid Practice"))
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
@@ -7483,7 +7482,7 @@ class App:
             gs["grid_h"] = ch
             gs["pin_x"] = gs["pin_y"] = None
             depth = len(gs["grid_stack"])
-            status_lbl.configure(text=f"Cell {n} — 'here' to pin · up/down/left/right to nudge · 'back' to step back · 'cancel' to reset")
+            status_lbl.configure(text=tr("Cell {} — 'here' to pin · up/down/left/right to nudge · 'back' to step back · 'cancel' to reset").format(n))
 
         def _confirm_pin():
             gx, gy, gw, gh = gs["grid_x"], gs["grid_y"], gs["grid_w"], gs["grid_h"]
@@ -7503,7 +7502,7 @@ class App:
             hit = stem_left <= pin_cx <= stem_right and stem_top <= pin_cy <= stem_bot
             if hit:
                 gs["score"] += 1
-                score_lbl.configure(text=f"Score: {gs['score']}")
+                score_lbl.configure(text=tr("Score: {}").format(gs['score']))
                 gs["celebrate"] = 45
                 status_lbl.configure(text=tr("🎉 Nice shot!"))
             else:
@@ -7656,7 +7655,7 @@ class App:
                                     hover_color="#4a0a6a", border_color="#9a3aaa",
                                     text_color="white")
         self._snark_label.configure(
-            text=f'🎙 Bondage active — safeword: "{self._bondage_safeword}"',
+            text=tr('🎙 Bondage active — safeword: "{}"').format(self._bondage_safeword),
             text_color="#c080ff")
         log.info(f"Bondage mode started (safeword={self._bondage_safeword!r}, "
                  f"mic={self._bondage_mic_device or 'default'})")
@@ -7693,7 +7692,7 @@ class App:
                      font=ctk.CTkFont(size=26, weight="bold"),
                      text_color="#ff2020").pack(side=tk.LEFT, padx=(0, 12))
         ctk.CTkLabel(sw_inner,
-                     text="hard stop — mic stays on.\nsay \"resume session\" to continue",
+                     text=tr("hard stop — mic stays on.\nsay \"resume session\" to continue"),
                      font=_dim, text_color="#ff8080", justify="left").pack(side=tk.LEFT)
 
         # ── 2-column grid of sections ─────────────────────────────────────────
@@ -7960,7 +7959,7 @@ class App:
         names = {"Erect": "erect", "Flaccid": "flaccid", "Edging": "edging"}
         arrow = "↑" if direction < 0 else "↓"
         self._snark_label.configure(
-            text=f"🎙 {names.get(which, which)} {arrow}  ({int(new_val)}px)",
+            text=tr("🎙 {} {}  ({}px)").format(names.get(which, which), arrow, int(new_val)),
             text_color="#c080ff")
         log.info(f"Voice: {which} line → {new_val}px")
 
@@ -8089,7 +8088,7 @@ class App:
             self.rel_box = new_rel_box
             self._reset_heights()
             self._snark_label.configure(
-                text=f"🎙 Source → {title[:30]}… — say 'find head' to reanchor",
+                text=tr("🎙 Source → {}… — say 'find head' to reanchor").format(title[:30]),
                 text_color="#3EC941")
             log.info(f"Source switched to hwnd={hwnd} '{title}'")
             # Kick grid so user can reanchor head hands-free
@@ -8145,7 +8144,7 @@ class App:
         self._grid_region = (rx + c * cw, ry + r * ch, cw, ch)
         self._grid_depth  = min(self._grid_depth + 1, 3)
         self._snark_label.configure(
-            text=f"🎙 Grid cell {cell} (zoom {self._grid_depth}) — say 'here' to lock, or zoom more",
+            text=tr("🎙 Grid cell {} (zoom {}) — say 'here' to lock, or zoom more").format(cell, self._grid_depth),
             text_color="#c080ff")
         log.info(f"Grid zoom: cell={cell} region={self._grid_region} depth={self._grid_depth}")
 
@@ -8208,7 +8207,7 @@ class App:
         self._save_config()
         n = len(self._exclusion_zones)
         self._snark_label.configure(
-            text=f"🎙 Exclusion zone added ({n} total) — say 'clear exclude' to remove all",
+            text=tr("🎙 Exclusion zone added ({} total) — say 'clear exclude' to remove all").format(n),
             text_color="#3EC941")
         log.info(f"Voice: exclusion zone added ({rx},{ry},{rw},{rh}), total={n}")
 
@@ -8415,7 +8414,7 @@ def show_splash() -> bool:
 
     tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
              bg=BG, fg=TEXT).pack(pady=(P, 2))
-    tk.Label(root, text=f"v{VERSION}  ·  edge smarter", font=f_sub,
+    tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
              bg=BG, fg=DIM).pack(pady=(0, P//2))
 
     card = tk.Frame(root, bg=CARD, padx=16, pady=12)
@@ -8456,7 +8455,7 @@ def show_splash() -> bool:
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
              font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
 
-    btn = tk.Button(root, text="I'm ready — select my camera feed  \u2192",
+    btn = tk.Button(root, text=tr("I'm ready — select my camera feed  \u2192"),
                     font=f_btn, bg=RED, fg="white", activebackground="#cc3636",
                     activeforeground="white", relief="flat", bd=0,
                     cursor="hand2", command=_start, pady=12)
