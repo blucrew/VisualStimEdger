@@ -220,7 +220,7 @@ VERSION = "1.9.3"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
-TCODE_AXIS = 'L0'
+TCODE_AXIS = 'V0'
 VOLUME_STEP = 0.05
 VOLUME_UPDATE_INTERVAL = 0.5
 
@@ -4276,6 +4276,7 @@ class App:
         """Actual cum logic — called after undo window expires or immediately for voice."""
         if not self._cum_undo_active and self._cum_stopped:
             # Already stopped (e.g. called twice); nothing to do
+            log.info("_cum_confirm: no-op — already stopped (stray cum-button click in refractory?)")
             return
         self._cum_undo_active = False
         self._cum_undo_job    = None
@@ -4308,14 +4309,14 @@ class App:
             self._refractory_until = time.time() + self._refractory_mins * 60
             self._cum_btn.configure(
                 text=f"Refractory: {self._refractory_mins}:00\n(click to skip)",
-                command=self._on_resume,
+                command=self._on_resume, state="normal",
                 fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                 text_color=self._C_TEXT_DIM)
             btn = getattr(self, '_play_cum_btn', None)
             if btn:
                 btn.configure(
                     text=f"Refractory: {self._refractory_mins}:00",
-                    command=self._on_resume,
+                    command=self._on_resume, state="normal",
                     fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                     text_color=self._C_TEXT_DIM)
             self.root.after(1000, self._tick_refractory)
@@ -4352,6 +4353,7 @@ class App:
 
     def _on_resume(self):
         """Restart the edging loop — called by refractory auto-expire or manual skip."""
+        log.info("_on_resume: skip/resume invoked (cum_stopped=%s)", self._cum_stopped)
         self._cum_stopped = False
         self._cum_time = None
         self._refractory_until = 0.0
