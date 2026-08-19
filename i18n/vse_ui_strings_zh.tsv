@@ -228,11 +228,11 @@ Zoom in first — say a number!	先放大 — 说个数字!
 💡 Press AUTO to calibrate height lines	💡 按 AUTO 校准高度线
 📁 Load File	📁 加载文件
 📂 Load Folder	📂 加载文件夹
-📷 AUTO	📷 AUTO
-📷 AUTO  (flaccid set, need more range)	AUTO（疲软区 已设定，需更大范围）
-📷 AUTO  (observing...)	📷 AUTO  (观察中...)
-📷 AUTO  (off)	📷 AUTO  (关闭)
-📷 AUTO  ✓	📷 AUTO  ✓
+📷 AUTO	📷 自动
+📷 AUTO  (flaccid set, need more range)	📷 自动（疲软区已设定，需更大范围）
+📷 AUTO  (observing...)	📷 自动  (观察中...)
+📷 AUTO  (off)	📷 自动  (关闭)
+📷 AUTO  ✓	📷 自动  ✓
 🔁 Active Edging (auto-ramp)	🔁 主动边缘控制（自动递增）
 🔁 Active Edging off	🔁 主动边缘控制关闭
 🔁 Active Edging on — ramps up after {}s off the edge ({})	🔁 主动边缘已开启 — ramps up after {}s off the edge ({})
@@ -248,3 +248,26 @@ Language	语言
 Edging	边缘
 Erect	勃起
 Flaccid	疲软
+Performance	性能
+Tracking engine	追踪引擎
+Tracking resolution	追踪分辨率
+Lock by look (experimental)	按外观锁定（实验性）
+Classic = the proven tracker (default). Deep = an experimental neural tracker — more robust in clean tests, but it can balloon its box on smooth targets; still being validated. Stick with Classic for now.	Classic = 经过验证的追踪器（默认）. Deep = 实验性的神经网络追踪器 — 在干净的测试中更稳健,但在平滑目标上可能会撑大它的框; 仍在验证中. 目前建议继续使用 Classic.
+Lower = faster on slow PCs. Downscales the frame before tracking, not the video you watch. If your FPS is low, try Fast or Fastest.	越低 = 在慢速电脑上越快. 只缩小送去追踪的画面,不影响你看到的视频. 如果帧率偏低,试试 Fast 或 Fastest.
+Tracks by colour/darkness instead of the tracker. Only worth it with a genuinely distinct marker — a matte lime / teal / hot-pink sticker. It can't tell a red/yellow/black target from skin. Off = normal tracking.	用颜色/暗度来追踪,而不是用追踪器. 只有当标记颜色真正独特时才值得用 — 哑光的青柠/蓝绿/亮粉色贴纸. 它无法把红/黄/黑色目标和皮肤区分开. 关闭 = 正常追踪.
+Easy	简单
+Middle	中等
+Hard	困难
+Expert	专家
+Recover %/s	恢复 %/秒
+Hold s	保持 秒
+Ramp %/s	爬升 %/秒
+Settings...	设置...
+About	关于
+GitHub (latest release)	GitHub（最新版本）
+Ko-fi (support)	Ko-fi（支持）
+ceil	上限
+floor	下限
+Track: OK	追踪: 正常
+Track: LOST	追踪: 丢失
+Disconnected	已断开

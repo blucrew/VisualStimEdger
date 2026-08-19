@@ -2436,8 +2436,8 @@ class App:
         settings_menu = tk.Menu(menubar, tearoff=0,
                                 bg=self._C_BG, fg=self._C_TEXT,
                                 activebackground=self._C_ACCENT, activeforeground="white")
-        settings_menu.add_command(label="Settings...", command=self._open_settings)
-        menubar.add_cascade(label="Settings", menu=settings_menu)
+        settings_menu.add_command(label=tr("Settings..."), command=self._open_settings)
+        menubar.add_cascade(label=tr("Settings"), menu=settings_menu)
 
         about_menu = tk.Menu(menubar, tearoff=0,
                              bg=self._C_BG, fg=self._C_TEXT,
@@ -2445,11 +2445,11 @@ class App:
         about_menu.add_command(label=f"Version  v{VERSION}", state="disabled")
         about_menu.add_command(label="Dev: Sir Thorn", state="disabled")
         about_menu.add_separator()
-        about_menu.add_command(label="GitHub (latest release)",
+        about_menu.add_command(label=tr("GitHub (latest release)"),
                                command=lambda: webbrowser.open("https://github.com/blucrew/VisualStimEdger/releases/latest"))
-        about_menu.add_command(label="Ko-fi (support)",
+        about_menu.add_command(label=tr("Ko-fi (support)"),
                                command=lambda: webbrowser.open("https://ko-fi.com/stimstation"))
-        menubar.add_cascade(label="About", menu=about_menu)
+        menubar.add_cascade(label=tr("About"), menu=about_menu)
 
         root.configure(menu=menubar)
 
@@ -2669,7 +2669,7 @@ class App:
 
         ctk.CTkLabel(vol_col, text=tr("VOL\nRANGE"), font=_tiny,
                      text_color=self._C_TEXT_DIM, justify="center").pack(pady=(6, 0))
-        ctk.CTkLabel(vol_col, text="ceil", font=_tiny,
+        ctk.CTkLabel(vol_col, text=tr("ceil"), font=_tiny,
                      text_color=self._C_TEXT_DIM).pack()
 
         _track_w_v = 4
@@ -2679,7 +2679,7 @@ class App:
                                    highlightthickness=0)
         self._range_cv.pack(fill=tk.Y, expand=True, padx=4, pady=2)
 
-        ctk.CTkLabel(vol_col, text="floor", font=_tiny,
+        ctk.CTkLabel(vol_col, text=tr("floor"), font=_tiny,
                      text_color=self._C_TEXT_DIM).pack(pady=(0, 2))
         self._range_lbl = ctk.CTkLabel(vol_col, text="0%\n–\n100%", font=_tiny,
                                        text_color=self._C_YELLOW, wraplength=40, justify="center")
@@ -3143,13 +3143,13 @@ class App:
                 **kw,
             )
 
-        self._hold_btn = _ghost_btn(ctrl, "Hold Volume", self._toggle_hold,
+        self._hold_btn = _ghost_btn(ctrl, tr("Hold Volume"), self._toggle_hold,
                                     font=ctk.CTkFont(size=10, weight="bold"), width=120)
         self._hold_btn.pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(self._hold_btn, tr("Freeze volume at current level — tracking continues but volume won't change"))
         self._about_btn = _ghost_btn(ctrl, "ⓘ", self._show_about_menu, width=34)
         self._about_btn.pack(side=tk.LEFT, padx=(4, 0))
-        self._play_btn = _ghost_btn(ctrl, "▶ Play", self._toggle_play_mode, width=60)
+        self._play_btn = _ghost_btn(ctrl, tr("▶ Play"), self._toggle_play_mode, width=60)
         self._play_btn.pack(side=tk.LEFT, padx=(4, 0))
         Tooltip(self._play_btn, tr("Play Mode — minimal immersive view; hides settings"))
         self._bondage_btn = ctk.CTkButton(
@@ -3241,7 +3241,7 @@ class App:
 
         row1 = ctk.CTkFrame(pp, fg_color="transparent")
         row1.pack(fill=tk.X, padx=P, pady=(0, 4))
-        self._play_hold_btn = _pbtn(row1, "Hold Volume", self._toggle_hold,
+        self._play_hold_btn = _pbtn(row1, tr("Hold Volume"), self._toggle_hold,
                                     self._C_SURFACE2, "#4a4a4a")
         self._play_hold_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
         self._play_letmecum_btn = _pbtn(row1, "Let me cum?", self._on_letmecum,
@@ -4895,13 +4895,13 @@ class App:
 
         # ── xToys ─────────────────────────────────────────────────────────────
         # ── Performance ───────────────────────────────────────────────────────
-        ctk.CTkLabel(sf, text="Performance",
+        ctk.CTkLabel(sf, text=tr("Performance"),
                      font=lbl, text_color=self._C_TEXT).pack(padx=16, pady=(12, 4), anchor="w")
         perf_frame = ctk.CTkFrame(sf, fg_color=self._C_SURFACE, corner_radius=8)
         perf_frame.pack(fill=tk.X, padx=16, pady=(0, 8))
         eng_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
         eng_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(eng_row, text="Tracking engine", font=lbl,
+        ctk.CTkLabel(eng_row, text=tr("Tracking engine"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self._tracker_var = tk.StringVar(
             value="Deep" if self._tracker_backend == "vit" else "Classic")
@@ -4914,14 +4914,14 @@ class App:
         ).pack(side=tk.RIGHT)
         ctk.CTkLabel(
             perf_frame,
-            text="Classic = the proven tracker (default). Deep = an experimental neural "
+            text=tr("Classic = the proven tracker (default). Deep = an experimental neural "
                  "tracker — more robust in clean tests, but it can balloon its box on "
-                 "smooth targets; still being validated. Stick with Classic for now.",
+                 "smooth targets; still being validated. Stick with Classic for now."),
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 8), anchor="w")
         perf_row = ctk.CTkFrame(perf_frame, fg_color="transparent")
         perf_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        ctk.CTkLabel(perf_row, text="Tracking resolution", font=lbl,
+        ctk.CTkLabel(perf_row, text=tr("Tracking resolution"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         ctk.CTkSegmentedButton(
             perf_row, values=list(self._PROC_PRESETS.keys()),
@@ -4932,8 +4932,8 @@ class App:
         ).pack(side=tk.RIGHT)
         ctk.CTkLabel(
             perf_frame,
-            text="Lower = faster on slow PCs. Downscales the frame before tracking, "
-                 "not the video you watch. If your FPS is low, try Fast or Fastest.",
+            text=tr("Lower = faster on slow PCs. Downscales the frame before tracking, "
+                 "not the video you watch. If your FPS is low, try Fast or Fastest."),
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
 
@@ -4944,7 +4944,7 @@ class App:
         cl_row.pack(fill=tk.X, padx=12, pady=(2, 0))
         self._color_lock_var = tk.BooleanVar(value=self._color_lock)
         ctk.CTkSwitch(
-            cl_row, text="Lock by look (experimental)",
+            cl_row, text=tr("Lock by look (experimental)"),
             variable=self._color_lock_var, command=self._on_color_lock_toggle,
             font=ctk.CTkFont(size=11), text_color=self._C_TEXT,
             button_color=self._C_ACCENT, fg_color=self._C_SURFACE2,
@@ -4954,9 +4954,9 @@ class App:
         self._color_swatch_lbl.pack(side=tk.LEFT, padx=(6, 0))
         ctk.CTkLabel(
             perf_frame,
-            text="Tracks by colour/darkness instead of the tracker. Only worth it with a "
+            text=tr("Tracks by colour/darkness instead of the tracker. Only worth it with a "
                  "genuinely distinct marker — a matte lime / teal / hot-pink sticker. It "
-                 "can't tell a red/yellow/black target from skin. Off = normal tracking.",
+                 "can't tell a red/yellow/black target from skin. Off = normal tracking."),
             font=ctk.CTkFont(size=10), text_color=self._C_TEXT_DIM,
             wraplength=440, justify="left").pack(padx=12, pady=(0, 10), anchor="w")
 
@@ -5086,7 +5086,7 @@ class App:
         _hdr.pack(fill=tk.X, padx=12, pady=(0, 0))
         ctk.CTkLabel(_hdr, text="", width=64, anchor="w").pack(side=tk.LEFT)
         for _c in ("Recover %/s", "Hold s", "Ramp %/s"):
-            ctk.CTkLabel(_hdr, text=_c, font=ctk.CTkFont(size=9),
+            ctk.CTkLabel(_hdr, text=tr(_c), font=ctk.CTkFont(size=9),
                          text_color=self._C_TEXT_DIM, width=72,
                          anchor="center").pack(side=tk.LEFT, padx=4)
 
@@ -5094,7 +5094,7 @@ class App:
         for level in ("Easy", "Middle", "Hard", "Expert"):
             row = ctk.CTkFrame(edge_frame, fg_color="transparent")
             row.pack(fill=tk.X, padx=12, pady=2)
-            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+            ctk.CTkLabel(row, text=tr(level), font=lbl, text_color=self._C_TEXT,
                          width=64, anchor="w").pack(side=tk.LEFT)
             rec_vars[level]  = tk.DoubleVar(value=self._recovery_pct.get(level, 1.6))
             hold_vars[level] = tk.IntVar(value=self._ae_hold_secs.get(level, 10))
@@ -5201,7 +5201,7 @@ class App:
         for level in ("Easy", "Middle", "Hard", "Expert"):
             row = ctk.CTkFrame(hf_frame, fg_color="transparent")
             row.pack(fill=tk.X, padx=12, pady=3)
-            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+            ctk.CTkLabel(row, text=tr(level), font=lbl, text_color=self._C_TEXT,
                          width=70, anchor="w").pack(side=tk.LEFT)
             min_var = tk.IntVar(value=self._hf_min_edges.get(level, 0))
             hf_min_vars[level] = min_var
@@ -5265,7 +5265,7 @@ class App:
         for level in ("Easy", "Middle", "Hard", "Expert"):
             row = ctk.CTkFrame(ruin_odds_frame, fg_color="transparent")
             row.pack(fill=tk.X, padx=12, pady=4)
-            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+            ctk.CTkLabel(row, text=tr(level), font=lbl, text_color=self._C_TEXT,
                          width=70, anchor="w").pack(side=tk.LEFT)
             ctk.CTkLabel(row, text="%", font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
@@ -5295,7 +5295,7 @@ class App:
         for level in ("Easy", "Middle", "Hard", "Expert"):
             row = ctk.CTkFrame(odds_frame, fg_color="transparent")
             row.pack(fill=tk.X, padx=12, pady=4)
-            ctk.CTkLabel(row, text=level, font=lbl, text_color=self._C_TEXT,
+            ctk.CTkLabel(row, text=tr(level), font=lbl, text_color=self._C_TEXT,
                          width=70, anchor="w").pack(side=tk.LEFT)
             ctk.CTkLabel(row, text=tr("1 in"), font=ctk.CTkFont(size=10),
                          text_color=self._C_TEXT_DIM).pack(side=tk.LEFT, padx=(0, 4))
@@ -6815,7 +6815,7 @@ class App:
             self.music_player.adjust_volume(delta, floor=floor_val, ceiling=ceil_val)
 
     def _update_status_label(self, state):
-        quality_str = "Track: OK" if self.tracking_ok else "Track: LOST"
+        quality_str = tr("Track: OK") if self.tracking_ok else tr("Track: LOST")
         parts = []
         conn_color = "#ffaa00"
         help_msg = ""   # contextual fix-it line under the status; blank when healthy
@@ -6824,7 +6824,7 @@ class App:
             ok = bool(self.restim.ws)
             if ok: conn_color = "#00ff00"
             elif conn_color != "#00ff00": conn_color = "#ff0000"
-            parts.append(tr("WS: {}").format('OK' if ok else 'Disconnected'))
+            parts.append(tr("WS: {}").format('OK' if ok else tr('Disconnected')))
             if not ok and not help_msg:
                 help_msg = tr("Restim disconnected — enable its WebSocket server and check the port matches.")
         if self.xtoys_on.get():
