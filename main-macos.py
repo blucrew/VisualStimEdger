@@ -2970,7 +2970,7 @@ class App:
                         self.music_player.stop()
                 self._on_output_change()
                 self._update_output_btns()
-            b = ctk.CTkButton(mbf, text=mode_label, command=_toggle,
+            b = ctk.CTkButton(mbf, text=tr(mode_label), command=_toggle,
                               font=ctk.CTkFont(size=11), height=28, corner_radius=4,
                               fg_color=color, hover_color=hover,
                               text_color="white", width=10)
@@ -7006,7 +7006,7 @@ class App:
             yolo_str = "YOLO: --"             # enabled but hasn't detected the head yet
 
         status_text = (tr("State: {}  |  Vol: {}  |  {}  |  {}  |  {} fps  |  {}").format(
-                       state, vol_str, quality_str, src_str, f"{fps:.0f}", yolo_str))
+                       tr(state), vol_str, quality_str, src_str, f"{fps:.0f}", yolo_str))
         if self._evil_mode:
             status_text += "  |  😈 EVIL"
             conn_color = "#cc0000"
