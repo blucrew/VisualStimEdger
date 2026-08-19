@@ -8317,7 +8317,7 @@ def show_splash() -> bool:
     # ── PNG path (bundled resource) ────────────────────────────────────────────
     splash_path = pathlib.Path(resource_path("splash.png"))
 
-    if splash_path.exists():
+    if splash_path.exists() and not _CATALOG:
         try:
             from PIL import Image, ImageDraw, ImageFont, ImageTk
 
@@ -8474,14 +8474,14 @@ def show_splash() -> bool:
                  width=2, relief="flat").pack(side="left", anchor="n", padx=(0, 8))
         col = tk.Frame(row, bg=CARD)
         col.pack(side="left", fill="x", expand=True)
-        tk.Label(col, text=title, font=f_head, bg=CARD,
+        tk.Label(col, text=tr(title), font=f_head, bg=CARD,
                  fg=TEXT, anchor="w", wraplength=420).pack(anchor="w", padx=(8, 0))
-        tk.Label(col, text=body, font=f_body, bg=CARD,
+        tk.Label(col, text=tr(body), font=f_body, bg=CARD,
                  fg=SUBDIM, anchor="w", justify="left", wraplength=420).pack(anchor="w", padx=(8, 0))
 
     tk.Label(root,
-             text="Controls volume only — does not generate e-stim signals.\n"
-                  "You need Restim, xToys, electron-redrive, an .mp3, etc. already running.",
+             text=tr("Controls volume only — does not generate e-stim signals.\n"
+                  "You need Restim, xToys, electron-redrive, an .mp3, etc. already running."),
              font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
 
     btn = tk.Button(root, text=tr("I'm ready — select my camera feed  \u2192"),
