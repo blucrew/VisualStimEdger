@@ -2548,11 +2548,11 @@ class App:
             row.pack(fill=tk.X, pady=1)
             row.columnconfigure(0, weight=1, uniform="hbtn")
             row.columnconfigure(1, weight=1, uniform="hbtn")
-            ctk.CTkButton(row, text=f"📷 {text}", command=set_cmd, font=btn, height=28,
+            ctk.CTkButton(row, text=f"📷 {tr(text)}", command=set_cmd, font=btn, height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
                           ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
-            ctk.CTkButton(row, text="Manual \u271a", command=pick_cmd, font=ctk.CTkFont(size=10),
+            ctk.CTkButton(row, text=tr("Manual \u271a"), command=pick_cmd, font=ctk.CTkFont(size=10),
                           height=28,
                           fg_color=color, hover_color=hover,
                           text_color="white", corner_radius=4
@@ -8548,6 +8548,16 @@ def main():
 
     log.info(f"VisualStimEdger v{VERSION} starting")
     log.info(f"Log file: {log_path}")
+
+    # Load the UI language up-front so the pre-app screens (region/head selection,
+    # their window titles) localise too — the App re-loads it in __init__; this
+    # just moves it ahead of show_splash()/select_region()/select_head().
+    try:
+        _lang0 = (json.loads(CONFIG_PATH.read_text(encoding="utf-8")).get("language", "en")
+                  if CONFIG_PATH.exists() else "en")
+    except Exception:
+        _lang0 = "en"
+    _load_catalog(_lang0 if isinstance(_lang0, str) else "en")
 
     # Native-crash tracer. A segfault in a C extension (OpenCV, Tk, pycaw)
     # kills the process below Python's level — no traceback in vse.log. faulthandler
