@@ -2390,6 +2390,35 @@ class App:
         the app shuts down. Drained by _pump_ui_queue."""
         self._ui_queue.put((fn, args))
 
+    def _localized_seg(self, parent, values_en, variable, command=None, **kw):
+        """A CTkSegmentedButton that DISPLAYS tr(value) but keeps `variable` holding
+        the English value, so the ~90 logic/config sites reading variable.get() are
+        untouched — only the on-screen label is translated. Config stays English."""
+        disp = [tr(v) for v in values_en]
+        en_by_disp = dict(zip(disp, values_en))
+        dvar = tk.StringVar(value=tr(variable.get()))
+        guard = {"busy": False}
+
+        def _on_click(choice):
+            en = en_by_disp.get(choice, values_en[0])
+            guard["busy"] = True
+            variable.set(en)               # logic/config var stays English
+            guard["busy"] = False
+            if command:
+                command(en)
+
+        seg = ctk.CTkSegmentedButton(parent, values=disp, variable=dvar,
+                                     command=_on_click, **kw)
+
+        def _sync(*_):                     # external set (config load) -> refresh display
+            if guard["busy"]:
+                return
+            want = tr(variable.get())
+            if dvar.get() != want:
+                dvar.set(want)
+        variable.trace_add("write", _sync)
+        return seg
+
     def _pump_ui_queue(self):
         """Run background→main calls on the Tk thread, then reschedule itself."""
         try:
@@ -2823,9 +2852,9 @@ class App:
         )
         self._evil_btn.pack(side=tk.RIGHT, padx=(4, 0))
         Tooltip(self._evil_btn, "Evil Mode — adds ruin outcome, crimson theme, and devil.png overlay")
-        self._aggr_seg = ctk.CTkSegmentedButton(
-            aggr_row, values=list(AGGR_LEVELS.keys()), variable=self.aggr_var,
-            command=self._on_aggr_change,
+        self._aggr_seg = self._localized_seg(
+            aggr_row, list(AGGR_LEVELS.keys()), self.aggr_var,
+            self._on_aggr_change,
             selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
             unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
             font=ctk.CTkFont(size=11, weight="bold"),
@@ -4905,9 +4934,9 @@ class App:
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
         self._tracker_var = tk.StringVar(
             value="Deep" if self._tracker_backend == "vit" else "Classic")
-        ctk.CTkSegmentedButton(
-            eng_row, values=["Deep", "Classic"],
-            variable=self._tracker_var, command=self._on_tracker_backend_change,
+        self._localized_seg(
+            eng_row, ["Deep", "Classic"],
+            self._tracker_var, self._on_tracker_backend_change,
             selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
             unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=self._C_TEXT,
@@ -4923,9 +4952,9 @@ class App:
         perf_row.pack(fill=tk.X, padx=12, pady=(10, 4))
         ctk.CTkLabel(perf_row, text=tr("Tracking resolution"), font=lbl,
                      text_color=self._C_TEXT).pack(side=tk.LEFT)
-        ctk.CTkSegmentedButton(
-            perf_row, values=list(self._PROC_PRESETS.keys()),
-            variable=self.proc_res_var, command=self._on_proc_res_change,
+        self._localized_seg(
+            perf_row, list(self._PROC_PRESETS.keys()),
+            self.proc_res_var, self._on_proc_res_change,
             selected_color=self._C_ACCENT, selected_hover_color=self._C_ACCENT_H,
             unselected_color=self._C_SURFACE2, unselected_hover_color="#4a4a4a",
             font=ctk.CTkFont(size=11, weight="bold"), text_color=self._C_TEXT,
