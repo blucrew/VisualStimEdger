@@ -8544,14 +8544,14 @@ def show_splash() -> bool:
         col = tk.Frame(row, bg=CARD)
         col.pack(side="left", fill="x", expand=True)
         tk.Label(col, text=tr(title), font=f_head, bg=CARD,
-                 fg=TEXT, anchor="w", wraplength=420).pack(anchor="w", padx=(8, 0))
+                 fg=TEXT, anchor="w", wraplength=600).pack(anchor="w", padx=(8, 0))
         tk.Label(col, text=tr(body), font=f_body, bg=CARD,
-                 fg=SUBDIM, anchor="w", justify="left", wraplength=420).pack(anchor="w", padx=(8, 0))
+                 fg=SUBDIM, anchor="w", justify="left", wraplength=600).pack(anchor="w", padx=(8, 0))
 
     tk.Label(root,
              text=tr("Controls volume only — does not generate e-stim signals.\n"
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running."),
-             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=500).pack(pady=(4, 12))
+             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=640).pack(pady=(4, 12))
 
     btn = tk.Button(root, text=tr("I'm ready — select my camera feed  \u2192"),
                     font=f_btn, bg=RED, fg="white", activebackground="#cc3636",
@@ -8560,10 +8560,12 @@ def show_splash() -> bool:
     btn.pack(fill="x", padx=P, pady=(0, P))
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
-    W, H = 580, 640
+    root.update_idletasks()
+    W = max(700, root.winfo_reqwidth())      # fat rectangle, never thinner than the OG
+    H = root.winfo_reqheight()               # auto-fit so the Start button is never cut off
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
-    root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+    root.geometry(f"{W}x{H}+{(sw - W) // 2}+{max(0, (sh - H) // 2)}")
     root.attributes("-topmost", True)
     root.after(400, lambda: root.attributes("-topmost", False))
     root.mainloop()
