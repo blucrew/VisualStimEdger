@@ -8277,6 +8277,13 @@ class App:
         self.video_label.configure(image=imgtk)
 
 
+# The splash renders two ways: a baked splash.png (English-only — the text is part of
+# the image, so it can't localise) or live tkinter widgets (every string via tr(), so it
+# localises and auto-sizes). We now use the widget splash for ALL languages so English
+# matches the localised look. Flip this to True to bring the designed PNG back for English.
+_SPLASH_USE_PNG = False
+
+
 def show_splash() -> bool:
     """Welcome / setup checklist screen. Returns True if user clicked Start.
 
@@ -8317,7 +8324,7 @@ def show_splash() -> bool:
     # ── PNG path (bundled resource) ────────────────────────────────────────────
     splash_path = pathlib.Path(resource_path("splash.png"))
 
-    if splash_path.exists() and not _CATALOG:
+    if _SPLASH_USE_PNG and splash_path.exists() and not _CATALOG:
         try:
             from PIL import Image, ImageDraw, ImageFont, ImageTk
 
@@ -8422,7 +8429,7 @@ def show_splash() -> bool:
         except Exception as e:
             log.warning(f"splash.png display failed ({e}) — falling back to widget splash")
 
-    # ── Widget fallback ────────────────────────────────────────────────────────
+    # ── Widget splash (all languages; English included) ─────────────────────────
     BG       = "#0d0d0d"
     CARD     = "#1a1a1a"
     RED      = "#FF4444"
