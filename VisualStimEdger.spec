@@ -11,6 +11,11 @@ datas = [
     ('splash_logo_meta.json',   '.'),
     ('overlay.html',            '.'),
     ('i18n/vse_ui_strings_zh.tsv', 'i18n'),
+    ('i18n/vse_ui_strings_es.tsv', 'i18n'),
+    ('i18n/vse_ui_strings_de.tsv', 'i18n'),
+    ('i18n/vse_ui_strings_fr.tsv', 'i18n'),
+    ('i18n/vse_ui_strings_ru.tsv', 'i18n'),
+    ('i18n/vse_ui_strings_pt.tsv', 'i18n'),
 ]
 binaries = []
 hiddenimports = [

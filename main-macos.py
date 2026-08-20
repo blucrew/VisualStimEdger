@@ -260,7 +260,7 @@ class DickDetector:
         return None
 
 # --- CONFIGURATION ---
-VERSION = "1.9.4"
+VERSION = "1.9.5"
 GITHUB_REPO = "blucrew/VisualStimEdger"
 RESTIM_HOST = '127.0.0.1'
 RESTIM_PORT = 12346
@@ -4888,13 +4888,25 @@ class App:
         ctk.CTkLabel(appear_frame, text=tr("Language"),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=self._C_TEXT_DIM).pack(padx=12, pady=(0, 2), anchor="w")
-        _LANG_LABELS = {"en": "English", "zh": "中文"}
+        _LANG_LABELS = {"en": "English", "zh": "中文", "es": "Español",
+                        "de": "Deutsch", "fr": "Français", "ru": "Русский",
+                        "pt": "Português"}
         _lang_code_by_label = {v: k for k, v in _LANG_LABELS.items()}
         lang_var = tk.StringVar(value=_LANG_LABELS.get(self._language, "English"))
-        ctk.CTkSegmentedButton(
+        ctk.CTkOptionMenu(
             appear_frame, values=list(_LANG_LABELS.values()), variable=lang_var,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill=tk.X, padx=12, pady=(0, 4))
+            font=ctk.CTkFont(size=11), dropdown_font=ctk.CTkFont(size=11),
+        ).pack(fill=tk.X, padx=12, pady=(0, 2))
+        # Non-English is machine-translated; invite corrections (nobody volunteered to
+        # review, but people love to correct — so make reporting an error one click).
+        _tr_note = ctk.CTkLabel(
+            appear_frame, justify="left", font=ctk.CTkFont(size=9),
+            text_color=self._C_TEXT_DIM, cursor="hand2",
+            text=tr("Español · Deutsch · Français · Русский · Português are\n"
+                    "machine-translated — spot an error? Click to report it."))
+        _tr_note.pack(padx=12, pady=(0, 4), anchor="w")
+        _tr_note.bind("<Button-1>", lambda e: webbrowser.open(
+            "https://github.com/blucrew/VisualStimEdger/issues"))
 
         # Apply button
         def _apply_appearance():
