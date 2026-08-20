@@ -1,0 +1,290 @@
+en	fr
+"Let me cum?" Odds  (1 in N chance)	Probabilité de "Je peux jouir ?"  (1 sur N)
+(single word)	(un seul mot)
+(up to 6 seconds)	(jusqu’à 6 secondes)
+0 edges	0 edges
+1 in	1 sur
+1-in-N chance	probabilité 1 sur N
+1–9  zoom in    •    here  confirm    •    back  step back    •    cancel  reset	1–9  zoomer    •    "here"  confirmer    •    "back"  revenir    •    "cancel"  réinitialiser
+? Setup Guide	? Guide de configuration
+After you back off the edge and hold for the configured time (Settings → Edging behaviour), volume ramps back toward your max until you edge again — then the cycle repeats. Off = normal reactive mode.	Quand tu t’éloignes du bord et que tu tiens le temps configuré (Paramètres → Comportement du bord), le volume remonte vers ton maximum jusqu’à ce que tu reviennes au bord — puis le cycle recommence. Désactivé = mode réactif normal.
+Aggressiveness	Agressivité
+Already at full view!	Déjà en vue complète !
+Appearance	Apparence
+Apply (restarts app)	Appliquer (redémarre l’app)
+Audio: No Device	Audio : Aucun périphérique
+Audio: OK	Audio : OK
+Auto-calibrate heights by observing motion range	Calibrer les hauteurs automatiquement en observant l’amplitude de mouvement
+Auto-Cum Detection	Détection automatique de l’orgasme
+Auto-detect cum	Détecter l’orgasme automatiquement
+Back to full view — navigate to the 🌿 stem!	Retour à la vue complète — navigue vers la tige 🌿 !
+Before you hit Start	Avant d’appuyer sur Démarrer
+BLE Direct	BLE direct
+BLE HR — Scan	BLE FC — Scanner
+Bondage Mode — hands-free voice control (requires Vosk model)	Mode Bondage — commande vocale mains libres (nécessite le modèle Vosk)
+Calibration	Calibration
+Calibration — set all 3 (required)	Calibration — règle les 3 (obligatoire)
+Can't reach xToys — check your internet connection and Webhook ID.	Impossible de joindre xToys — vérifie ta connexion internet et le Webhook ID.
+Cancel	Annuler
+Cell {} — 'here' to pin · up/down/left/right to nudge · 'back' to step back · 'cancel' to reset	Cellule {} — "here" pour épingler · "up/down/left/right" pour ajuster · "back" pour revenir · "cancel" pour réinitialiser
+Close	Fermer
+Configure your microphone and safeword before the session starts.	Configure ton microphone et ton mot de sécurité avant que la séance commence.
+Confirm Head Area ✅	Confirmer la zone de la tête ✅
+Connect	Connecter
+Continue →	Continuer →
+Controls how fast volume ramps and 'Let me cum?' odds.\nEasy: gentle ramps, 1-in-2 odds, 5 min grant\nMiddle: moderate ramps, 1-in-4 odds, 5 min grant\nHard: fast ramps, 1-in-6 odds, 3 min grant\nExpert: aggressive ramps, 1-in-30 odds, 1 min grant	Contrôle la vitesse de montée du volume et les chances de "Je peux jouir ?".\nFacile : montées douces, 1 sur 2, permission de 5 min\nMoyen : montées modérées, 1 sur 4, permission de 5 min\nDifficile : montées rapides, 1 sur 6, permission de 3 min\nExpert : montées agressives, 1 sur 30, permission de 1 min
+Cooldown after I've CUM	Temps de repos après avoir joui
+Copied!	Copié !
+Copy	Copier
+Countdown delay	Délai du compte à rebours
+CUM NOW! {}:00	JOUIS MAINTENANT ! {}:00
+CUM NOW! {}:{}	JOUIS MAINTENANT ! {}:{}
+Cum Volume Behavior	Comportement du volume à la jouissance
+Default mic device:	Micro par défaut :
+Default safeword:	Mot de sécurité par défaut :
+Denial Phrases  (one per line)	Phrases de refus  (une par ligne)
+DENIED!	REFUSÉ !
+Detection sensitivity	Sensibilité de détection
+Device:	Périphérique :
+Download	Télécharger
+Drag handles to set volume floor (bottom) and ceiling (top).\nGreen triangle = where 'Let me cum?' sends volume.\nChange override behavior in Settings > Cum Volume Behavior.	Fais glisser les poignées pour régler le plancher (bas) et le plafond (haut) du volume.\nTriangle vert = où "Je peux jouir ?" envoie le volume.\nChange le comportement dans Paramètres > Comportement du volume à la jouissance.
+Draw a rectangle on the video feed — YOLO reanchor detections inside it will be ignored	Dessine un rectangle sur le flux vidéo — les détections de réancrage YOLO à l’intérieur seront ignorées
+e.g. 8hR5acKTCx2s	p. ex. 8hR5acKTCx2s
+Edging behaviour	Comportement du bord
+Edging Sensitivity	Sensibilité du bord
+Enable hands-free mode	Activer le mode mains libres
+EVIL MODE	MODE MALÉFIQUE
+First time setup?	Première configuration ?
+Font Size	Taille de police
+Free tool. One guy made it. Tribute your dev? 😈	Outil gratuit. Fait par une seule personne. Faire un tribut à ton dev ? 😈
+Freeze volume at current level — tracking continues but volume won't change	Fige le volume au niveau actuel — le suivi continue mais le volume ne change pas
+Get ID ↗	Obtenir l’ID ↗
+Got it — close	Compris — fermer
+Hands-Free "Let Me Cum?"	"Je peux jouir ?" mains libres
+hard stop — mic stays on.\nsay "resume session" to continue	arrêt total — le micro reste allumé.\ndis "resume session" pour continuer
+HELD [|]	MAINTENU [|]
+Higher HR → stronger denial, slower rewards.  Get a free token at pulsoid.net/ui/keys — works with Polar, Garmin, Apple Watch, most BLE chest straps via the Pulsoid app.	FC plus élevée → refus plus fort, récompenses plus lentes.  Obtiens un token gratuit sur pulsoid.net/ui/keys — fonctionne avec Polar, Garmin, Apple Watch et la plupart des ceintures pectorales BLE via l’app Pulsoid.
+Higher sensitivity = triggers on less motion change. If it fires too easily, lower this. The countdown delay lets you cancel false positives.	Sensibilité plus élevée = se déclenche avec moins de changement de mouvement. Si ça se déclenche trop facilement, baisse-la. Le délai du compte à rebours te laisse annuler les faux positifs.
+Hold Volume	Maintenir le volume
+How long after cumming before the session auto-resumes. Set to 0 to disable the timer and resume manually. Clicking the button during refractory skips it early.	Combien de temps après avoir joui avant que la séance reprenne toute seule. Mets 0 pour désactiver le minuteur et reprendre à la main. Cliquer sur le bouton pendant la période réfractaire la saute plus tôt.
+HR Source:	Source FC :
+HTTP {}	HTTP {}
+I'm ready — select my camera feed  →	Je suis prêt — sélectionner ma caméra  →
+I've CUM	J’AI JOUI
+In xToys: load the VisualStimEdger script → add your toy under Connections → Generic Output, then press ▶ to run it (nothing moves until it runs). Tap “Get ID” to open xtoys.app/me → Private Webhook, then paste the ID here.	Dans xToys : charge le script VisualStimEdger → ajoute ton jouet sous Connections → Generic Output, puis appuie sur ▶ pour l’exécuter (rien ne bouge tant qu’il ne tourne pas). Touche "Get ID" pour ouvrir xtoys.app/me → Private Webhook, et colle l’ID ici.
+Let me cum?	Je peux jouir ?
+Level	Niveau
+loading…	chargement…
+Loop:	Boucle :
+Manual ✚	Manuel ✚
+Mic level:	Niveau du micro :
+Microphone:	Microphone :
+Min edges	Edges min.
+Miss — aim for the green ring at the top!	Raté — vise l’anneau vert en haut !
+MP3: {}	MP3 : {}
+Navigate to the 🌿 stem!	Navigue vers la tige 🌿 !
+No device selected	Aucun périphérique sélectionné
+No file loaded	Aucun fichier chargé
+Not now	Pas maintenant
+Not yet. Wait {}s.	Pas encore. Attends {}s.
+OBS Overlay:	Overlay OBS :
+OK	OK
+Optional cut-off	Coupure optionnelle
+OPTIONAL hard cut-off — you don't need this set. Place a yellow line above the red edging line; cross ABOVE it and volume instantly drops to your floor, so a sudden spike can't finish you before the normal ramp reacts. Leave it unset (or push it to the very top) to disable. ✕ clears it.	Coupure nette OPTIONNELLE — pas besoin de la régler. Place une ligne jaune au-dessus de la ligne rouge du bord ; si tu la franchis vers le HAUT, le volume tombe instantanément à ton plancher, pour qu’un pic soudain ne te fasse pas finir avant que la montée normale réagisse. Laisse-la non réglée (ou pousse-la tout en haut) pour la désactiver. ✕ l’efface.
+Out:	Sortie :
+Output	Sortie
+Override to 100% volume (ignore range)	Forcer le volume à 100% (ignorer la plage)
+Per-difficulty tuning below. Recovery = how fast volume climbs back while you hold in the erect zone (%/sec). Hold = seconds off the edge before Active Edging ramps. Ramp = how fast it climbs to max (%/sec). Defaults get more relentless on harder levels.	Réglage par difficulté ci-dessous. Récupération = à quelle vitesse le volume remonte pendant que tu tiens dans la zone érigée (%/s). Maintien = secondes loin du bord avant que l’Edging Actif monte. Montée = à quelle vitesse ça grimpe au max (%/s). Les valeurs par défaut deviennent plus impitoyables aux niveaux difficiles.
+Play Mode — minimal immersive view; hides settings	Mode Immersif — vue minimale et immersive ; masque les paramètres
+Practice Grid →	Grille d’entraînement →
+Press after finishing — volume drops to 0 and stays there. Press again (as 'Resume') if you want to go another round.	Appuie après avoir fini — le volume tombe à 0 et y reste. Appuie encore (comme "Reprendre") si tu veux un autre tour.
+Pulls the Edging state-display toward Erect by N pixels so the OBS overlay lights up earlier. Affects only the State label / OBS broadcast — the volume / denial math always uses the strict calibrated line.	Tire l’affichage de l’état Au bord vers Érigé de N pixels pour que l’overlay OBS s’allume plus tôt. N’affecte que le label d’État / la diffusion OBS — le calcul du volume / refus utilise toujours la ligne calibrée exacte.
+Pulsoid	Pulsoid
+Pulsoid Token:	Token Pulsoid :
+pulsoid.net/ui/keys (paid plan required)	pulsoid.net/ui/keys (offre payante requise)
+Re-Select Feed	Resélectionner le flux
+Re-Select Head	Resélectionner la tête
+Recover volume when held in the erect zone	Récupérer le volume quand maintenu dans la zone érigée
+Refractory Period	Période réfractaire
+Refractory: {}:00	Réfractaire : {}:00
+Refractory: {}:00\n(click to skip)	Réfractaire : {}:00\n(clique pour passer)
+Refractory: {}:{}\n(click to skip)	Réfractaire : {}:{}\n(clique pour passer)
+Refresh	Actualiser
+Remove all exclusion zones	Supprimer toutes les zones d’exclusion
+Reset Defaults	Réinitialiser les valeurs
+Reset — navigate to the 🌿 stem!	Réinitialiser — navigue vers la tige 🌿 !
+Respect volume ceiling (stay within range)	Respecter le plafond de volume (rester dans la plage)
+Restim	Restim
+Restim disconnected — enable its WebSocket server and check the port matches.	Restim déconnecté — active son serveur WebSocket et vérifie que le port correspond.
+Restim Port:	Port Restim :
+Resume	Reprendre
+Roll the dice — odds depend on aggressiveness. Win = temporary full volume permission	Lance les dés — les chances dépendent de l’agressivité. Gagner = permission temporaire de volume complet
+Ruin Phrases (one per line)	Phrases de ruine (une par ligne)
+RUINED 😈	RUINÉ 😈
+Safeword:	Mot de sécurité :
+Sample Text Abc 123	Texte d’exemple Abc 123
+Say a number, or "cancel"	Dis un nombre, ou "cancel"
+Scanning for BLE HR monitors…	Recherche de moniteurs FC BLE…
+Scan…	Scanner…
+Score: 0	Score : 0
+Score: {}	Score : {}
+Select audio file	Sélectionner un fichier audio
+Select music folder	Sélectionner un dossier de musique
+Session: 00:00  |  Edges: 0	Séance : 00:00  |  Edges : 0
+Session: {}:{}  |  Edges: {}  |  Edging {}%  Erect {}%  Flaccid {}%	Séance : {}:{}  |  Edges : {}  |  Au bord {}%  Érigé {}%  Flasque {}%
+Settings	Paramètres
+Setup steps:\n\n1. Open xtoys.app in a browser and sign in\n2. Scripts → search “VisualStimEdger” → Load Script\n3. Connections → add your toy under Generic Output\n4. Go to xtoys.app/me → Private Webhook\n5. Copy the Webhook ID → paste it into VSE\n6. Press the green ▶ to RUN the script — nothing moves until you do\n7. Keep the xToys tab open while you use VSE	Étapes de configuration :\n\n1. Ouvre xtoys.app dans un navigateur et connecte-toi\n2. Scripts → cherche "VisualStimEdger" → Load Script\n3. Connections → ajoute ton jouet sous Generic Output\n4. Va sur xtoys.app/me → Private Webhook\n5. Copie le Webhook ID → colle-le dans VSE\n6. Appuie sur le ▶ vert pour EXÉCUTER le script — rien ne bouge tant que tu ne le fais pas\n7. Garde l’onglet xToys ouvert pendant que tu utilises VSE
+Sir Thorn's Private Sessions Vol. 2 — 21 MP3 tracks made for edging. Load them straight into this player. Opens Ko-fi.	Private Sessions Vol. 2 de Sir Thorn — 21 pistes MP3 faites pour l’edging. Charge-les directement dans ce lecteur. Ouvre Ko-fi.
+Sir Thorn's Sunday Drive sessions as JSON stim patterns — free / pay-what-you-want. Made for electro over your audio output. Opens Ko-fi.	Les séances Sunday Drive de Sir Thorn en motifs de stim JSON — gratuit / prix libre. Faites pour l’électro sur ta sortie audio. Ouvre Ko-fi.
+Skip voice verification	Passer la vérification vocale
+Start Bondage Mode →	Démarrer le Mode Bondage →
+State: --  |  Vol: --  |  WS: Disconnected	État : --  |  Vol : --  |  WS : Déconnecté
+State: {}  |  Vol: {}  |  {}  |  {}  |  {} fps  |  {}	État : {}  |  Vol : {}  |  {}  |  {}  |  {} fps  |  {}
+Step 1 — Draw a box around your video feed, then release to lock.  [Esc to cancel]	Étape 1 — Dessine un cadre autour de ton flux vidéo, puis relâche pour verrouiller.  [Échap pour annuler]
+Step 2: Select Cock Head	Étape 2 : Sélectionne le gland
+Stepped back — say a number or 'back' again	Un pas en arrière — dis un nombre ou "back" encore
+Stop YOLO from re-anchoring the tracker. Draw your box on a stable, high-contrast spot (a plug/electrode is ideal) and it stays put. Turn off to let auto-reacquire find the head again.	Empêche YOLO de réancrer le suivi. Dessine ton cadre sur un point stable et très contrasté (un plug/une électrode est idéal) et il reste fixe. Désactive pour laisser le réancrage automatique retrouver la tête.
+T-code Axis	Axe T-code
+Theme: {}	Thème : {}
+Time's up. Back to edging.	Temps écoulé. Retour au bord.
+Too slow!	Trop lent !
+TRACKING LOST - Frozen at last position	SUIVI PERDU - Figé à la dernière position
+TRACKING SUSPECT ({}) - Frozen	SUIVI DOUTEUX ({}) - Figé
+Update available: v{}	Mise à jour disponible : v{}
+VisualStimEdger	VisualStimEdger
+VOL\nRANGE	PLAGE\nDE VOL
+Vol: {}	Vol : {}
+Vol: —	Vol : —
+v{}  ·  edge smarter	v{}  ·  edger plus malin
+Wait {}s...	Attends {}s...
+Webhook ID:	Webhook ID :
+When enabled, VSE automatically rolls for cum permission each time an edge is detected. 'Min edges' sets how many edges must occur first. '1 in N' is the per-edge roll chance (lower N = more likely). Uses the same grant window as a manual roll.	Quand c’est activé, VSE lance automatiquement un tirage pour la permission de jouir à chaque edge détecté. "Edges min." fixe combien d’edges doivent se produire d’abord. "1 sur N" est la chance par edge (N plus petit = plus probable). Utilise la même fenêtre de permission qu’un tirage manuel.
+Which T-code axis VSE sends volume commands on. This must match the axis your Restim session has bound to the parameter you want to control (usually 'Volume'). Check Restim's Websocket / T-code panel if you're unsure.	Sur quel axe T-code VSE envoie les commandes de volume. Il doit correspondre à l’axe que ta séance Restim a assigné au paramètre que tu veux contrôler (généralement "Volume"). Regarde le panneau Websocket / T-code de Restim si tu n’es pas sûr.
+WS: {}	WS : {}
+xToys	xToys
+xToys reached the cloud but the block didn't answer — press ▶ to run the VisualStimEdger block in your xToys tab (reload it if it's an old copy, or re-check your Webhook ID).	xToys a atteint le cloud mais le bloc n’a pas répondu — appuie sur ▶ pour exécuter le bloc VisualStimEdger dans ton onglet xToys (recharge-le si c’est une vieille copie, ou revérifie ton Webhook ID).
+xToys Setup	Configuration xToys
+xToys: block STOPPED?	xToys : bloc ARRÊTÉ ?
+xToys: Live	xToys : En direct
+xToys: Live ({})	xToys : En direct ({})
+xToys: No ID	xToys : Pas d’ID
+xToys: Offline	xToys : Hors ligne
+xToys: paste your Webhook ID from xtoys.app/me → Private Webhook (or tap Get ID).	xToys : colle ton Webhook ID depuis xtoys.app/me → Private Webhook (ou touche "Get ID").
+You've been a good boy. {}:{} remaining.	Tu as été un bon garçon. Reste {}:{}.
+You've been a good boy.{} You have {} min.	Tu as été un bon garçon.{} Tu as {} min.
+You've been edging {}+ times, hands-free.	Ça fait {}+ fois que tu edges, mains libres.
+Zoom in first — say a number!	Zoome d’abord — dis un nombre !
+{} bpm	{} bpm
+{} edges	{} edges
+{} px	{} px
+{}px	{}px
+← Back	← Retour
+↩ Undo (3s)	↩ Annuler (3s)
+⏳ Cum window: {}s remaining — say 'came' or click Cancel	⏳ Fenêtre pour jouir : {}s restantes — dis "came" ou clique Annuler
+▶ Play	▶ Lecture
+▶ RESUME SESSION	▶ REPRENDRE LA SÉANCE
+☕ Tribute	☕ Tribut
+♥ -- bpm	♥ -- bpm
+♥ No HR	♥ Pas de FC
+♥ {} bpm	♥ {} bpm
+⚡ Free stim patterns ↗	⚡ Motifs de stim gratuits ↗
+⚡ P.O.N.R.	⚡ P.O.N.R.
+⚡ Point of No Return — cut	⚡ Point de non-retour — couper
+✓  HIT!	✓  TOUCHÉ !
+✓ Safeword verified!	✓ Mot de sécurité vérifié !
+✕ Cancel	✕ Annuler
+✕ Clear	✕ Effacer
+＋ Exclusion Zone	＋ Zone d’exclusion
+🍆  Grid Navigator Practice	🍆  Entraînement navigateur de grille
+🍆 Grid Practice	🍆 Entraînement grille
+🎉 Nice shot!	🎉 Joli tir !
+🎙 BONDAGE	🎙 BONDAGE
+🎙 Bondage active — safeword: "{}"	🎙 Bondage actif — mot de sécurité : "{}"
+🎙 Bondage Mode Defaults	🎙 Valeurs par défaut du Mode Bondage
+🎙 Bondage Mode Setup	🎙 Configuration du Mode Bondage
+🎙 Bondage Mode — Setup	🎙 Mode Bondage — Configuration
+🎙 Confirm failed — feed gone?	🎙 Confirmation échouée — flux perdu ?
+🎙 Exclude zone — say 1-9 to zoom, 'exclude'/'here' to add	🎙 Zone d’exclusion — dis 1-9 pour zoomer, "exclude"/"here" pour ajouter
+🎙 Exclusion zone added ({} total) — say 'clear exclude' to remove all	🎙 Zone d’exclusion ajoutée ({} au total) — dis "clear exclude" pour tout supprimer
+🎙 Exclusion zones cleared	🎙 Zones d’exclusion effacées
+🎙 Grid cancelled	🎙 Grille annulée
+🎙 Grid cell {} (zoom {}) — say 'here' to lock, or zoom more	🎙 Cellule {} (zoom {}) — dis "here" pour verrouiller, ou zoome plus
+🎙 Grid reset — say 1-9 to zoom	🎙 Grille réinitialisée — dis 1-9 pour zoomer
+🎙 Grid — say 1-9 to zoom, 'here' to lock	🎙 Grille — dis 1-9 pour zoomer, "here" pour verrouiller
+🎙 Head reselected ✓	🎙 Tête resélectionnée ✓
+🎙 Lines set — adjust with voice	🎙 Lignes réglées — ajuste avec la voix
+🎙 MIC	🎙 MIC
+🎙 No windows found	🎙 Aucune fenêtre trouvée
+🎙 Paused (say 'resume')	🎙 En pause (dis "resume")
+🎙 Session resumed	🎙 Séance reprise
+🎙 Source switch cancelled	🎙 Changement de source annulé
+🎙 Source switch failed	🎙 Changement de source échoué
+🎙 Source → {}… — say 'find head' to reanchor	🎙 Source → {}… — dis "find head" pour réancrer
+🎙 Switch Source	🎙 Changer de source
+🎙 Voice Commands	🎙 Commandes vocales
+🎙 {} {}  ({}px)	🎙 {} {}  ({}px)
+🎧 21 tracks to edge to ↗	🎧 21 pistes pour edger ↗
+👿 VisualStimEdger [EVIL MODE]	👿 VisualStimEdger [MODE MALÉFIQUE]
+💡 Press AUTO to calibrate height lines	💡 Appuie sur AUTO pour calibrer les lignes de hauteur
+📁 Load File	📁 Charger un fichier
+📂 Load Folder	📂 Charger un dossier
+📷 AUTO	📷 AUTO
+📷 AUTO  (flaccid set, need more range)	📷 AUTO  (flasque réglé, plus d’amplitude requise)
+📷 AUTO  (observing...)	📷 AUTO  (observation...)
+📷 AUTO  (off)	📷 AUTO  (désactivé)
+📷 AUTO  ✓	📷 AUTO  ✓
+🔁 Active Edging (auto-ramp)	🔁 Edging Actif (montée auto)
+🔁 Active Edging off	🔁 Edging Actif désactivé
+🔁 Active Edging on — ramps up after {}s off the edge ({})	🔁 Edging Actif activé — monte après {}s loin du bord ({})
+🔒 Lock on target (no auto-reanchor)	🔒 Verrouiller sur la cible (pas de réancrage auto)
+🔒 Locked on target — won't auto-reanchor	🔒 Verrouillé sur la cible — ne réancre pas tout seul
+🔓 Auto-reanchor back on	🔓 Réancrage auto réactivé
+😈 Ruin Odds (% chance when denied, Evil Mode only)	😈 Chance de ruine (% en cas de refus, Mode Maléfique uniquement)
+😈 tribute your dom before you're allowed → ☕	😈 fais un tribut à ton dom avant d’y être autorisé → ☕
+🛑 SAFEWORD	🛑 MOT DE SÉCURITÉ
+🛑 SAFEWORD — say "resume session" or click ▶ RESUME	🛑 MOT DE SÉCURITÉ — dis "resume session" ou clique ▶ REPRENDRE
+About	À propos
+Balanced	Équilibré
+Calibrate Flaccid / Erect / Edging heights	Calibre les hauteurs Molle / Dure / Edging
+Classic	Classique
+Classic = the proven tracker (default). Deep = an experimental neural tracker — more robust in clean tests, but it can balloon its box on smooth targets; still being validated. Stick with Classic for now.	Classique = le traqueur éprouvé (par défaut). Profond = un traqueur neuronal expérimental — plus robuste dans des tests propres, mais il peut faire gonfler son cadre sur les cibles lisses ; encore en cours de validation. Reste sur Classique pour l'instant.
+Controls volume only — does not generate e-stim signals.\nYou need Restim, xToys, electron-redrive, an .mp3, etc. already running.	Contrôle seulement le volume — ne génère pas de signaux électro-stim.\nIl te faut Restim, xToys, electron-redrive, un .mp3, etc. déjà lancés.
+Deep	Profond
+Disconnected	Déconnecté
+Do this during your session. AUTO mode can handle it for you.\nRe-calibrate any time without restarting.	Fais-le pendant ta session. Le mode AUTO peut s'en charger pour toi.\nRecalibre quand tu veux sans redémarrer.
+Draw a small box around the head. An electrode or ring tracks\neven better than skin alone.	Dessine un petit cadre autour du gland. Une électrode ou un anneau se suit\nencore mieux que la peau seule.
+Easy	Facile
+Edging	Edging
+Erect	Dure
+Erect (Needs Calibration)	Dure (À calibrer)
+Expert	Expert
+Fast	Rapide
+Fastest	Ultra-rapide
+Flaccid	Molle
+Full	Complet
+GitHub (latest release)	GitHub (dernière version)
+Hard	Difficile
+Hold s	Maintien s
+Keep it visible and not minimised	Garde la fenêtre visible et non réduite
+Ko-fi (support)	Ko-fi (soutien)
+Language	Langue
+Lock by look (experimental)	Verrouiller par apparence (expérimental)
+Lower = faster on slow PCs. Downscales the frame before tracking, not the video you watch. If your FPS is low, try Fast or Fastest.	Plus bas = plus rapide sur les PC lents. Réduit l'image avant le suivi, pas la vidéo que tu regardes. Si tes FPS sont bas, essaie Rapide ou Ultra-rapide.
+Middle	Moyen
+OBS, webcam app, browser stream — anything showing your cock in a window.\nIt does NOT need to be full-screen.	OBS, appli webcam, flux de navigateur — n'importe quoi qui montre ta bite dans une fenêtre.\nPas besoin d'être en plein écran.
+Open your camera feed	Ouvre ton flux caméra
+Performance	Performances
+Ramp %/s	Montée %/s
+Recover %/s	Récup. %/s
+Settings...	Paramètres...
+The app will ask you to draw a box around that window.\nBring it to the front before hitting Start.	L'appli va te demander de dessiner un cadre autour de cette fenêtre.\nMets-la au premier plan avant de cliquer sur Démarrer.
+Track: LOST	Suivi : PERDU
+Track: OK	Suivi : OK
+Tracking engine	Moteur de suivi
+Tracking resolution	Résolution de suivi
+Tracks by colour/darkness instead of the tracker. Only worth it with a genuinely distinct marker — a matte lime / teal / hot-pink sticker. It can't tell a red/yellow/black target from skin. Off = normal tracking.	Suit par couleur/obscurité au lieu du traqueur. Ça ne vaut le coup qu'avec un marqueur vraiment distinct — un autocollant mat vert citron / bleu sarcelle / rose vif. Il ne peut pas distinguer une cible rouge/jaune/noire de la peau. Désactivé = suivi normal.
+You'll mark the tip of your cock	Tu vas marquer le bout de ta bite
+ceil	plafond
+floor	plancher
+⊞🔊 windows	⊞🔊 audio Windows
+♥ HR	♥ FC
