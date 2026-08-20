@@ -8454,6 +8454,11 @@ def show_splash() -> bool:
 
     root.resizable(False, True)
 
+    # Landscape layout: logo on the LEFT, setup checklist on the RIGHT — so the
+    # window is wider than it is tall instead of a narrow vertical stack.
+    top = tk.Frame(root, bg=BG)
+    top.pack(fill="x", padx=P, pady=(P // 2, 8))
+
     # ── Animated ascii logo header (Silas's ascii-motion art; text title fallback) ──
     logo_done = False
     try:
@@ -8477,8 +8482,8 @@ def show_splash() -> bool:
                 return ImageTk.PhotoImage(im)
 
             _logo_imgs = [_frame_img(i) for i in range(_n)]   # pre-built once, no per-frame alloc
-            _holder = tk.Frame(root, bg=BG)
-            _holder.pack(pady=(P // 2, 4))
+            _holder = tk.Frame(top, bg=BG)
+            _holder.pack(side="left", anchor="n", padx=(0, 18))
             _logo_lbl = tk.Label(_holder, image=_logo_imgs[0], bg=BG, bd=0, highlightthickness=0)
             _logo_lbl.image = _logo_imgs      # keep refs to every frame
             _logo_lbl.pack()
@@ -8506,13 +8511,15 @@ def show_splash() -> bool:
         log.warning(f"splash logo failed ({_e}) — using text title")
 
     if not logo_done:
-        tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
-                 bg=BG, fg=TEXT).pack(pady=(P, 2))
-        tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
-                 bg=BG, fg=DIM).pack(pady=(0, P//2))
+        _tcol = tk.Frame(top, bg=BG)
+        _tcol.pack(side="left", anchor="n", padx=(0, 18))
+        tk.Label(_tcol, text=tr("VisualStimEdger"), font=f_title,
+                 bg=BG, fg=TEXT).pack(anchor="w", pady=(P, 2))
+        tk.Label(_tcol, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
+                 bg=BG, fg=DIM).pack(anchor="w")
 
-    card = tk.Frame(root, bg=CARD, padx=16, pady=12)
-    card.pack(fill="x", padx=P, pady=(0, 10))
+    card = tk.Frame(top, bg=CARD, padx=16, pady=12)
+    card.pack(side="left", fill="both", expand=True)
 
     tk.Label(card, text=tr("Before you hit Start"), font=f_head,
              bg=CARD, fg=YELLOW, anchor="w").pack(anchor="w", pady=(0, 8))
@@ -8540,14 +8547,14 @@ def show_splash() -> bool:
         col = tk.Frame(row, bg=CARD)
         col.pack(side="left", fill="x", expand=True)
         tk.Label(col, text=tr(title), font=f_head, bg=CARD,
-                 fg=TEXT, anchor="w", wraplength=600).pack(anchor="w", padx=(8, 0))
+                 fg=TEXT, anchor="w", wraplength=400).pack(anchor="w", padx=(8, 0))
         tk.Label(col, text=tr(body), font=f_body, bg=CARD,
-                 fg=SUBDIM, anchor="w", justify="left", wraplength=600).pack(anchor="w", padx=(8, 0))
+                 fg=SUBDIM, anchor="w", justify="left", wraplength=400).pack(anchor="w", padx=(8, 0))
 
-    tk.Label(root,
+    tk.Label(card,
              text=tr("Controls volume only — does not generate e-stim signals.\n"
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running."),
-             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=640).pack(pady=(4, 12))
+             font=f_body, bg=CARD, fg=DIM, justify="left", wraplength=400).pack(anchor="w", pady=(10, 0))
 
     btn = tk.Button(root, text=tr("I'm ready — select my camera feed  \u2192"),
                     font=f_btn, bg=RED, fg="white", activebackground="#cc3636",
@@ -8564,7 +8571,7 @@ def show_splash() -> bool:
         root.destroy()
     root.protocol("WM_DELETE_WINDOW", _close_widget)
     root.update_idletasks()
-    W = max(700, root.winfo_reqwidth())      # fat rectangle, never thinner than the OG
+    W = max(900, root.winfo_reqwidth())      # landscape: logo + checklist side by side
     H = root.winfo_reqheight()               # auto-fit so the Start button is never cut off
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()

@@ -5,7 +5,10 @@ import json
 import pathlib
 import sys
 
-SRC = pathlib.Path(r"G:\Downloads\ascii-motion-animation.tsx")
+SRC = pathlib.Path(r"G:\Downloads\vse-splash2.tsx")
+for _a in sys.argv[1:]:
+    if not _a.startswith("--"):
+        SRC = pathlib.Path(_a)
 txt = SRC.read_text(encoding="utf-8")
 dec = json.JSONDecoder()
 
