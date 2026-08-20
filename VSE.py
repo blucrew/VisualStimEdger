@@ -8454,6 +8454,9 @@ def show_splash() -> bool:
 
     root.resizable(False, True)
     _sh = root.winfo_screenheight()
+    # wraplength/padding are raw pixels, so scale them by DPI to track the point-based
+    # fonts (which Tk auto-scales) — otherwise text over-wraps into a tall skinny stack.
+    _ui = max(1.0, root.winfo_fpixels("1i") / 96.0)
 
     # Start button + footer are packed FIRST at the bottom, so they always keep
     # their space and can never be pushed off-screen by the content above.
@@ -8465,69 +8468,13 @@ def show_splash() -> bool:
     tk.Label(root,
              text=tr("Controls volume only — does not generate e-stim signals.\n"
                   "You need Restim, xToys, electron-redrive, an .mp3, etc. already running."),
-             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=760).pack(side="bottom", pady=(2, 8))
+             font=f_body, bg=BG, fg=DIM, justify="center", wraplength=int(760 * _ui)).pack(side="bottom", pady=(2, 8))
 
-    # ── Animated ascii logo header (Silas's ascii-motion art; text title fallback) ──
-    logo_done = False
-    try:
-        from PIL import Image, ImageTk
-        _sheet_p = pathlib.Path(resource_path("splash_logo_sheet.png"))
-        _meta_p = pathlib.Path(resource_path("splash_logo_meta.json"))
-        if _sheet_p.exists() and _meta_p.exists():
-            _lm = json.loads(_meta_p.read_text(encoding="utf-8"))
-            _fw, _fh, _n, _durs = _lm["fw"], _lm["fh"], _lm["n"], _lm["durations"]
-            _sheet = Image.open(_sheet_p).convert("RGB")
-            try:
-                _dpi = root.winfo_fpixels("1i") / 96.0
-            except Exception:
-                _dpi = 1.0
-            # scale the logo up to fill width, but never so tall that the grid +
-            # footer + button below it wouldn't fit on screen.
-            _sc = max(0.62, min(1.2 * max(1.0, _dpi), ((_sh - 90) - 380) / _fh))
-
-            def _frame_img(i):
-                im = _sheet.crop((0, i * _fh, _fw, (i + 1) * _fh))
-                if _sc != 1.0:
-                    im = im.resize((int(_fw * _sc), int(_fh * _sc)), Image.LANCZOS)
-                return ImageTk.PhotoImage(im)
-
-            _logo_imgs = [_frame_img(i) for i in range(_n)]   # pre-built once, no per-frame alloc
-            _holder = tk.Frame(root, bg=BG)
-            _holder.pack(side="top", pady=(P // 2, 2))
-            _logo_lbl = tk.Label(_holder, image=_logo_imgs[0], bg=BG, bd=0, highlightthickness=0)
-            _logo_lbl.image = _logo_imgs      # keep refs to every frame
-            _logo_lbl.pack()
-            # stamp the real version live over the blanked "v1.0" slot (never goes stale)
-            _vx, _vy = _lm["ver_px"]
-            tk.Label(_holder, text=f"v{VERSION}",
-                     font=tkfont.Font(family="Consolas", size=max(9, int(12 * _sc)), weight="bold"),
-                     bg=BG, fg="#A9A4C4").place(x=int(_vx * _sc), y=max(0, int(_vy * _sc) - 1))
-
-            _fi = [0]
-
-            def _logo_tick():
-                try:
-                    if not _logo_lbl.winfo_exists():
-                        return
-                except Exception:
-                    return
-                _fi[0] = (_fi[0] + 1) % _n
-                _logo_lbl.configure(image=_logo_imgs[_fi[0]])
-                _logo_anim["id"] = root.after(_durs[_fi[0]], _logo_tick)
-
-            _logo_anim["id"] = root.after(_durs[0], _logo_tick)
-            logo_done = True
-    except Exception as _e:
-        log.warning(f"splash logo failed ({_e}) — using text title")
-
-    if not logo_done:
-        tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
-                 bg=BG, fg=TEXT).pack(side="top", pady=(P, 0))
-        tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
-                 bg=BG, fg=DIM).pack(side="top", pady=(0, 4))
-
-    tk.Label(root, text=tr("Before you hit Start"), font=f_head,
-             bg=BG, fg=YELLOW).pack(side="top", pady=(6, 6))
+    # Build the checklist first (its fonts auto-scale with display DPI), measure it,
+    # THEN size the logo to whatever height is left under a screen-fraction cap — so the
+    # whole splash always fits on screen at any DPI without the user resizing.
+    _header = tk.Label(root, text=tr("Before you hit Start"), font=f_head, bg=BG, fg=YELLOW)
+    _header.pack(side="top", pady=(6, 6))
 
     steps = [
         ("1", "Open your camera feed",
@@ -8544,7 +8491,6 @@ def show_splash() -> bool:
               "Re-calibrate any time without restarting."),
     ]
 
-    # 2x2 grid of step cards directly under the animation — wide + readable.
     grid = tk.Frame(root, bg=BG)
     grid.pack(side="top", padx=P, pady=(0, 2))
     for _r in range(2):
@@ -8552,16 +8498,69 @@ def show_splash() -> bool:
         _gr.pack(fill="x")
         for _c in range(2):
             _num, _title, _body = steps[_r * 2 + _c]
-            cell = tk.Frame(_gr, bg=CARD, padx=12, pady=9)
+            cell = tk.Frame(_gr, bg=CARD, padx=12, pady=8)
             cell.pack(side="left", fill="both", expand=True, padx=4, pady=4)
             _hd = tk.Frame(cell, bg=CARD)
             _hd.pack(fill="x", anchor="w")
             tk.Label(_hd, text=_num, font=f_num, bg=RED, fg="white",
                      width=2).pack(side="left", anchor="n", padx=(0, 8))
             tk.Label(_hd, text=tr(_title), font=f_head, bg=CARD, fg=TEXT,
-                     anchor="w", justify="left", wraplength=330).pack(side="left", fill="x")
+                     anchor="w", justify="left", wraplength=int(380 * _ui)).pack(side="left", fill="x")
             tk.Label(cell, text=tr(_body), font=f_body, bg=CARD, fg=SUBDIM,
-                     anchor="w", justify="left", wraplength=360).pack(anchor="w", pady=(5, 0))
+                     anchor="w", justify="left", wraplength=int(430 * _ui)).pack(anchor="w", pady=(4, 0))
+
+    # measure the text content (button + footer + header + grid are all packed now)
+    root.update_idletasks()
+    _content_h, _content_w = root.winfo_reqheight(), root.winfo_reqwidth()
+    _cap_h = int(_sh * 0.82)                        # whole splash <= 82% of screen height
+
+    # ── Animated ascii logo, scaled to the leftover budget, inserted ABOVE the header ──
+    logo_done = False
+    try:
+        from PIL import Image, ImageTk
+        _sheet_p = pathlib.Path(resource_path("splash_logo_sheet.png"))
+        _meta_p = pathlib.Path(resource_path("splash_logo_meta.json"))
+        if _sheet_p.exists() and _meta_p.exists():
+            _lm = json.loads(_meta_p.read_text(encoding="utf-8"))
+            _fw, _fh, _n, _durs = _lm["fw"], _lm["fh"], _lm["n"], _lm["durations"]
+            _sheet = Image.open(_sheet_p).convert("RGB")
+            _budget = _cap_h - _content_h - 40
+            _sc = max(0.45, min(_budget / _fh, _content_w / _fw))   # fit height; <= checklist width
+            def _frame_img(i):
+                im = _sheet.crop((0, i * _fh, _fw, (i + 1) * _fh))
+                return ImageTk.PhotoImage(
+                    im.resize((max(1, int(_fw * _sc)), max(1, int(_fh * _sc))), Image.LANCZOS))
+            _logo_imgs = [_frame_img(i) for i in range(_n)]
+            _holder = tk.Frame(root, bg=BG)
+            _holder.pack(side="top", before=_header, pady=(P // 2, 2))
+            _logo_lbl = tk.Label(_holder, image=_logo_imgs[0], bg=BG, bd=0, highlightthickness=0)
+            _logo_lbl.image = _logo_imgs
+            _logo_lbl.pack()
+            _vx, _vy = _lm["ver_px"]
+            tk.Label(_holder, text=f"v{VERSION}",
+                     font=tkfont.Font(family="Consolas", size=max(9, int(12 * _sc)), weight="bold"),
+                     bg=BG, fg="#A9A4C4").place(x=int(_vx * _sc), y=max(0, int(_vy * _sc) - 1))
+            _fi = [0]
+            def _logo_tick():
+                try:
+                    if not _logo_lbl.winfo_exists():
+                        return
+                except Exception:
+                    return
+                _fi[0] = (_fi[0] + 1) % _n
+                _logo_lbl.configure(image=_logo_imgs[_fi[0]])
+                _logo_anim["id"] = root.after(_durs[_fi[0]], _logo_tick)
+            _logo_anim["id"] = root.after(_durs[0], _logo_tick)
+            logo_done = True
+    except Exception as _e:
+        log.warning(f"splash logo failed ({_e}) — using text title")
+
+    if not logo_done:
+        _tc = tk.Frame(root, bg=BG)
+        _tc.pack(side="top", before=_header, pady=(P // 2, 2))
+        tk.Label(_tc, text=tr("VisualStimEdger"), font=f_title, bg=BG, fg=TEXT).pack()
+        tk.Label(_tc, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
+                 bg=BG, fg=DIM).pack()
 
     def _close_widget():
         try:
@@ -8573,7 +8572,7 @@ def show_splash() -> bool:
     root.protocol("WM_DELETE_WINDOW", _close_widget)
     root.update_idletasks()
     root.update_idletasks()      # twice so wraplength heights settle before measuring
-    W = max(760, root.winfo_reqwidth())
+    W = max(int(680 * _ui), root.winfo_reqwidth())
     H = min(root.winfo_reqheight(), _sh - 60)    # never taller than the screen
     sw = root.winfo_screenwidth()
     root.geometry(f"{W}x{H}+{(sw - W) // 2}+{max(0, (_sh - H) // 2)}")
