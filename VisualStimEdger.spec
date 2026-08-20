@@ -7,6 +7,8 @@ datas = [
     ('models/vittrack.onnx',    'models'),
     ('icon.ico',                '.'),
     ('splash.png',              '.'),
+    ('splash_logo_sheet.png',   '.'),
+    ('splash_logo_meta.json',   '.'),
     ('overlay.html',            '.'),
     ('i18n/vse_ui_strings_zh.tsv', 'i18n'),
 ]

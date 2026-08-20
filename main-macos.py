@@ -8376,6 +8376,7 @@ def show_splash() -> bool:
             pass
 
     started = False
+    _logo_anim = {"id": None}   # animated-logo after() timer, cancelled on teardown
 
     def _start():
         nonlocal started
@@ -8386,6 +8387,11 @@ def show_splash() -> bool:
         try:
             if _blink_id[0]:
                 root.after_cancel(_blink_id[0])
+        except Exception:
+            pass
+        try:
+            if _logo_anim["id"]:
+                root.after_cancel(_logo_anim["id"])
         except Exception:
             pass
         root.destroy()
@@ -8517,10 +8523,62 @@ def show_splash() -> bool:
 
     root.resizable(False, True)
 
-    tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
-             bg=BG, fg=TEXT).pack(pady=(P, 2))
-    tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
-             bg=BG, fg=DIM).pack(pady=(0, P//2))
+    # ── Animated ascii logo header (Silas's ascii-motion art; text title fallback) ──
+    logo_done = False
+    try:
+        from PIL import Image, ImageTk
+        _sheet_p = pathlib.Path(resource_path("splash_logo_sheet.png"))
+        _meta_p = pathlib.Path(resource_path("splash_logo_meta.json"))
+        if _sheet_p.exists() and _meta_p.exists():
+            _lm = json.loads(_meta_p.read_text(encoding="utf-8"))
+            _fw, _fh, _n, _durs = _lm["fw"], _lm["fh"], _lm["n"], _lm["durations"]
+            _sheet = Image.open(_sheet_p).convert("RGB")
+            try:
+                _sc = root.winfo_fpixels("1i") / 96.0     # upscale on hi-DPI like the OG splash
+            except Exception:
+                _sc = 1.0
+            _sc = _sc if _sc > 1.05 else 1.0
+
+            def _frame_img(i):
+                im = _sheet.crop((0, i * _fh, _fw, (i + 1) * _fh))
+                if _sc != 1.0:
+                    im = im.resize((int(_fw * _sc), int(_fh * _sc)), Image.LANCZOS)
+                return ImageTk.PhotoImage(im)
+
+            _logo_imgs = [_frame_img(i) for i in range(_n)]   # pre-built once, no per-frame alloc
+            _holder = tk.Frame(root, bg=BG)
+            _holder.pack(pady=(P // 2, 4))
+            _logo_lbl = tk.Label(_holder, image=_logo_imgs[0], bg=BG, bd=0, highlightthickness=0)
+            _logo_lbl.image = _logo_imgs      # keep refs to every frame
+            _logo_lbl.pack()
+            # stamp the real version live over the blanked "v1.0" slot (never goes stale)
+            _vx, _vy = _lm["ver_px"]
+            tk.Label(_holder, text=f"v{VERSION}",
+                     font=tkfont.Font(family="Consolas", size=max(8, int(11 * _sc))),
+                     bg=BG, fg=_lm.get("ver_color", "#5E5A78")).place(x=int(_vx * _sc), y=int(_vy * _sc))
+
+            _fi = [0]
+
+            def _logo_tick():
+                try:
+                    if not _logo_lbl.winfo_exists():
+                        return
+                except Exception:
+                    return
+                _fi[0] = (_fi[0] + 1) % _n
+                _logo_lbl.configure(image=_logo_imgs[_fi[0]])
+                _logo_anim["id"] = root.after(_durs[_fi[0]], _logo_tick)
+
+            _logo_anim["id"] = root.after(_durs[0], _logo_tick)
+            logo_done = True
+    except Exception as _e:
+        log.warning(f"splash logo failed ({_e}) — using text title")
+
+    if not logo_done:
+        tk.Label(root, text=tr("VisualStimEdger"), font=f_title,
+                 bg=BG, fg=TEXT).pack(pady=(P, 2))
+        tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
+                 bg=BG, fg=DIM).pack(pady=(0, P//2))
 
     card = tk.Frame(root, bg=CARD, padx=16, pady=12)
     card.pack(fill="x", padx=P, pady=(0, 10))
@@ -8566,7 +8624,14 @@ def show_splash() -> bool:
                     cursor="hand2", command=_start, pady=12)
     btn.pack(fill="x", padx=P, pady=(0, P))
 
-    root.protocol("WM_DELETE_WINDOW", root.destroy)
+    def _close_widget():
+        try:
+            if _logo_anim["id"]:
+                root.after_cancel(_logo_anim["id"])
+        except Exception:
+            pass
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", _close_widget)
     root.update_idletasks()
     W = max(700, root.winfo_reqwidth())      # fat rectangle, never thinner than the OG
     H = root.winfo_reqheight()               # auto-fit so the Start button is never cut off

@@ -59,6 +59,8 @@ files = [
     ("requirements-macos.txt", "requirements-macos.txt"),
     ("icon.ico",               "icon.ico"),
     ("splash.png",             "splash.png"),
+    ("splash_logo_sheet.png",  "splash_logo_sheet.png"),
+    ("splash_logo_meta.json",  "splash_logo_meta.json"),
     ("overlay.html",           "overlay.html"),
     ("ko-fi.png",              "ko-fi.png"),
     ("i18n/vse_ui_strings_zh.tsv", "i18n/vse_ui_strings_zh.tsv"),
