@@ -8475,6 +8475,11 @@ def show_splash() -> bool:
     # whole splash always fits on screen at any DPI without the user resizing.
     _header = tk.Label(root, text=tr("Before you hit Start"), font=f_head, bg=BG, fg=YELLOW)
     _header.pack(side="top", pady=(6, 6))
+    # Version as a clear readable line under the logo — the in-logo corner slot was
+    # too small to read. Packed before the header so the logo lands above it.
+    _verline = tk.Label(root, text=tr("v{}  ·  edge smarter").format(VERSION),
+                        font=f_sub, bg=BG, fg="#A9A4C4")
+    _verline.pack(side="top", before=_header, pady=(0, 6))
 
     steps = [
         ("1", "Open your camera feed",
@@ -8532,14 +8537,10 @@ def show_splash() -> bool:
                     im.resize((max(1, int(_fw * _sc)), max(1, int(_fh * _sc))), Image.LANCZOS))
             _logo_imgs = [_frame_img(i) for i in range(_n)]
             _holder = tk.Frame(root, bg=BG)
-            _holder.pack(side="top", before=_header, pady=(P // 2, 2))
+            _holder.pack(side="top", before=_verline, pady=(P // 2, 0))
             _logo_lbl = tk.Label(_holder, image=_logo_imgs[0], bg=BG, bd=0, highlightthickness=0)
             _logo_lbl.image = _logo_imgs
             _logo_lbl.pack()
-            _vx, _vy = _lm["ver_px"]
-            tk.Label(_holder, text=f"v{VERSION}",
-                     font=tkfont.Font(family="Consolas", size=max(9, int(12 * _sc)), weight="bold"),
-                     bg=BG, fg="#A9A4C4").place(x=int(_vx * _sc), y=max(0, int(_vy * _sc) - 1))
             _fi = [0]
             def _logo_tick():
                 try:
@@ -8556,11 +8557,8 @@ def show_splash() -> bool:
         log.warning(f"splash logo failed ({_e}) — using text title")
 
     if not logo_done:
-        _tc = tk.Frame(root, bg=BG)
-        _tc.pack(side="top", before=_header, pady=(P // 2, 2))
-        tk.Label(_tc, text=tr("VisualStimEdger"), font=f_title, bg=BG, fg=TEXT).pack()
-        tk.Label(_tc, text=tr("v{}  ·  edge smarter").format(VERSION), font=f_sub,
-                 bg=BG, fg=DIM).pack()
+        tk.Label(root, text=tr("VisualStimEdger"), font=f_title, bg=BG, fg=TEXT).pack(
+            side="top", before=_verline, pady=(P // 2, 0))
 
     def _close_widget():
         try:
