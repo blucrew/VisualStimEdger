@@ -31,9 +31,21 @@ README = f"""# VisualStimEdger {VERSION} — macOS
 Nothing is installed system-wide; dependencies live in a `.venv` folder next to
 the app. To uninstall, delete the folder.
 
-> If macOS says the launcher "can't be opened" (Gatekeeper), right-click it →
-> **Open** → **Open**, just the first time. Or, in Terminal:
-> `chmod +x VisualStimEdger.command` then double-click.
+## macOS won't open it?  ("no permission" / "unidentified developer")
+
+This is normal for anything downloaded outside the App Store — macOS strips the
+launcher's permission to run. **One line fixes it.** Open **Terminal**, paste the
+line below, press Return. It unblocks the launcher, marks it runnable, and starts it:
+
+```
+cd ~/Downloads/VisualStimEdger-*-macOS* && xattr -cr . && chmod +x VisualStimEdger.command && open VisualStimEdger.command
+```
+
+Unzipped somewhere other than Downloads? Type `cd ` (with a trailing space), drag the
+unzipped folder into the Terminal window, then paste the rest starting at `&&`.
+
+Note: **Get Info → read & write does NOT fix this.** A `.command` needs the *execute*
+bit, which Finder never shows you — the line above is what actually sets it.
 
 ## Requirements
 - macOS 13+ (Apple Silicon or Intel)
