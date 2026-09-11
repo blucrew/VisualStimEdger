@@ -5674,9 +5674,10 @@ class App:
         """Open a scan dialog, show found BLE HR devices, let user pick one."""
         dlg = ctk.CTkToplevel(self.root)
         dlg.title(tr("BLE HR — Scan"))
-        dlg.geometry("340x280")
+        dlg.geometry("360x360")
+        dlg.minsize(320, 300)
         dlg.grab_set()
-        dlg.resizable(False, False)
+        dlg.resizable(True, True)   # never trap the user if content overflows on a scaled display
 
         ctk.CTkLabel(dlg, text=tr("Scanning for BLE HR monitors…"),
                      font=ctk.CTkFont(size=12)).pack(pady=(18, 4))
@@ -5686,10 +5687,13 @@ class App:
         status_lbl.pack()
 
         listbox_frame = ctk.CTkScrollableFrame(dlg, height=120)
-        listbox_frame.pack(fill=tk.X, padx=16, pady=8)
 
+        # Pin the button row to the BOTTOM first, so Connect/Cancel can never be
+        # pushed off-screen by the device list. On a DPI-scaled display the list
+        # overflowed the fixed-height window and clipped the buttons below the
+        # bottom edge — with the window non-resizable, users couldn't reach Connect.
         btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
-        btn_row.pack(fill=tk.X, padx=16, pady=(0, 12))
+        btn_row.pack(side=tk.BOTTOM, fill=tk.X, padx=16, pady=(0, 12))
         connect_btn = ctk.CTkButton(btn_row, text=tr("Connect"), width=100,
                                      fg_color=self._C_ACCENT, hover_color=self._C_ACCENT_H,
                                      text_color="white", state="disabled",
@@ -5699,6 +5703,10 @@ class App:
                        fg_color=self._C_SURFACE2, hover_color="#4a4a4a",
                        text_color=self._C_TEXT,
                        command=dlg.destroy).pack(side=tk.RIGHT)
+
+        # List fills the space between the labels and the pinned buttons; if the
+        # window is short, the list scrolls — the buttons stay visible.
+        listbox_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=16, pady=8)
 
         selected = {"addr": None, "name": None}
         row_btns = []
@@ -5733,7 +5741,8 @@ class App:
             def _update():
                 if not dlg.winfo_exists():
                     return
-                status_lbl.configure(text=f"Found {len(devices)} device(s)" if devices else "No devices found")
+                status_lbl.configure(text=(f"Found {len(devices)} device(s) — pick one, then Connect"
+                                            if devices else "No devices found"))
                 for addr, name in devices:
                     btn = ctk.CTkButton(
                         listbox_frame, text=f"{name}  ({addr})",
