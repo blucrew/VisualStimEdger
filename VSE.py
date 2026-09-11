@@ -5014,8 +5014,9 @@ class App:
         def _show_xtoys_help():
             hw = ctk.CTkToplevel(win)
             hw.title(tr("xToys Setup"))
-            hw.geometry("420x320")
-            hw.resizable(False, False)
+            _hsh = hw.winfo_screenheight()
+            hw.geometry(f"420x{min(320, _hsh - 80)}")
+            hw.resizable(True, True)
             hw.grab_set()
             ctk.CTkLabel(hw,
                 text=tr("Setup steps:\n\n"
@@ -7126,8 +7127,9 @@ class App:
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
-        win.resizable(False, False)
-        win.geometry("480x540")
+        win.resizable(True, True)
+        _bsh = win.winfo_screenheight()
+        win.geometry(f"480x{min(540, _bsh - 80)}")   # never taller than the screen
         _lbl = ctk.CTkFont(size=11, weight="bold")
         _dim = ctk.CTkFont(size=10)
         P = 16
@@ -7218,7 +7220,8 @@ class App:
 
         # ── navigation ────────────────────────────────────────────────────────
         nav_row = ctk.CTkFrame(win, fg_color="transparent")
-        nav_row.pack(fill=tk.X, padx=P, pady=(8, P))
+        # Pinned to the bottom so Continue/Cancel can't be clipped off a scaled display.
+        nav_row.pack(side=tk.BOTTOM, fill=tk.X, padx=P, pady=(8, P))
 
         cont_btn = ctk.CTkButton(nav_row, text=tr("Continue →"),
                                  font=ctk.CTkFont(size=12, weight="bold"),
@@ -7359,8 +7362,9 @@ class App:
         win.configure(fg_color=self._C_BG)
         win.transient(self.root)
         win.grab_set()
-        win.geometry("510x700")
-        win.resizable(False, False)
+        _gsh = win.winfo_screenheight()
+        win.geometry(f"510x{min(700, _gsh - 80)}")   # 700 can exceed a scaled screen
+        win.resizable(True, True)
 
         ctk.CTkLabel(win, text=tr("🍆  Grid Navigator Practice"),
                      font=ctk.CTkFont(size=16, weight="bold"),
@@ -7717,8 +7721,9 @@ class App:
         ref.title("🎙 Voice Commands")
         ref.configure(fg_color="#0d0012")
         ref.attributes("-topmost", True)
-        ref.resizable(False, False)
-        ref.geometry("780x600")
+        ref.resizable(True, True)
+        _rsh = ref.winfo_screenheight()
+        ref.geometry(f"780x{min(600, _rsh - 80)}")
 
         _head = ctk.CTkFont(size=13, weight="bold")
         _body = ctk.CTkFont(size=12)
@@ -8078,7 +8083,7 @@ class App:
         win.title("🎙 Switch Source")
         win.configure(fg_color="#0d0012")
         win.attributes("-topmost", True)
-        win.resizable(False, False)
+        win.resizable(True, True)
         win.protocol("WM_DELETE_WINDOW", self._source_picker_close)
         self._source_picker_win = win
 
