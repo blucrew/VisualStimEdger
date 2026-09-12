@@ -2497,9 +2497,11 @@ class App:
         top_frame.pack(padx=P, pady=(P, 4), fill=tk.X)
         self._first_widget = top_frame
 
-        # ── Settings area — no scrollbar; window auto-resizes to content ─────
-        sf = ctk.CTkFrame(root, fg_color="transparent", corner_radius=0)
-        sf.pack(fill=tk.X, padx=0, pady=0)
+        # ── Settings area — scrollable so the bottom (status/edge counter) is always
+        # reachable even when the content is taller than the screen (e.g. HR + MP3
+        # panels both open). Window height is capped to the work area in _fit_window. ──
+        sf = ctk.CTkScrollableFrame(root, fg_color="transparent", corner_radius=0)
+        sf.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         self._sf = sf
 
         # video — plain tk.Label so ImageTk works without wrapping
@@ -5766,9 +5768,10 @@ class App:
         status line) and only auto-fit height — which also drops the empty gap
         at the bottom. The window stays resizable, and any resize is remembered."""
         self.root.update_idletasks()
-        h = self.root.winfo_reqheight()
+        avail = self.root.winfo_screenheight() - 72   # leave room for the taskbar
+        h = min(self.root.winfo_reqheight() + 24, avail)   # never taller than the screen
         w = self._win_w or _DEFAULT_WIN_W
-        self.root.geometry(f"{w}x{h + 24}")
+        self.root.geometry(f"{w}x{h}")
 
     def _toggle_play_mode(self):
         self._play_mode = not self._play_mode
