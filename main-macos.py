@@ -3097,7 +3097,7 @@ class App:
                           progress_color="#e91e63").pack(side=tk.LEFT)
 
         _hr_slider_group(hr_row2, "Resting:", self.hr_resting_var, 40, 90)
-        ctk.CTkFrame(hr_row2, width=16, fg_color="transparent").pack(side=tk.LEFT)
+        ctk.CTkFrame(hr_row2, width=16, height=1, fg_color="transparent").pack(side=tk.LEFT)
         _hr_slider_group(hr_row2, "Peak:", self.hr_peak_var, 80, 170)
 
         # BLE Direct row — shown when BLE source selected
@@ -5828,19 +5828,47 @@ class App:
                 self._play_hold_btn.configure(text=tr("Hold Volume"),
                                               fg_color=self._C_SURFACE2, hover_color="#4a4a4a")
 
-    def _fit_window(self):
-        """Fit root HEIGHT to content; WIDTH honours the user's remembered size.
+    def _work_area(self):
+        """Usable desktop rect (x, y, w, h) EXCLUDING the taskbar. Uses the Windows
+        work-area API so the window never opens hanging under the taskbar; falls back
+        to the full screen minus a taskbar-sized margin on other platforms."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                r = wintypes.RECT()
+                # SPI_GETWORKAREA = 0x0030 — the desktop minus the taskbar/app bars
+                if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):
+                    return r.left, r.top, r.right - r.left, r.bottom - r.top
+            except Exception:
+                pass
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        return 0, 0, sw, sh - 72
 
-        The content only needs ~560px across, but a widget below over-requests
-        width, so letting reqwidth drive it booted the window too wide. Instead
-        we pin width to the persisted value (or a sensible default that fits the
-        status line) and only auto-fit height — which also drops the empty gap
-        at the bottom. The window stays resizable, and any resize is remembered."""
+    def _fit_window(self):
+        """Fit HEIGHT to content and keep the whole window inside the usable desktop
+        (excludes the taskbar), so its bottom never hangs off on open. CTk scales the
+        geometry WxH by the display's window-scaling factor, so the physical work-area
+        cap must be converted to CTk's logical units; the +x+y position stays in real
+        pixels. A manual resize is still remembered (width)."""
         self.root.update_idletasks()
-        avail = self.root.winfo_screenheight() - 72   # leave room for the taskbar
-        h = min(self.root.winfo_reqheight() + 24, avail)   # never taller than the screen
-        w = self._win_w or _DEFAULT_WIN_W
-        self.root.geometry(f"{w}x{h}")
+        try:
+            cs = ctk.ScalingTracker.get_window_scaling(self.root) or 1.0
+        except Exception:
+            cs = 1.0
+        wx, wy, ww, wh = self._work_area()                    # real (physical) pixels
+        title = self.root.winfo_rooty() - self.root.winfo_y()  # title bar + border (physical)
+        if title <= 0:
+            title = int(40 * cs)                              # fallback before it's realized
+        # content height (logical) so title + content*cs fits the work area
+        h = min(self.root.winfo_reqheight() + 24, int((wh - title) / cs))
+        w = self._win_w or _DEFAULT_WIN_W                     # logical
+        phys_w, outer_h = int(w * cs), int(h * cs) + title    # real footprint on screen
+        # clamp the real position so the whole window (title bar included) stays on the
+        # usable desktop — pull it up only if its bottom would fall under the taskbar
+        x = max(wx, min(self.root.winfo_x(), wx + ww - phys_w))
+        y = max(wy, min(self.root.winfo_y(), wy + wh - outer_h))
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _toggle_play_mode(self):
         self._play_mode = not self._play_mode
@@ -8394,6 +8422,7 @@ def show_splash() -> bool:
     from tkinter import font as tkfont
 
     root = tk.Tk()
+    root.withdraw()   # stay hidden until the centred geometry is set (no corner flash)
     root.title("VisualStimEdger")
     root.configure(bg="#0d0d0d")
     root.resizable(False, False)
@@ -8526,6 +8555,7 @@ def show_splash() -> bool:
             sw = root.winfo_screenwidth()
             sh = root.winfo_screenheight()
             root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+            root.deiconify()   # (withdrawn at creation) reveal the centred PNG splash
             root.attributes("-topmost", True)
             root.after(400, lambda: root.attributes("-topmost", False))
             root.mainloop()
@@ -8672,6 +8702,7 @@ def show_splash() -> bool:
     H = min(root.winfo_reqheight(), _sh - 60)    # never taller than the screen
     sw = root.winfo_screenwidth()
     root.geometry(f"{W}x{H}+{(sw - W) // 2}+{max(0, (_sh - H) // 2)}")
+    root.deiconify()   # reveal it, already centred
     root.attributes("-topmost", True)
     root.after(400, lambda: root.attributes("-topmost", False))
     root.mainloop()
