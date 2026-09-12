@@ -44,9 +44,22 @@ if [ ! -d ".venv" ] || [ ! -x ".venv/bin/python" ]; then
   "$PY" -m venv .venv || pause_exit "Could not create the virtual environment."
   ./.venv/bin/python -m pip install --upgrade pip >/dev/null 2>&1
   echo "Installing dependencies…"
-  if ! ./.venv/bin/python -m pip install -r requirements-macos.txt; then
+  # miniaudio (MP3 mode) is a compiled C extension. On some Python versions there's
+  # no prebuilt wheel, so pip tries to compile it — which fails without Xcode's
+  # command-line tools. It's optional (the app runs fine without it; MP3 mode just
+  # goes dark), so install the REQUIRED core first, then treat miniaudio as a
+  # best-effort extra. A failed miniaudio build must never brick the whole setup.
+  grep -vE '^[[:space:]]*(#|miniaudio)' requirements-macos.txt > .venv/core-reqs.txt
+  if ! ./.venv/bin/python -m pip install -r .venv/core-reqs.txt; then
     rm -rf .venv
     pause_exit "Dependency install failed (see messages above). Check your internet connection and try again."
+  fi
+  if ! ./.venv/bin/python -m pip install "miniaudio>=1.2"; then
+    echo
+    echo "  Note: MP3 mode is unavailable — miniaudio couldn't build on this Python."
+    echo "  Everything else works. To add MP3 mode later, install Python 3.12"
+    echo "  (brew install python@3.12 python-tk@3.12), delete the .venv folder and"
+    echo "  re-run — or run  xcode-select --install  then re-run this launcher."
   fi
   echo "Setup complete."
 fi
